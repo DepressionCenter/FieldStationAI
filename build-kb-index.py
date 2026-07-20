@@ -84,6 +84,7 @@ EXCLUDE_PATTERNS = [
     r"/Login\.aspx",
     r"/Tags?[/?$]",
     r"/Print[/?$]",
+    r"/PrintArticle\?ID=",
     r"\?print=",
     r"/Archive[/?$]",
     # r"/Category/",   # example: skip category listing pages
