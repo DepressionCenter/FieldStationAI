@@ -81,6 +81,7 @@ INCLUDE_PATTERNS = [
 EXCLUDE_PATTERNS = [
     r"/Search[/?$]",
     r"/Login[/?$]",
+    r"/Login\.aspx",
     r"/Tags?[/?$]",
     r"/Print[/?$]",
     r"\?print=",
