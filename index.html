@@ -3035,16 +3035,26 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // ---------- Ollama ----------
 
-        async function detectOllama() {
+        async function detectOllama(manual) {
+            // Remove any previous Ollama optgroup so re-running (e.g. from the
+            // menu) doesn't pile up duplicate options across repeated clicks.
+            const prev = modelSelect.querySelector('optgroup[label="Ollama (local server)"]');
+            if (prev) prev.remove();
             try {
                 const ctl = new AbortController();
                 const t = setTimeout(() => ctl.abort(), 1500);
                 const r = await fetch(OLLAMA_URL + '/api/tags', { signal: ctl.signal });
                 clearTimeout(t);
-                if (!r.ok) return;
+                if (!r.ok) {
+                    if (manual) setStatus('Could not reach the local Ollama server at ' + OLLAMA_URL + '.', true);
+                    return;
+                }
                 const d = await r.json();
                 const names = (d.models || []).map(m => m.name);
-                if (!names.length) return;
+                if (!names.length) {
+                    if (manual) setStatus('Local Ollama server has no models installed.', true);
+                    return;
+                }
                 const og = document.createElement('optgroup');
                 og.label = 'Ollama (local server)';
                 for (const n of names) {
@@ -3054,7 +3064,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     og.appendChild(o);
                 }
                 modelSelect.appendChild(og);
-            } catch { /* no local Ollama server - fine */ }
+                if (manual) setStatus('Loaded ' + names.length + ' model' + (names.length === 1 ? '' : 's') + ' from local Ollama server.');
+            } catch {
+                if (manual) setStatus('Could not reach the local Ollama server at ' + OLLAMA_URL + '. Make sure Ollama is running.', true);
+            }
         }
 
         function stopAll() {
@@ -7564,6 +7577,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
         const MENU_ITEMS = [
             { label: 'Skills', action: () => openSkills() },
+            { label: 'Load models from local Ollama server', action: () => detectOllama(true) },
             { label: 'About Field Station AI', action: () => showWelcome() }
         ];
         document.getElementById('skills-btn').addEventListener('click', openSkills);
@@ -7786,16 +7800,16 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 renderTranscript();
                 renderChips();
             }
-            detectOllama();
             // Drop cached weights for models no longer in the dropdown. Awaited
             // so we can't race the load we're about to kick off - a delete of a
             // partial in-flight fetch is worse than a small startup delay.
             await cleanupModelCache();
             // Restore the previously-selected model, unless the store is locked
             // (PIN cancelled/wrong) or the saved value is no longer in the
-            // dropdown. Ollama options are added asynchronously by
-            // detectOllama(), so an ollama:* last model may not be present yet
-            // - fall back to the default in that case.
+            // dropdown. Ollama is no longer probed automatically on startup
+            // (the browser flags the local-network request) - the user opts in
+            // via the "Load models from local Ollama server" menu item, so a
+            // saved ollama:* last model won't be present until they do that.
             if (!locked && store.lastModel) {
                 const opt = Array.from(modelSelect.options).find(o => o.value === store.lastModel);
                 if (opt) {
