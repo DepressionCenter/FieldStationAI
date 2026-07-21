@@ -3084,8 +3084,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         function stopAll() {
-            if (mode === 'local') stopper.interrupt();
-            else if (abortCtl) abortCtl.abort();
+            ModelGateway.interrupt();
         }
 
         // ---------- Vision (SmolVLM) ----------
@@ -3878,16 +3877,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return { hitCap };
         }
 
-        async function oneShot(promptText, maxTok) {
+        // Non-streaming single completion, given a full messages array (same
+        // shape localRound/ollamaRound take). Used by the gateway's
+        // non-streaming path only - never called directly.
+        async function oneShotImpl(messages, maxTok) {
             if (mode === 'local') {
-                const out = await generator([{ role: 'user', content: promptText }], { max_new_tokens: maxTok });
+                const out = await generator(messages, { max_new_tokens: maxTok });
                 return out[0].generated_text.at(-1).content;
             }
             const res = await fetch(OLLAMA_URL + '/api/chat', {
                 method: 'POST',
                 body: JSON.stringify({
                     model: currentModelId.slice(7),
-                    messages: [{ role: 'user', content: promptText }],
+                    messages,
                     stream: false,
                     options: { num_predict: maxTok }
                 })
@@ -3896,13 +3898,60 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return (j.message && j.message.content) || '';
         }
 
-        // oneShot bound to a skill-load token: if the token has moved on (user
-        // stopped/navigated away) by the time the model replies, throw so the
-        // caller's existing try/catch treats it as a failed call instead of
-        // mutating state for a screen the user already left.
+        // ---------- Model Gateway ----------
+        // One OpenAI-shaped chat.completions.create({messages, stream,
+        // max_tokens, onToken}) entry point over the two chat backends this
+        // app has (the Transformers.js pipeline, Ollama's /v1/chat/completions
+        // over HTTP). Every chat + skill LLM call goes through this instead of
+        // branching on `mode` itself, so there is exactly one place that knows
+        // the destination tier - tier() is what destination-aware redaction
+        // (buildRedactedHead / resolveTabularHeaderWithLlm) reads instead of
+        // re-deriving `mode === 'ollama'` locally.
+        //
+        // Streaming shape note: real OpenAI streaming returns an async
+        // iterable of delta chunks. This app's UI (timers, gibberish/
+        // repetition detectors, botDiv.setText) is already built around a
+        // callback per token with Stop/interrupt wired through `stopper`/
+        // `abortCtl`, and that plumbing works correctly today, so the gateway
+        // keeps the onToken callback for stream:true and returns {hitCap}
+        // (the existing internal shape) rather than emulating OpenAI's chunk
+        // objects. `tools` and `response_format` are accepted for shape
+        // compatibility but are no-ops - nothing calls with them yet; they
+        // are reserved for Phase 3's response_format: {type:'json_schema'}.
+        const ModelGateway = (() => {
+            function tier() {
+                // Tier A (local, in-tab Transformers.js): no process boundary,
+                // no redaction. Tier B (network): Ollama today, any future
+                // network destination tomorrow - keep redacting.
+                return mode === 'ollama' ? 'network' : 'local';
+            }
+            async function create({ messages, stream, max_tokens, onToken } = {}) {
+                if (stream) {
+                    return mode === 'ollama'
+                        ? await ollamaRound(currentModelId.slice(7), messages, onToken, max_tokens)
+                        : await localRound(messages, onToken, max_tokens);
+                }
+                const content = await oneShotImpl(messages, max_tokens);
+                return { choices: [{ message: { role: 'assistant', content } }] };
+            }
+            function interrupt() {
+                if (mode === 'local') stopper.interrupt();
+                else if (abortCtl) abortCtl.abort();
+            }
+            return { chat: { completions: { create } }, tier, interrupt };
+        })();
+
+        // A gateway call bound to a skill-load token: if the token has moved
+        // on (user stopped/navigated away) by the time the model replies,
+        // throw so the caller's existing try/catch treats it as a failed call
+        // instead of mutating state for a screen the user already left.
         function oneShotWithToken(token) {
             return async (promptText, maxTok) => {
-                const out = await oneShot(promptText, maxTok);
+                const res = await ModelGateway.chat.completions.create({
+                    messages: [{ role: 'user', content: promptText }],
+                    max_tokens: maxTok
+                });
+                const out = res.choices[0].message.content || '';
                 if (token !== skillLoadToken) throw new Error('stale');
                 return out;
             };
@@ -4133,9 +4182,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     const genMsgs = buildGenMessages(chat, partial, finalSys, suffix, kbPrefix);
                     let r;
                     try {
-                        r = mode === 'local'
-                            ? await localRound(genMsgs, onToken, routedCap)
-                            : await ollamaRound(currentModelId.slice(7), genMsgs, onToken, routedCap);
+                        r = await ModelGateway.chat.completions.create({
+                            messages: genMsgs, stream: true, onToken, max_tokens: routedCap
+                        });
                     } catch (e) {
                         if (e && e.name === 'AbortError') r = { hitCap: false }; // stopped/timed out mid-stream
                         else throw e;
@@ -4252,7 +4301,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     'Messages: "' + combined + '" Label:'
                 ].join('\n');
                 if (supportsNoThinkSwitch()) namingPrompt += ' /no_think';
-                const rawName = stripThink(await oneShot(namingPrompt, 10));
+                const namingRes = await ModelGateway.chat.completions.create({
+                    messages: [{ role: 'user', content: namingPrompt }], max_tokens: 10
+                });
+                const rawName = stripThink(namingRes.choices[0].message.content || '');
                 const name = rawName.trim().replace(/[^\w\s-]/g, '').split(/\s+/).slice(0, 3).join(' ');
 
                 // Reject echoes: if every label word already appears in the user
@@ -4608,27 +4660,109 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             return out;
         }
-        function redactRow(row) {
+        // ----- Tier B (network) redaction: shape redaction plus a
+        // consistent per-job offset shift for date-like and MRN-like values,
+        // so a column of dates/IDs still looks like realistic, ordered dates/
+        // IDs to a model instead of a uniform "####-##-##" block. Destination-
+        // aware redaction (design doc Section 6): Tier A (local, in-tab
+        // model) never runs any of this - see buildRedactedHead/
+        // resolveTabularHeaderWithLlm below, which branch on tier first.
+
+        // Shift a date/datetime-shaped string by shiftDays, preserving its
+        // exact punctuation/format: walk the original string's digit runs
+        // left-to-right and replace each with the shifted date's matching
+        // component (4+ digit run -> year; shorter runs -> month, day, hour,
+        // minute, second in the order they appear), zero-padded to the same
+        // width. True Date arithmetic keeps ordering and inter-row intervals
+        // intact. Returns null if the string doesn't parse as a date, so the
+        // caller falls through to plain shape redaction.
+        function shiftDateLikeCell(v, shiftDays) {
+            const t = Date.parse(v);
+            if (isNaN(t)) return null;
+            const shifted = new Date(t + shiftDays * 86400000);
+            const smallVals = [shifted.getMonth() + 1, shifted.getDate(), shifted.getHours(), shifted.getMinutes(), shifted.getSeconds()];
+            let smallIdx = 0;
+            return String(v).replace(/\d+/g, run => {
+                if (run.length >= 4) return String(shifted.getFullYear()).padStart(run.length, '0');
+                const val = smallVals[smallIdx++];
+                return String(val == null ? 0 : val).padStart(run.length, '0');
+            });
+        }
+        // Shift a bare numeric identifier (typical MRN length: 5-10 digits)
+        // by a consistent per-job offset, modulo its own digit width so the
+        // format (digit count, leading zeros) is preserved. Returns null for
+        // anything outside that length, so the caller falls through to shape
+        // redaction (very short codes, or long serials that don't need
+        // order-preservation for a model to recognize them as an ID column).
+        function shiftIdLikeCell(v, seed) {
+            const s = String(v).trim();
+            if (!/^\d{5,10}$/.test(s)) return null;
+            const mod = Math.pow(10, s.length);
+            const shifted = (parseInt(s, 10) + seed) % mod;
+            return String(shifted).padStart(s.length, '0');
+        }
+        // Tier B per-cell redactor: date/id-like cells get a consistent
+        // offset shift (structure-preserving, still fake); everything else
+        // falls back to today's shape redaction (# / x / X).
+        function tierBRedactCell(v, jobSeed) {
+            if (v == null || v === '') return '';
+            const s = String(v);
+            const t = cellType(s);
+            if (t === 'date' || t === 'datetime') {
+                const shifted = shiftDateLikeCell(s, 1000 + (jobSeed % 5000));
+                if (shifted != null) return shifted;
+            } else if (t === 'id' || /^\d{5,10}$/.test(s.trim())) {
+                const shifted = shiftIdLikeCell(s, jobSeed);
+                if (shifted != null) return shifted;
+            }
+            return redactCell(s);
+        }
+        function tierBRedactRow(row, jobSeed) {
             if (!Array.isArray(row)) return [];
-            return row.map(redactCell);
+            return row.map(c => tierBRedactCell(c, jobSeed || 0));
+        }
+        // Runtime guard: for a network-bound (Tier B) request, verify the
+        // redact function actually transforms data instead of being an
+        // identity function that slipped through - probes it with a canary
+        // row and throws if the output matches the input verbatim. Lives
+        // inside the reusable functions below (not at each call site) so a
+        // future skill can't bypass it by forgetting to call it.
+        function assertTierBRedaction(tier, redactFn) {
+            if (tier !== 'network') return;
+            const canary = ['4839201', 'ABCxyz'];
+            const out = redactFn(canary);
+            if (JSON.stringify(out) === JSON.stringify(canary)) {
+                throw new Error('Redaction guard: an unredacted value would have reached a network-bound (Tier B) request.');
+            }
         }
 
-        // Redaction legend used inside sniff prompts.
-        const REDACTION_LEGEND = 'Data-row cells below are shape-redacted for privacy: digits are shown as #, uppercase letters as X, lowercase letters as x. Whitespace and punctuation are kept verbatim. Header candidates (rows near the top) are shown as-is because they are structure, not patient data.';
+        // Redaction legend used inside sniff prompts sent to a Tier B
+        // (network) destination. Tier A (local, in-tab model) prompts never
+        // mention redaction at all, since none is applied - see
+        // buildRedactedHead.
+        const REDACTION_LEGEND = 'Data-row cells below are shape-redacted for privacy: digits are shown as #, uppercase letters as X, lowercase letters as x (dates and ID-like numbers may instead be shifted by a consistent offset so they still look like real dates/IDs). Whitespace and punctuation are kept verbatim. Header candidates (rows near the top) are shown as-is because they are structure, not patient data.';
 
         // Build the digest sent to the sniff LLM for one raw-ingested file.
         //   f.name, f.rows: string[][], f.sampled (from sampleRowsForLLM)
-        // Rows numbered <= inferred header row are shown verbatim; every
-        // other sampled row goes through redactRow so no values leak.
+        // Rows numbered <= inferred header row are shown verbatim always
+        // (structure, not patient data). Destination-aware (design doc
+        // Section 6): opts.tier defaults to the gateway's current tier -
+        // 'local' shows every other sampled row unchanged (real values, the
+        // accuracy fix for the in-tab model); 'network' shape-redacts /
+        // offset-shifts them via tierBRedactRow, keyed by opts.jobSeed.
         function buildRedactedHead(f, opts) {
             opts = opts || {};
+            const tier = opts.tier || ModelGateway.tier();
             const preHeaderMax = typeof opts.preHeaderMax === 'number' ? opts.preHeaderMax : 6;
+            const jobSeed = opts.jobSeed || 0;
+            const rowRedact = tier === 'local' ? (row => row) : (row => tierBRedactRow(row, jobSeed));
+            assertTierBRedaction(tier, rowRedact);
             const N = f.rows.length;
             const sampled = f.sampled || sampleRowsForLLM(f.rows);
             const lines = [];
             lines.push('File: ' + f.name);
             lines.push('Total rows in file: ' + N + '. Sampled ' + sampled.length + '; row numbers below are the original 0-based indexes.');
-            lines.push(REDACTION_LEGEND);
+            if (tier !== 'local') lines.push(REDACTION_LEGEND);
             lines.push('Rows (cells separated by " | "):');
             const truncCell = v => {
                 const s = String(v == null ? '' : v);
@@ -4639,11 +4773,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 const idx = s.index;
                 const row = s.row || [];
                 const isPreHeader = idx <= preHeaderMax;
-                const shown = isPreHeader ? row : redactRow(row);
+                const shown = isPreHeader ? row : rowRedact(row);
                 let cells = shown.map(truncCell);
                 let tail = '';
                 if (cells.length > 24) { tail = ' (+' + (cells.length - 24) + ' more)'; cells = cells.slice(0, 24); }
-                lines.push('Row ' + idx + (isPreHeader ? '' : ' [redacted]') + ': ' + cells.join(' | ') + tail);
+                const tag = isPreHeader || tier === 'local' ? '' : ' [redacted]';
+                lines.push('Row ' + idx + tag + ': ' + cells.join(' | ') + tail);
             }
             lines.push('Filename hint: ' + f.name);
             return lines.join('\n');
@@ -4653,6 +4788,39 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Every runPython call appends a cell here. Analysts can download
         // an .ipynb at the end of a session for reproducible-methods
         // citation. Session-scoped, cleared by clearNotebookLog().
+        // Turn a runPython resultVars snapshot (written by the Python prelude's
+        // writeOutput() helper - see the worker source below: "<name>.rows",
+        // "<name>.cols", "<name>.columns") into one readable, PHI-free line.
+        // Purely schema/aggregate data, safe for the notebook by construction.
+        function summarizeResultVars(resultVars) {
+            if (!resultVars || typeof resultVars !== 'object') return 'Succeeded.';
+            const names = new Set();
+            for (const key of Object.keys(resultVars)) {
+                const m = key.match(/^(.*)\.(rows|cols|columns)$/);
+                if (m) names.add(m[1]);
+            }
+            if (!names.size) return 'Succeeded.';
+            const parts = [];
+            for (const name of names) {
+                const rows = resultVars[name + '.rows'];
+                const cols = resultVars[name + '.cols'];
+                parts.push('Wrote ' + name + ': ' + (rows == null ? '?' : rows) + ' rows, ' + (cols == null ? '?' : cols) + ' columns.');
+            }
+            return parts.join(' ');
+        }
+        // Pull just the Python exception class name out of a traceback/error
+        // string (tracebacks end with "SomeError: message") - never any of
+        // the surrounding message text, which can quote a real cell value.
+        function extractExceptionType(text) {
+            if (!text) return 'error';
+            const lines = String(text).trim().split('\n');
+            for (let i = lines.length - 1; i >= 0; i--) {
+                const m = lines[i].match(/^([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception|Warning))\s*:/);
+                if (m) return m[1];
+            }
+            return 'error';
+        }
+
         const notebookLog = (() => {
             const cells = [];
             function appendCell(kind, source, outputs) {
@@ -4668,12 +4836,20 @@ with this program. If not, see https://www.gnu.org/licenses/.
                                 source: c.source.split(/(?<=\n)/)
                             };
                         }
+                        // Structured fields only - never raw stdout/stderr text.
+                        // The notebook is a shareable artifact and must never
+                        // carry a value derived from PHI, even a redacted one
+                        // (design doc Section 7, stricter than the Tier A/B
+                        // chat-prompt line) - see runPython, which is the only
+                        // writer of c.outputs.
                         const outs = [];
-                        if (c.outputs && c.outputs.stdout) {
-                            outs.push({ output_type: 'stream', name: 'stdout', text: String(c.outputs.stdout).split(/(?<=\n)/) });
-                        }
-                        if (c.outputs && c.outputs.stderr) {
-                            outs.push({ output_type: 'stream', name: 'stderr', text: String(c.outputs.stderr).split(/(?<=\n)/) });
+                        if (c.outputs && c.outputs.ok === true) {
+                            outs.push({ output_type: 'stream', name: 'stdout', text: [summarizeResultVars(c.outputs.resultVars)] });
+                        } else if (c.outputs && c.outputs.ok === false) {
+                            outs.push({
+                                output_type: 'stream', name: 'stderr',
+                                text: ['Failed: ' + (c.outputs.exceptionType || 'error') + ' (details omitted from the shared notebook - see the in-app run log for this session).']
+                            });
                         }
                         return {
                             cell_type: 'code',
@@ -4869,10 +5045,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
             });
             try {
                 const result = await promise;
-                notebookLog.appendCell('code', code, { stdout: result.stdout, stderr: result.stderr });
+                // The notebook writer only ever accepts ok + resultVars (a
+                // schema/aggregate summary) - never the raw stdout/stderr
+                // text, which pandas can embed a real cell value in. The
+                // caller's own return value below keeps the real stdout/
+                // stderr, since e.g. the codegen retry loop needs it to fix
+                // the model's code; only the notebookLog sink is restricted.
+                notebookLog.appendCell('code', code, { ok: true, resultVars: result.resultVars });
                 return result;
             } catch (e) {
-                notebookLog.appendCell('code', code, { stdout: e && e.stdout, stderr: (e && e.stderr) || (e && e.error) });
+                notebookLog.appendCell('code', code, { ok: false, exceptionType: extractExceptionType((e && e.error) || (e && e.stderr)) });
                 throw e;
             } finally {
                 pyodideLogFn = null;
@@ -5185,9 +5367,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // decoupled from any specific model-calling convention. redact(row) lets
         // callers with sensitive data (e.g. PHI) mask candidate rows that turn out to
         // be real data, not header - see the CSV Combiner's use for the policy.
+        // opts.tier ('local' | 'network', default 'network' - the cautious
+        // default) is destination-aware (design doc Section 6): it only
+        // changes the prompt wording to match whatever opts.redact actually
+        // does, and gates the runtime guard against an identity redact
+        // function reaching a network destination.
         async function resolveTabularHeaderWithLlm(structure, rows, generate, opts) {
             opts = opts || {};
             const redact = opts.redact || (row => row);
+            const tier = opts.tier || 'network';
+            assertTierBRedaction(tier, redact);
             const preHeaderMax = typeof opts.preHeaderMax === 'number' ? opts.preHeaderMax : 6;
             if (!structure._R || !structure.candidates || !structure.candidates.length) return structure;
 
@@ -5199,11 +5388,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 const preview = shown.slice(0, 8).map(v => String(v == null ? '' : v).trim()).join(' | ').slice(0, 160);
                 return 'Row ' + c.n + ': ' + preview;
             }).join('\n');
+            const redactionNote = tier === 'local'
+                ? 'Data-row cells below are shown with their real recorded values.\n\n'
+                : 'Data-row cells below may be shape-redacted for privacy: digits as #, uppercase '
+                    + 'letters as X, lowercase letters as x - do not decode them, just judge the shape.\n\n';
             const prompt = 'Here are a few candidate rows from a spreadsheet. Exactly one is the '
                 + 'column header row (the field names, e.g. "Timestamp", "Glucose mg/dL", "Serial '
                 + 'Number"). The others are a title, device metadata, or an actual data row. '
-                + 'Data-row cells below may be shape-redacted for privacy: digits as #, uppercase '
-                + 'letters as X, lowercase letters as x - do not decode them, just judge the shape.\n\n'
+                + redactionNote
                 + lines + '\n\nWhich row number is the column header row? Answer with only the number.';
 
             let out = '';
@@ -6276,6 +6468,19 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
             container.innerHTML = '';
             notebookLog.clear();
+            // One random offset per skill session ("job"), for Tier B's
+            // date/MRN-like offset-shift redaction (design doc Section 6) -
+            // same shift within this job, not reversible across sessions.
+            // Reset on the same lifecycle as notebookLog.clear() above:
+            // entering the skill and "Start over" both remount this function.
+            const redactionJobSeed = Math.floor(Math.random() * 1e9);
+            // Single source of truth for this session's tier + redact
+            // function, so every model-facing call site below stays in sync
+            // instead of re-deriving the tier locally.
+            function currentRedact() {
+                const tier = ModelGateway.tier();
+                return { tier, redact: tier === 'local' ? (row => row) : (row => tierBRedactRow(row, redactionJobSeed)) };
+            }
 
             skillStateProbe = {
                 id: 'csv-combine',
@@ -6443,24 +6648,38 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             }
 
             // ----- Sniff prompt (per file) -----
-            const SNIFF_PROMPT = 'You are analyzing sampled raw rows from ONE data file to figure out its structure. Values in data rows have been shape-redacted (# for digits, x/X for letters, punctuation kept). Do NOT try to decode those values; the shapes are only there to help you tell columns apart. Header candidates near the top are shown verbatim because they are metadata, not patient data.\n'
-                + '\n'
-                + 'Rules for header_row (very important):\n'
-                + '- header_row is the row where the ACTUAL column names live, not the first non-empty row.\n'
-                + '- A row that contains a date, a timestamp, a number, a shape like ##/##/#### or ##:##, or that looks like a redacted data row (mostly # and x characters in cell values) is NOT the header. Real header cells look like human-readable field names ("Timestamp", "Glucose mg/dL", "Serial Number").\n'
-                + '- Many exports have a preamble of device settings, patient banners, blank rows, or a "Report generated on ..." line before the real header. The header can be on row 1, 2, 3, 10, 15, or later - do not assume row 0 just because it has content.\n'
-                + '- Use the length and uniqueness of the cells: header rows have distinct text labels, one per column, roughly the same shape as the rows below them.\n'
-                + '- If unsure, set confidence to "low" and pick the row that most looks like human-readable field names.\n'
-                + '\n'
-                + 'Return one JSON object, no commentary. Prefer null / "low" / "other" over guessing when you are unsure. Shape:\n'
-                + '{ "header_row": <0-based row index of the column headers>,\n'
-                + '  "data_start_row": <0-based row index of the first real data row>,\n'
-                + '  "delimiter": <"," or "\\t" or ";" or "|">,\n'
-                + '  "preamble_summary": <one short sentence about the rows above the header, or null>,\n'
-                + '  "vendor": <"Libre", "Dexcom", "REDCap", or similar, or null>,\n'
-                + '  "columns": [ { "raw": <the original header text>, "role": "study_id"|"participant_id"|"timestamp"|"glucose"|"other", "dtype": "string"|"integer"|"number"|"boolean"|"date"|"datetime"|"id"|"mixed" }, ... ],\n'
-                + '  "confidence": "high" | "medium" | "low",\n'
-                + '  "notes": <one short sentence or null> }';
+            // Destination-aware (design doc Section 6): the intro sentence and
+            // the "looks like a redacted data row" bullet only make sense for
+            // a Tier B (network) destination, where buildRedactedHead actually
+            // shape-redacts/shifts data cells. Tier A (local, in-tab model)
+            // gets the real values, so telling it to expect redaction that
+            // isn't there would only mislead it.
+            function sniffPromptFor(tier) {
+                const intro = tier === 'local'
+                    ? 'You are analyzing sampled raw rows from ONE data file to figure out its structure. Values in data rows are shown as their real recorded values so you can recognize columns by their actual content. Header candidates near the top are shown verbatim because they are metadata, not patient data.\n'
+                    : 'You are analyzing sampled raw rows from ONE data file to figure out its structure. Values in data rows have been shape-redacted (# for digits, x/X for letters, punctuation kept). Do NOT try to decode those values; the shapes are only there to help you tell columns apart. Header candidates near the top are shown verbatim because they are metadata, not patient data.\n';
+                const notHeaderBullet = tier === 'local'
+                    ? '- A row that contains a date, a timestamp, a number, or a shape like ##/##/#### or ##:## is NOT the header. Real header cells look like human-readable field names ("Timestamp", "Glucose mg/dL", "Serial Number").\n'
+                    : '- A row that contains a date, a timestamp, a number, a shape like ##/##/#### or ##:##, or that looks like a redacted data row (mostly # and x characters in cell values) is NOT the header. Real header cells look like human-readable field names ("Timestamp", "Glucose mg/dL", "Serial Number").\n';
+                return intro
+                    + '\n'
+                    + 'Rules for header_row (very important):\n'
+                    + '- header_row is the row where the ACTUAL column names live, not the first non-empty row.\n'
+                    + notHeaderBullet
+                    + '- Many exports have a preamble of device settings, patient banners, blank rows, or a "Report generated on ..." line before the real header. The header can be on row 1, 2, 3, 10, 15, or later - do not assume row 0 just because it has content.\n'
+                    + '- Use the length and uniqueness of the cells: header rows have distinct text labels, one per column, roughly the same shape as the rows below them.\n'
+                    + '- If unsure, set confidence to "low" and pick the row that most looks like human-readable field names.\n'
+                    + '\n'
+                    + 'Return one JSON object, no commentary. Prefer null / "low" / "other" over guessing when you are unsure. Shape:\n'
+                    + '{ "header_row": <0-based row index of the column headers>,\n'
+                    + '  "data_start_row": <0-based row index of the first real data row>,\n'
+                    + '  "delimiter": <"," or "\\t" or ";" or "|">,\n'
+                    + '  "preamble_summary": <one short sentence about the rows above the header, or null>,\n'
+                    + '  "vendor": <"Libre", "Dexcom", "REDCap", or similar, or null>,\n'
+                    + '  "columns": [ { "raw": <the original header text>, "role": "study_id"|"participant_id"|"timestamp"|"glucose"|"other", "dtype": "string"|"integer"|"number"|"boolean"|"date"|"datetime"|"id"|"mixed" }, ... ],\n'
+                    + '  "confidence": "high" | "medium" | "low",\n'
+                    + '  "notes": <one short sentence or null> }';
+            }
 
             // Header row and data-start row are decided upstream by the
             // heuristic detector (f.forensics, set at ingest - see
@@ -6469,12 +6688,13 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             // just read them off f.forensics rather than re-deriving them.
 
             async function sniffStructure(f, token) {
+                const { tier, redact } = currentRedact();
                 // Header/data-start: heuristic already ran at ingest. Only
                 // consult the LLM, with a narrow prompt naming just the top
                 // 2-3 candidates, when the heuristic itself isn't confident.
                 if (f.forensics && f.forensics.confidence !== 'high' && !f.forensics.noHeader) {
                     f.forensics = await resolveTabularHeaderWithLlm(f.forensics, f.rows, oneShotWithToken(token),
-                        { redact: redactRow, preHeaderMax: 6 });
+                        { redact, tier, preHeaderMax: 6 });
                     if (f.forensics.method === 'llm') {
                         const rebuilt = buildColumnsFromHeader(f.rows, f.forensics.headerRow);
                         f.forensics.headers = rebuilt.headerCells;
@@ -6483,8 +6703,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     if (token !== skillLoadToken) return null;
                 }
 
-                const digest = buildRedactedHead(f);
-                const prompt = SNIFF_PROMPT + '\n\n' + digest;
+                const digest = buildRedactedHead(f, { tier, jobSeed: redactionJobSeed });
+                const prompt = sniffPromptFor(tier) + '\n\n' + digest;
                 let parsed = null;
                 try {
                     parsed = await runLlmJson(prompt, 900, oneShotWithToken(token));
@@ -6748,9 +6968,10 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         const f = later[i];
                         if (f._userEditedHeader || f._userEditedRoles) continue;   // never overwrite the user.
                         if (executeStatus) executeStatus('Applying your fixes to ' + f.name + ' (' + (i + 1) + ' of ' + later.length + ')...');
+                        const { tier, redact } = currentRedact();
                         if (f.forensics && f.forensics.confidence !== 'high' && !f.forensics.noHeader) {
                             f.forensics = await resolveTabularHeaderWithLlm(f.forensics, f.rows, oneShotWithToken(myToken),
-                                { redact: redactRow, preHeaderMax: 6 });
+                                { redact, tier, preHeaderMax: 6 });
                             if (f.forensics.method === 'llm') {
                                 const rebuilt = buildColumnsFromHeader(f.rows, f.forensics.headerRow);
                                 f.forensics.headers = rebuilt.headerCells;
@@ -6758,8 +6979,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                             }
                             if (myToken !== skillLoadToken) return;
                         }
-                        const digest = buildRedactedHead(f);
-                        const prompt = SNIFF_PROMPT + '\n\n' + 'Hints from files the user has already reviewed:\n' + hintBlock + '\n\n' + digest;
+                        const digest = buildRedactedHead(f, { tier, jobSeed: redactionJobSeed });
+                        const prompt = sniffPromptFor(tier) + '\n\n' + 'Hints from files the user has already reviewed:\n' + hintBlock + '\n\n' + digest;
                         let parsed = null;
                         try { parsed = await runLlmJson(prompt, 900, oneShotWithToken(myToken)); } catch (_) {}
                         if (myToken !== skillLoadToken) return;
@@ -6978,6 +7199,35 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 return wrap;
             }
 
+            // Provenance + per-file fallback marker for the notebook (design
+            // doc Section 7: "provenance... a visible marker on any
+            // heuristic/template fallback"). The UI already marks fallbacks
+            // per-file (fillVerdictBody's banners below); this projects the
+            // same fields into a notebook cell so the exported .ipynb carries
+            // them too, not just the DOM.
+            function buildProvenanceMarkdown() {
+                const lines = [
+                    '## Merge run',
+                    'Started: ' + new Date().toISOString() + '. Model: ' + currentModelId + ' (' + ModelGateway.tier() + ' tier).',
+                    '',
+                    'Files:'
+                ];
+                for (const f of ingestedFiles) {
+                    const v = f.verdict || {};
+                    const headerRow = (v.header_row != null ? v.header_row : 0) + 1;
+                    let flag;
+                    if (v.source === 'js') {
+                        flag = 'column roles: text-matching fallback - AI unavailable';
+                    } else if (f.forensics && f.forensics.method === 'llm') {
+                        flag = 'header row: AI tiebreak, ' + (v.confidence || 'medium') + ' confidence';
+                    } else {
+                        flag = 'heuristic, ' + (v.confidence || 'unknown') + ' confidence';
+                    }
+                    lines.push('- ' + f.name + ': ' + f.rows.length + ' rows, header row ' + headerRow + ' [' + flag + ']');
+                }
+                return lines.join('\n');
+            }
+
             // ----- Execute screen -----
             function renderExecute() {
                 const sec = makeSection('Merging your files');
@@ -7025,6 +7275,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     executing = true;
                     skillBatchRunning = true;
                     renderTabs();
+                    notebookLog.appendCell('markdown', buildProvenanceMarkdown());
                     const myToken = skillLoadToken;
                     try {
                         executeStatus('Preparing files for the worker...');
@@ -7204,8 +7455,18 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 return await extractCode(await oneShotWithToken(token)(prompt, 1500));
             }
             async function requestCodegenRetry(token, priorCode, stderr) {
+                // Pandas tracebacks can quote the offending cell value (e.g.
+                // "could not convert string to float: '187.3'"). Tier local
+                // sends the real traceback back to the model (more useful for
+                // fixing the code); tier network gets it shape-redacted first,
+                // same as any other data value reaching a model (design doc
+                // Section 6).
+                const tier = ModelGateway.tier();
+                const stderrForPrompt = tier === 'local'
+                    ? String(stderr).slice(0, 1500)
+                    : redactCell(String(stderr).slice(0, 1500));
                 const prompt = buildCodegenPrompt()
-                    + '\n\nYour previous attempt raised this error:\n' + String(stderr).slice(0, 1500)
+                    + '\n\nYour previous attempt raised this error:\n' + stderrForPrompt
                     + '\n\nWrite corrected code, same tool-call shape.';
                 return await extractCode(await oneShotWithToken(token)(prompt, 1500));
             }
