@@ -3896,6 +3896,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return (j.message && j.message.content) || '';
         }
 
+        // oneShot bound to a skill-load token: if the token has moved on (user
+        // stopped/navigated away) by the time the model replies, throw so the
+        // caller's existing try/catch treats it as a failed call instead of
+        // mutating state for a screen the user already left.
+        function oneShotWithToken(token) {
+            return async (promptText, maxTok) => {
+                const out = await oneShot(promptText, maxTok);
+                if (token !== skillLoadToken) throw new Error('stale');
+                return out;
+            };
+        }
+
         // Vision Q&A turn: runs SmolVLM directly on pendingImage. Kept separate
         // from the text handleSend below since it has no streaming continuation,
         // no context trimming, and no Qwen3 /no_think handling to worry about.
@@ -4933,89 +4945,289 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return prev[b.length];
         }
 
-        // Score each of the first ~40 rows as a header candidate. Highest
-        // score wins. Rules per the Phase 9b plan; weights tuned against
-        // LibreView, Dexcom-like, and generic office CSVs.
-        function csvForensics(rows) {
-            const N = Math.min(40, rows.length);
-            if (!N) {
-                return { headerRow: 0, preambleRows: 0, headers: [], dataStart: 0, columns: [], altCandidates: [] };
-            }
-            // Modal column count in the tail so we can reward candidates that
-            // match the data body's shape. Sample from a window past the
-            // candidate; using rows N..end is a good approximation.
-            const tailCounts = {};
-            const tailStart = Math.min(N, rows.length - 1);
-            for (let i = tailStart; i < Math.min(rows.length, tailStart + 30); i++) {
-                const c = rows[i] ? rows[i].filter(v => String(v).trim() !== '').length : 0;
-                if (c > 0) tailCounts[c] = (tailCounts[c] || 0) + 1;
-            }
-            let modalCount = 0, modalHits = 0;
-            for (const k of Object.keys(tailCounts)) {
-                if (tailCounts[k] > modalHits) { modalHits = tailCounts[k]; modalCount = Number(k); }
-            }
-            const scores = [];
-            for (let r = 0; r < N; r++) {
-                const row = rows[r] || [];
-                const nonEmpty = row.filter(v => String(v).trim() !== '');
-                if (nonEmpty.length < 2) { scores.push({ row: r, score: -100 }); continue; }
-                // (1) All-text bonus.
-                let allText = 0;
-                for (const v of nonEmpty) {
-                    if (sniffDtypeCell(String(v).trim()) === 'string') allText++;
-                }
-                const allTextFrac = allText / nonEmpty.length;
-                // (2) Uniqueness bonus.
-                const uniq = new Set(nonEmpty.map(v => String(v).trim())).size / nonEmpty.length;
-                // (3) No-repeats-below penalty.
-                const rowVals = new Set(nonEmpty.map(v => String(v).trim()));
-                let repeatsBelow = 0, checked = 0;
-                for (let k = r + 1; k < Math.min(rows.length, r + 11); k++) {
-                    const nrow = rows[k] || [];
-                    for (const v of nrow) {
-                        const s = String(v).trim();
-                        if (s && rowVals.has(s)) { repeatsBelow++; break; }
-                    }
-                    checked++;
-                }
-                const repeatPenalty = checked ? (repeatsBelow / checked) : 0;
-                // (4) Type-different-from-below bonus.
-                let typeDiff = 0;
-                for (let c = 0; c < row.length; c++) {
-                    const cellDtype = sniffDtypeCell(String(row[c] || '').trim());
-                    const belowSamples = [];
-                    for (let k = r + 1; k < Math.min(rows.length, r + 6); k++) {
-                        const vv = rows[k] && rows[k][c];
-                        if (vv != null && String(vv).trim() !== '') belowSamples.push(vv);
-                    }
-                    if (belowSamples.length < 2) continue;
-                    const belowDtype = sniffDtype(belowSamples);
-                    if (cellDtype === 'string' && belowDtype !== 'string' && belowDtype !== 'mixed') typeDiff += 1;
-                    else if (cellDtype !== 'string' && belowDtype === cellDtype) typeDiff -= 2;
-                }
-                const typeDiffNorm = row.length ? (typeDiff / row.length) : 0;
-                // (5) Column-count-matches-body bonus.
-                const countBonus = (modalCount && nonEmpty.length === modalCount) ? 1
-                    : (modalCount && Math.abs(nonEmpty.length - modalCount) <= 1) ? 0.5 : 0;
-                // (6) Earliness preference / preamble penalty.
-                const earliness = -(r / 40);
+        // ===== Header-row + data-start detection (heuristic-first, LLM fallback) =====
+        // Skill-agnostic: no dependency on the CSV Combiner or DOM. Any skill
+        // that reads tabular files can call detectHeaderAndDataStart/
+        // sniffTabularStructure/resolveTabularHeaderWithLlm directly.
+        // All row numbers inside this block are 1-based and refer to rowNums
+        // (the original file row number); callers convert to whatever
+        // indexing convention they use at the boundary (this app uses 0-based
+        // indexes into f.rows everywhere else - see sniffTabularStructure).
 
-                const score = allTextFrac * 3
-                    + uniq * 2
-                    - repeatPenalty * 3
-                    + typeDiffNorm * 2
-                    + countBonus * 2
-                    + earliness;
-                scores.push({ row: r, score });
+        const TYPED = new Set(['num', 'date', 'time', 'datetime', 'id', 'bool']);
+
+        // Classify a single cell into a coarse type. Order matters: most specific first.
+        function cellType(raw) {
+            const v = (raw == null ? '' : String(raw)).trim();
+            if (v === '') return 'empty';
+            if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return 'id';
+            if (/^[0-9a-f]{16,}$/i.test(v)) return 'id';                       // long hex serial
+            if (/^\d{4}-\d{2}-\d{2}[ tT]\d{1,2}:\d{2}(:\d{2})?/.test(v)) return 'datetime';
+            if (/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}[ ,]+\d{1,2}:\d{2}/.test(v)) return 'datetime';
+            if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return 'date';
+            if (/^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(v)) return 'date';
+            if (/^\d{1,2}:\d{2}(:\d{2})?\s*([ap]m)?$/i.test(v)) return 'time';
+            if (/^[+-]?\$?\d{1,3}(,\d{3})+(\.\d+)?%?$/.test(v)) return 'num';   // thousands sep
+            if (/^[+-]?\$?\d+(\.\d+)?([eE][+-]?\d+)?%?$/.test(v)) return 'num';
+            if (/^(true|false|yes|no)$/i.test(v)) return 'bool';
+            if (/[a-z]/i.test(v)) return 'text';                               // has a letter
+            return 'other';
+        }
+
+        function fracOf(types, pred) {
+            const ne = types.filter(t => t !== 'empty');
+            if (!ne.length) return 0;
+            return ne.filter(pred).length / ne.length;
+        }
+
+        // Statistical mode of an array. Named modeOf (not mode) because this
+        // file already has a top-level `let mode` for local/ollama/vision
+        // routing - a top-level `function mode` would collide with it.
+        function modeOf(arr) {
+            const m = new Map();
+            let best, bestC = -1;
+            for (const x of arr) {
+                const c = (m.get(x) || 0) + 1;
+                m.set(x, c);
+                if (c > bestC) { bestC = c; best = x; }
             }
-            scores.sort((a, b) => b.score - a.score);
-            // Fallback for very short/weak files: prefer row 0 if the best
-            // score is very low.
-            const best = scores[0];
-            let headerRow = 0;
-            if (best && best.score > 0.3) headerRow = best.row;
+            return best;
+        }
+
+        // Build per-row profiles. `raw` is normally already an array of cells
+        // (this app's f.rows is always string[][]); raw delimited strings are
+        // also accepted for portability to callers that haven't split yet.
+        function profileRows(rows, rowNums, delimiter) {
+            return rows.map((raw, i) => {
+                const cells = Array.isArray(raw) ? raw : String(raw).split(delimiter);
+                const types = cells.map(cellType);
+                return {
+                    pos: i,
+                    n: rowNums[i],
+                    cells,
+                    types,
+                    colCount: cells.length,
+                    nonEmpty: cells.filter(c => String(c).trim() !== '').length,
+                    textRatio: fracOf(types, t => t === 'text'),
+                    dataRatio: fracOf(types, t => TYPED.has(t)),
+                };
+            });
+        }
+
+        // Modal width + per-column dominant data type, learned from the data-looking rows.
+        // The middle/end samples are almost all real data, so they anchor this profile well.
+        function buildProfile(R) {
+            const modalCols = modeOf(R.map(r => r.colCount)) || Math.max(...R.map(r => r.colCount));
+            const tol = Math.max(1, Math.round(modalCols * 0.15));
+            let src = R.filter(r => Math.abs(r.colCount - modalCols) <= tol && r.dataRatio >= 0.4);
+            if (!src.length) src = R.filter(r => Math.abs(r.colCount - modalCols) <= tol);
+            const colType = [];
+            for (let c = 0; c < modalCols; c++) {
+                const ts = src.map(r => r.types[c]).filter(t => t && t !== 'empty');
+                colType[c] = modeOf(ts) || 'text';
+            }
+            const typedCols = colType.filter(t => TYPED.has(t)).length;
+            return { modalCols, tol, colType, typedCols };
+        }
+
+        // Does this row look like a real data record for this file's profile?
+        function rowMatchesData(r, prof) {
+            if (Math.abs(r.colCount - prof.modalCols) > prof.tol) return false;
+            let match = 0, checked = 0;
+            for (let c = 0; c < prof.modalCols; c++) {
+                if (prof.colType[c] === 'text' || r.types[c] === 'empty') continue;
+                checked++;
+                if (r.types[c] === prof.colType[c]) match++;
+            }
+            return checked === 0 ? r.dataRatio >= 0.5 : match / checked >= 0.6;
+        }
+
+        // Score how header-like each candidate row is. The strongest signal is the
+        // "type flip": in a column whose data is numeric/date/id, the header cell is text.
+        function scoreHeaders(R, prof, scanLimit) {
+            const limit = Math.min(R.length, scanLimit);
+            const scored = [];
+            for (let k = 0; k < limit; k++) {
+                const r = R[k];
+                let s = 0;
+
+                if (r.colCount >= prof.modalCols - prof.tol && r.colCount <= prof.modalCols + prof.tol) s += 25;
+                else if (r.colCount < prof.modalCols * 0.5) s -= 40;   // title / metadata line
+
+                s += r.textRatio * 25;
+                s += (1 - r.dataRatio) * 15;
+
+                let flips = 0, flipDen = 0;
+                for (let c = 0; c < prof.modalCols; c++) {
+                    if (TYPED.has(prof.colType[c])) {
+                        flipDen++;
+                        if (r.types[c] === 'text') flips++;
+                    }
+                }
+                const flipScore = flipDen ? flips / flipDen : 0;
+                s += flipScore * 45;                                   // dominant signal
+
+                const nx = R[k + 1];
+                if (nx && nx.n === r.n + 1 && rowMatchesData(nx, prof)) s += 20;  // data right below
+                if (rowMatchesData(r, prof)) s -= 30;                            // this IS data
+
+                const uniq = new Set(r.cells.map(c => String(c).trim()).filter(Boolean));
+                if (r.nonEmpty > 0 && uniq.size === r.nonEmpty) s += 6;          // headers rarely repeat
+
+                scored.push({ n: r.n, pos: r.pos, score: s, flipScore });
+            }
+            scored.sort((a, b) => b.score - a.score);
+            return scored;
+        }
+
+        // First real data row at or after the header. Walk only through contiguous
+        // sampled rows so settings/units/blank rows between header and data are skipped;
+        // if the sample has a gap right after the header, fall back to header + 1.
+        function computeDataStart(R, headerPos, prof) {
+            const header = R[headerPos];
+            for (let k = headerPos + 1; k < R.length; k++) {
+                const prev = R[k - 1];
+                const r = R[k];
+                const contiguous = prev && r.n === prev.n + 1;
+                if (!contiguous) {
+                    const nextSampled = R[headerPos + 1];
+                    return nextSampled ? nextSampled.n : header.n + 1;
+                }
+                if (rowMatchesData(r, prof)) return r.n;
+            }
+            return header.n + 1;
+        }
+
+        // Main heuristic entry point.
+        function detectHeaderAndDataStart(rows, opts = {}) {
+            const delimiter = opts.delimiter || '\t';
+            const rowNums = opts.rowNums || rows.map((_, i) => i + 1);
+            const scanLimit = opts.headerScanLimit || 25;   // header/data-start live near the top
+
+            const R = profileRows(rows, rowNums, delimiter);
+            const prof = buildProfile(R);
+            const scored = scoreHeaders(R, prof, scanLimit);
+
+            const best = scored[0];
+            const second = scored[1];
+            const gap = best && second ? best.score - second.score : Infinity;
+
+            // If the file has clear typed columns but nothing flips to text, there is likely no header.
+            const noHeader = !best || (prof.typedCols >= 3 && best.flipScore < 0.34);
+
+            const headerRow = best ? best.n : null;
+            const dataStartRow = best ? computeDataStart(R, best.pos, prof) : (rowNums[0] || 1);
+
+            const confidence = noHeader ? 'none' : gap >= 22 ? 'high' : gap >= 10 ? 'medium' : 'low';
+
+            return {
+                headerRow,
+                dataStartRow,
+                confidence,
+                noHeader,
+                modalCols: prof.modalCols,
+                method: 'heuristic',
+                _R: R,
+                _prof: prof,
+                candidates: scored.slice(0, 4).map(r => ({
+                    n: r.n, pos: r.pos, score: Math.round(r.score), flip: +r.flipScore.toFixed(2),
+                })),
+            };
+        }
+
+        // Pull a row number out of a small model's free-text answer. Prefer a number that
+        // is one of the offered candidates; then any integer; then a written ordinal.
+        function parseRowAnswer(text, candidateNums) {
+            if (!text) return null;
+            const lower = String(text).toLowerCase();
+            const valid = new Set(candidateNums || []);
+            const ints = (lower.match(/-?\d+/g) || []).map(Number).filter(Number.isFinite);
+            for (const n of ints) if (valid.has(n)) return n;
+            const ord = ['zeroth', 'first', 'second', 'third', 'fourth', 'fifth',
+                         'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+            for (let i = 1; i < ord.length; i++) {
+                if (new RegExp('\\b' + ord[i] + '\\b').test(lower)) {
+                    if (!valid.size || valid.has(i)) return i;
+                }
+            }
+            return ints.length ? ints[0] : null;
+        }
+
+        // Synchronous, heuristic-only structure detection for one file. rows/sampled
+        // follow this app's existing convention (0-based `index`, from
+        // sampleRowsForLLM). Returns 0-based headerRow/dataStartRow to match every
+        // other row index in this app (f.rows[headerRow], etc). Any skill that reads
+        // CSV/TSV/XLSX can call this directly - it has no CSV Combiner dependency.
+        function sniffTabularStructure(rows, sampled) {
+            if (!sampled || !sampled.length) {
+                return {
+                    headerRow: 0, dataStartRow: Math.min(1, rows.length), confidence: 'low',
+                    noHeader: true, candidates: [], method: 'heuristic', _R: null, _prof: null
+                };
+            }
+            const rowNums = sampled.map(s => s.index + 1);           // -> 1-based for the module
+            const det = detectHeaderAndDataStart(sampled.map(s => s.row), { rowNums });
+            return {
+                headerRow: det.headerRow != null ? det.headerRow - 1 : 0,
+                dataStartRow: det.dataStartRow != null ? Math.min(det.dataStartRow - 1, rows.length)
+                                                         : Math.min((det.headerRow || 0), rows.length),
+                confidence: det.noHeader ? 'low' : det.confidence,
+                noHeader: det.noHeader,
+                candidates: det.candidates,     // .n stays 1-based; only resolveTabularHeaderWithLlm reads these
+                method: det.method,
+                _R: det._R, _prof: det._prof    // cached to avoid recompute if the LLM step runs
+            };
+        }
+
+        // Async: ask the LLM to break a tie between the top 2-3 candidates, but only
+        // when the caller decides confidence isn't high enough. generate(prompt, maxTokens)
+        // is supplied by the caller (e.g. oneShotWithToken(token)) so this stays
+        // decoupled from any specific model-calling convention. redact(row) lets
+        // callers with sensitive data (e.g. PHI) mask candidate rows that turn out to
+        // be real data, not header - see the CSV Combiner's use for the policy.
+        async function resolveTabularHeaderWithLlm(structure, rows, generate, opts) {
+            opts = opts || {};
+            const redact = opts.redact || (row => row);
+            const preHeaderMax = typeof opts.preHeaderMax === 'number' ? opts.preHeaderMax : 6;
+            if (!structure._R || !structure.candidates || !structure.candidates.length) return structure;
+
+            const cands = structure.candidates.slice(0, 3);
+            const lines = cands.map(c => {
+                const r = structure._R.find(x => x.n === c.n);
+                const cells = r ? r.cells : [];
+                const shown = c.n <= preHeaderMax ? cells : redact(cells);
+                const preview = shown.slice(0, 8).map(v => String(v == null ? '' : v).trim()).join(' | ').slice(0, 160);
+                return 'Row ' + c.n + ': ' + preview;
+            }).join('\n');
+            const prompt = 'Here are a few candidate rows from a spreadsheet. Exactly one is the '
+                + 'column header row (the field names, e.g. "Timestamp", "Glucose mg/dL", "Serial '
+                + 'Number"). The others are a title, device metadata, or an actual data row. '
+                + 'Data-row cells below may be shape-redacted for privacy: digits as #, uppercase '
+                + 'letters as X, lowercase letters as x - do not decode them, just judge the shape.\n\n'
+                + lines + '\n\nWhich row number is the column header row? Answer with only the number.';
+
+            let out = '';
+            try { out = await generate(prompt, 12); } catch (_) { return structure; }
+            const pick = parseRowAnswer(out, cands.map(c => c.n));
+            if (pick == null) return structure;
+
+            structure.method = 'llm';
+            structure.confidence = 'medium';
+            if (pick === structure.headerRow + 1) return structure;   // LLM agreed with top candidate
+            const pos = structure._R.findIndex(r => r.n === pick);
+            if (pos < 0) return structure;
+            structure.headerRow = pick - 1;
+            structure.dataStartRow = Math.min(computeDataStart(structure._R, pos, structure._prof) - 1, rows.length);
+            return structure;
+        }
+
+        // Build the header-cell list and per-column dtype/sample profile for
+        // the CSV Combiner's verdict UI, given a resolved 0-based header row.
+        // Pulled out of the old csvForensics so it can be reused both at
+        // ingest time (buildForensics) and after an LLM header-row override
+        // (sniffStructure/resniffRemaining) without duplicating the loop.
+        function buildColumnsFromHeader(rows, headerRow) {
             const headerCells = (rows[headerRow] || []).map(v => String(v == null ? '' : v).trim());
-            // Drop trailing empty header cells only.
             while (headerCells.length && headerCells[headerCells.length - 1] === '') headerCells.pop();
             const columns = [];
             for (let c = 0; c < headerCells.length; c++) {
@@ -5041,13 +5253,28 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     role: 'other'
                 });
             }
+            return { headerCells, columns };
+        }
+
+        // CSV Combiner-specific wrapper: heuristic header/data-start detection
+        // (sniffTabularStructure) plus the dtype/sample column profile the
+        // verdict UI needs. rows is the full file; sampled is sampleRowsForLLM's
+        // output (top+middle+tail spanning the whole file, not just the head).
+        function buildForensics(rows, sampled) {
+            const s = sniffTabularStructure(rows, sampled);
+            const built = buildColumnsFromHeader(rows, s.headerRow);
             return {
-                headerRow,
-                preambleRows: headerRow,
-                headers: headerCells,
-                dataStart: headerRow + 1,
-                columns,
-                altCandidates: scores.slice(0, 3).map(s => ({ row: s.row, score: Number(s.score.toFixed(2)) }))
+                headerRow: s.headerRow,
+                preambleRows: s.headerRow,
+                headers: built.headerCells,
+                dataStart: s.dataStartRow,
+                columns: built.columns,
+                confidence: s.confidence,
+                noHeader: s.noHeader,
+                candidates: s.candidates,
+                method: s.method,
+                _R: s._R,
+                _prof: s._prof
             };
         }
 
@@ -6166,7 +6393,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                             f.sheetName = sel.value;
                             f.rows = f.sheets[sel.value] || [];
                             f.sampled = sampleRowsForLLM(f.rows);
-                            f.forensics = csvForensics(f.rows);
+                            f.forensics = buildForensics(f.rows, f.sampled);
                             f.verdict = null;
                         });
                         const lbl = document.createElement('label');
@@ -6202,7 +6429,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     });
                     for (const r of results) {
                         r.sampled = sampleRowsForLLM(r.rows);
-                        r.forensics = csvForensics(r.rows);
+                        r.forensics = buildForensics(r.rows, r.sampled);
                         r.verdict = null;
                         const key = (r.path || '') + '|' + r.name;
                         if (!ingestedFiles.some(g => ((g.path || '') + '|' + g.name) === key)) {
@@ -6235,41 +6462,27 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 + '  "confidence": "high" | "medium" | "low",\n'
                 + '  "notes": <one short sentence or null> }';
 
-            // Does a row look like real header cells (human-readable field
-            // names), or like a data row / preamble? Returns true when the
-            // row's cells are mostly plain text labels with letters and no
-            // strong data-cell signals (dates, timestamps, plain numbers).
-            function rowLooksLikeHeader(row) {
-                if (!row || !row.length) return false;
-                const cells = row.map(v => String(v == null ? '' : v).trim()).filter(v => v !== '');
-                if (cells.length < 2) return false;
-                let dataLike = 0, textLike = 0;
-                for (const c of cells) {
-                    if (/^\d{1,4}[\/\-]\d{1,2}[\/\-]\d{1,4}(\b|[T ])/.test(c)) { dataLike++; continue; }
-                    if (/^\d{1,2}:\d{2}(:\d{2})?/.test(c)) { dataLike++; continue; }
-                    if (/^-?\d+(\.\d+)?$/.test(c)) { dataLike++; continue; }
-                    if (/^\s*(true|false|yes|no|y|n)\s*$/i.test(c)) { dataLike++; continue; }
-                    if (/[A-Za-z]/.test(c) && c.length <= 60) textLike++;
-                }
-                return textLike >= 2 && dataLike <= Math.floor(cells.length / 4);
-            }
-            // Given the raw file rows and a proposed header row, decide
-            // whether the proposal survives a sanity check. Returns the
-            // proposal itself when plausible, or a better candidate found by
-            // scanning down. Used to guard against small models pinning
-            // header_row=0 on obviously-preamble rows.
-            function reviseHeaderRow(rows, proposed) {
-                const maxScan = Math.min(rows.length, 40);
-                if (Number.isFinite(proposed) && proposed >= 0 && proposed < maxScan && rowLooksLikeHeader(rows[proposed])) {
-                    return proposed;
-                }
-                for (let i = 0; i < maxScan; i++) {
-                    if (rowLooksLikeHeader(rows[i])) return i;
-                }
-                return Number.isFinite(proposed) ? proposed : 0;
-            }
+            // Header row and data-start row are decided upstream by the
+            // heuristic detector (f.forensics, set at ingest - see
+            // buildForensics/sniffTabularStructure/resolveTabularHeaderWithLlm
+            // above) before this ever runs, so normalizeVerdict/fallbackVerdict
+            // just read them off f.forensics rather than re-deriving them.
 
             async function sniffStructure(f, token) {
+                // Header/data-start: heuristic already ran at ingest. Only
+                // consult the LLM, with a narrow prompt naming just the top
+                // 2-3 candidates, when the heuristic itself isn't confident.
+                if (f.forensics && f.forensics.confidence !== 'high' && !f.forensics.noHeader) {
+                    f.forensics = await resolveTabularHeaderWithLlm(f.forensics, f.rows, oneShotWithToken(token),
+                        { redact: redactRow, preHeaderMax: 6 });
+                    if (f.forensics.method === 'llm') {
+                        const rebuilt = buildColumnsFromHeader(f.rows, f.forensics.headerRow);
+                        f.forensics.headers = rebuilt.headerCells;
+                        f.forensics.columns = rebuilt.columns;
+                    }
+                    if (token !== skillLoadToken) return null;
+                }
+
                 const digest = buildRedactedHead(f);
                 const prompt = SNIFF_PROMPT + '\n\n' + digest;
                 let parsed = null;
@@ -6286,23 +6499,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             }
 
             function normalizeVerdict(parsed, f) {
-                const forensicsFallback = f.forensics || csvForensics(f.rows);
-                let headerRow = Number.isFinite(parsed.header_row) && parsed.header_row >= 0 && parsed.header_row < f.rows.length
-                    ? Math.floor(parsed.header_row)
-                    : forensicsFallback.headerRow;
-                // Guard against small models picking row 0 on files with an
-                // obvious preamble. If the proposed row doesn't look like a
-                // real header, scan for the first row that does.
-                const revised = reviseHeaderRow(f.rows, headerRow);
-                let aiWasOverridden = false;
-                if (revised !== headerRow) {
-                    aiWasOverridden = true;
-                    headerRow = revised;
-                }
-                let dataStart = Number.isFinite(parsed.data_start_row) && parsed.data_start_row > headerRow && parsed.data_start_row <= f.rows.length
-                    ? Math.floor(parsed.data_start_row)
-                    : headerRow + 1;
-                if (aiWasOverridden) dataStart = headerRow + 1;
+                const forensics = f.forensics || buildForensics(f.rows, f.sampled || sampleRowsForLLM(f.rows));
+                const headerRow = forensics.headerRow;
                 const headerCells = (f.rows[headerRow] || []).map(v => String(v == null ? '' : v).trim());
                 while (headerCells.length && headerCells[headerCells.length - 1] === '') headerCells.pop();
                 // Use AI columns when their count roughly matches the header row,
@@ -6319,65 +6517,27 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         index: i,
                         raw: raw || ('column_' + (i + 1)),
                         role: hit && VERDICT_ROLES.includes(hit.role) ? hit.role : 'other',
-                        dtype: hit && VERDICT_DTYPES.includes(hit.dtype) ? hit.dtype : (forensicsFallback.columns[i] && forensicsFallback.columns[i].dtype) || 'string'
+                        dtype: hit && VERDICT_DTYPES.includes(hit.dtype) ? hit.dtype : (forensics.columns[i] && forensics.columns[i].dtype) || 'string'
                     };
                 });
                 fallbackRoleDetectVerdict(columns);
-                const conf = ['high', 'medium', 'low'].includes(parsed.confidence) ? parsed.confidence : 'medium';
                 let delimiter = ',';
                 if (parsed.delimiter === '\t' || parsed.delimiter === ';' || parsed.delimiter === '|') delimiter = parsed.delimiter;
                 return {
                     source: 'llm',
                     header_row: headerRow,
-                    data_start_row: Math.min(dataStart, f.rows.length),
+                    data_start_row: Math.min(forensics.dataStart, f.rows.length),
                     delimiter,
                     preamble_summary: typeof parsed.preamble_summary === 'string' ? parsed.preamble_summary : null,
                     vendor: typeof parsed.vendor === 'string' && parsed.vendor.trim() ? parsed.vendor.trim() : null,
                     columns,
-                    confidence: conf,
+                    confidence: forensics.confidence,
                     notes: typeof parsed.notes === 'string' ? parsed.notes : null
                 };
             }
 
             function fallbackVerdict(f) {
-                const forensics = f.forensics || csvForensics(f.rows);
-                let headerRow = forensics.headerRow;
-                const revised = reviseHeaderRow(f.rows, headerRow);
-                let overridden = false;
-                if (revised !== headerRow) { overridden = true; headerRow = revised; }
-                if (overridden) {
-                    // Rebuild columns at the revised row so the fallback path
-                    // matches what the user sees. Cheap.
-                    const rows = f.rows;
-                    const headerCells = (rows[headerRow] || []).map(v => String(v == null ? '' : v).trim());
-                    while (headerCells.length && headerCells[headerRow] === '') headerCells.pop();
-                    const columns = headerCells.map((raw, i) => {
-                        const samples = [];
-                        for (let k = headerRow + 1; k < rows.length && samples.length < 20; k++) {
-                            const v = rows[k] && rows[k][i];
-                            const s = v == null ? '' : String(v).trim();
-                            if (s !== '') samples.push(s);
-                        }
-                        return {
-                            index: i,
-                            raw: raw || ('column_' + (i + 1)),
-                            role: 'other',
-                            dtype: sniffDtype(samples) || 'string'
-                        };
-                    });
-                    fallbackRoleDetectVerdict(columns);
-                    return {
-                        source: 'js',
-                        header_row: headerRow,
-                        data_start_row: headerRow + 1,
-                        delimiter: /\.tsv$/i.test(f.name) ? '\t' : ',',
-                        preamble_summary: headerRow ? (headerRow + ' row(s) above the header') : null,
-                        vendor: null,
-                        columns,
-                        confidence: 'low',
-                        notes: 'The AI did not return a clean answer. A rule-based scan picked the first row that looks like real column names.'
-                    };
-                }
+                const forensics = f.forensics || buildForensics(f.rows, f.sampled || sampleRowsForLLM(f.rows));
                 const columns = forensics.columns.map((c, i) => ({
                     index: i,
                     raw: c.header || ('column_' + (i + 1)),
@@ -6393,8 +6553,12 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     preamble_summary: forensics.preambleRows ? (forensics.preambleRows + ' row(s) above the header') : null,
                     vendor: null,
                     columns,
-                    confidence: 'low',
-                    notes: 'The AI did not return a clean answer for this file. Used a rule-based fallback.'
+                    // Header row/data start are unaffected by this fallback - they
+                    // were already decided by buildForensics before this ever runs.
+                    // Only vendor/column-role detection (the AI call this function
+                    // is a fallback for) failed, so keep their own confidence.
+                    confidence: forensics.confidence,
+                    notes: 'Could not get an AI answer for column roles/vendor for this file; used text-matching instead.'
                 };
             }
 
@@ -6584,6 +6748,16 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         const f = later[i];
                         if (f._userEditedHeader || f._userEditedRoles) continue;   // never overwrite the user.
                         if (executeStatus) executeStatus('Applying your fixes to ' + f.name + ' (' + (i + 1) + ' of ' + later.length + ')...');
+                        if (f.forensics && f.forensics.confidence !== 'high' && !f.forensics.noHeader) {
+                            f.forensics = await resolveTabularHeaderWithLlm(f.forensics, f.rows, oneShotWithToken(myToken),
+                                { redact: redactRow, preHeaderMax: 6 });
+                            if (f.forensics.method === 'llm') {
+                                const rebuilt = buildColumnsFromHeader(f.rows, f.forensics.headerRow);
+                                f.forensics.headers = rebuilt.headerCells;
+                                f.forensics.columns = rebuilt.columns;
+                            }
+                            if (myToken !== skillLoadToken) return;
+                        }
                         const digest = buildRedactedHead(f);
                         const prompt = SNIFF_PROMPT + '\n\n' + 'Hints from files the user has already reviewed:\n' + hintBlock + '\n\n' + digest;
                         let parsed = null;
@@ -6632,14 +6806,20 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     body.innerHTML = '';
 
                     if (v.source === 'js') {
+                        // This is a fallback for the vendor/column-role AI call
+                        // specifically, not for header-row detection - that was
+                        // already decided (and is reflected in v.confidence
+                        // below) before this fallback ever runs.
                         const banner = document.createElement('div');
                         banner.className = 'csvc-banner warn';
-                        banner.textContent = 'The AI did not return a clean answer for this file. Rule-based defaults were used. Please double-check the header row and column roles.';
+                        let msg = 'Column roles and vendor name are text-matched - the AI could not produce a usable answer for this file. Please double-check the column roles below.';
+                        if (v.confidence !== 'high') msg += ' The header row was also auto-detected with lower confidence - double-check that too.';
+                        banner.textContent = msg;
                         body.appendChild(banner);
                     } else if (v.confidence === 'low') {
                         const banner = document.createElement('div');
                         banner.className = 'csvc-banner warn';
-                        banner.textContent = 'The AI was not very confident about this file. Please double-check the header row and column roles below.';
+                        banner.textContent = 'The header/data-start detection was not very confident about this file. Please double-check the header row below.';
                         body.appendChild(banner);
                     }
 
