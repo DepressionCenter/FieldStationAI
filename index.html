@@ -974,7 +974,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     <footer id="app-footer">© 2026 The Regents of the University of Michigan &nbsp;|&nbsp; <a href="https://depressioncenter.org" target="_blank" rel="noopener noreferrer">Eisenberg Family Depression Center</a></footer>
 
     <script type="module">
-        import { pipeline, TextStreamer, InterruptableStoppingCriteria, AutoProcessor, AutoModelForVision2Seq, Qwen2VLForConditionalGeneration, RawImage, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+        import { pipeline, TextStreamer, InterruptableStoppingCriteria, AutoProcessor, AutoModelForVision2Seq, Qwen2VLForConditionalGeneration, RawImage, env, LogLevel, ModelRegistry } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
 
         // Run ORT-WASM in a Web Worker so the main thread stays free to paint
         // and dispatch clicks (Stop, New Chat) between token dispatches. Without
@@ -982,6 +982,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // session.run() on the main thread and freeze the UI until generation
         // completes.
         env.backends.onnx.wasm.proxy = true;
+        // v4 additions, guarded individually: an uncaught error at module
+        // top-level would halt the rest of the script before anything wires up.
+        try { env.useWasmCache = true; } catch (e) { console.warn('env.useWasmCache unavailable:', e); }
+        try { env.logLevel = LogLevel.WARNING; } catch (e) { console.warn('env.logLevel unavailable:', e); }
 
         const chatBox = document.getElementById('chat-box');
         const input = document.getElementById('user-input');
@@ -1053,11 +1057,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 : settings.globalTemp;
         }
         const MAX_NEW_TOKENS = 512;
-        const STORE_KEY = 'webbyai_store_v2';
-        const OLD_STORE_KEY = 'webbyai_store_v1';
-        const ENC_KEY = 'webbyai_store_enc_v1';
-        const SEEN_KEY = 'webbyai_seen_v1';
-        const WELCOME_SEEN_KEY = 'webbyai_welcome_v1';
+        const STORE_KEY = 'fieldstation_store_v2';
+        const OLD_STORE_KEY = 'fieldstation_store_v1';
+        const ENC_KEY = 'fieldstation_store_enc_v1';
+        const SEEN_KEY = 'fieldstation_seen_v1';
+        const WELCOME_SEEN_KEY = 'fieldstation_welcome_v1';
         const MAX_PINNED = 5;
         const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
         const OLLAMA_URL = 'http://localhost:11434';
@@ -1073,8 +1077,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const KB_TOPK = 4;                                // hits per turn fed into the prompt
         const KB_CTX_TOKEN_BUDGET = 1500;                 // rough cap for the reference block
         const KB_TTL_MS = 7 * 24 * 60 * 60 * 1000;        // 7 days for cached index.json bodies
-        const KB_META_PREFIX = 'webbyai_kb_meta::';       // localStorage key prefix, one per KB URL
-        const KB_CACHE_NAME = 'webbyai-kb-v1';            // Cache Storage bucket for the JSON blobs
+        const KB_META_PREFIX = 'fieldstation_kb_meta::';   // localStorage key prefix, one per KB URL
+        const KB_CACHE_NAME = 'fieldstation-kb-v1';        // Cache Storage bucket for the JSON blobs
         const KB_INCLUDE_SUFFIX = 'Prefer and prioritize the reference excerpts when relevant; cite source URLs inline. You may also use general knowledge when excerpts do not cover the question.';
         const KB_LOCKDOWN_SUFFIX = 'Answer ONLY from the reference excerpts. If they do not contain the answer, say exactly that and list the closest excerpt URLs. Never use outside knowledge.';
 
@@ -1087,7 +1091,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Per-model "downloaded at least once" flag. Used to pick between the
         // progress bar (first download) vs. a plain "Loading please wait"
         // message (already in Cache Storage - just wiring things up).
-        const CACHED_PREFIX = 'webbyai_model_cached::';
+        const CACHED_PREFIX = 'fieldstation_model_cached::';
         const cachedFlag = id => CACHED_PREFIX + id;
         function markCached(id) { try { localStorage.setItem(cachedFlag(id), '1'); } catch {} }
         function isCached(id) { return !!localStorage.getItem(cachedFlag(id)); }
@@ -1098,7 +1102,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // shader-compile pass for rungs that will just fail again on this
         // GPU/driver. Same-machine only; safe to invalidate any time (worst
         // case we walk the ladder from the top like before).
-        const RUNG_PREFIX = 'webbyai_model_rung::';
+        const RUNG_PREFIX = 'fieldstation_model_rung::';
         const rungKey = id => RUNG_PREFIX + id;
         function saveModelRung(id, device, dtype) {
             if (!id || !device || !dtype) return;
@@ -1295,7 +1299,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         ];
         function findSkill(id) { for (const s of SKILLS) if (s.id === id) return s; return null; }
 
-        const TAXONOMIES_KEY = 'webbyai_taxonomies_v1';
+        const TAXONOMIES_KEY = 'fieldstation_taxonomies_v1';
 
         // Context window sizes (tokens) per model; unknown models fall back to 8192
         const MODEL_CTX = {
@@ -2639,7 +2643,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // this browser (e.g. GatherND rejecting int64 indices with "Unsupported
         // data type: 7"), skip that step forever for this profile. Load itself
         // succeeds on WebGPU, so we can only learn this at first inference.
-        const VISION_FORCE_WASM_FLAG = 'webbyai_smolvlm_force_wasm';
+        const VISION_FORCE_WASM_FLAG = 'fieldstation_smolvlm_force_wasm';
 
         // Shared loader for a vision model. Branches on family: Qwen2-VL runs
         // WebGPU-only with q4f16; SmolVLM keeps its WebGPU->WASM ladder with the
@@ -2986,7 +2990,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             input.focus();
         }
 
-        // Strip Jinja extensions Transformers.js 3.8.1's minijinja can't parse.
+        // Strip Jinja extensions that minijinja (Transformers.js's Rust-based Jinja engine) can't parse.
         // LFM2.5 ships a chat_template that uses {% generation %}...
         // {% endgeneration %} - an HF Tokenizers extension used to mark
         // assistant-generated spans for training-time loss masking. The
@@ -3011,8 +3015,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         // Delete every Cache Storage entry belonging to a specific HF repo id.
-        // Same URL-shape filter as cleanupModelCache but scoped to one model.
+        // Try v4's ModelRegistry.clear_cache first, then always still run the
+        // manual HF-URL cache walk below as a fallback/cross-version sweeper -
+        // it catches anything ModelRegistry doesn't know about (e.g. entries
+        // left over from the v3 runtime), so it runs regardless of whether
+        // clear_cache succeeded. Same URL-shape filter as cleanupModelCache
+        // but scoped to one model.
         async function purgeModelFromCache(repoId) {
+            if (typeof ModelRegistry !== 'undefined' && ModelRegistry && typeof ModelRegistry.clear_cache === 'function') {
+                try { await ModelRegistry.clear_cache(repoId); }
+                catch (e) { console.warn('ModelRegistry.clear_cache failed, falling back to manual sweep:', e); }
+            }
             if (!('caches' in window)) return;
             try {
                 const names = await caches.keys();
@@ -7656,9 +7669,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             } catch (e) { console.warn('Model flag cleanup failed:', e); }
 
             // 2) Drop stale entries from the transformers.js Cache Storage cache.
-            // Transformers.js v3 fetches from huggingface.co and stores under a
+            // Transformers.js fetches from huggingface.co and stores under a
             // named cache; the exact cache name has varied by version, so we
-            // scan every cache and match by URL path (which is stable).
+            // scan every cache and match by URL path (which is stable across versions).
             if (!('caches' in window)) return;
             try {
                 const names = await caches.keys();
