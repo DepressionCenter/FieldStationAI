@@ -1895,6 +1895,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (localStorage.getItem(WELCOME_SEEN_KEY)) return Promise.resolve();
             return showWelcome();
         }
+        // Model loads kicked off at startup can finish while the welcome modal is
+        // still open (its display no longer blocks the boot sequence); skip stealing
+        // focus from its CTA in that case.
+        function focusInputUnlessWelcoming() {
+            if (!welcomeModal.classList.contains('open')) input.focus();
+        }
 
         // ---------- Chat store ----------
 
@@ -3007,7 +3013,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 generator = null;
                 setStatus('');
                 setControls(true, false);
-                input.focus();
+                focusInputUnlessWelcoming();
                 return;
             }
 
@@ -3032,11 +3038,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     hideProgress();
                     setStatus(`Could not load ${friendlyVisionName(targetVisionId)}: ${errMsg(e)}`, true);
                     setControls(true, false);
-                    input.focus();
+                    focusInputUnlessWelcoming();
                     return;
                 }
                 setControls(true, false);
-                input.focus();
+                focusInputUnlessWelcoming();
                 return;
             }
 
@@ -3109,7 +3115,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     hideProgress();
                     setStatus('');
                     setControls(true, false);
-                    input.focus();
+                    focusInputUnlessWelcoming();
                     return;
                 } catch (e) {
                     if (stale()) return;
@@ -3156,7 +3162,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         hideProgress();
                         setStatus('');
                         setControls(true, false);
-                        input.focus();
+                        focusInputUnlessWelcoming();
                         return;
                     } catch (e) {
                         if (stale()) return;
@@ -3171,7 +3177,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             hideProgress();
             setStatus(`Could not load ${shortName}: ${lastErr}. Pick another model from the list.`, true);
             setControls(true, false);
-            input.focus();
+            focusInputUnlessWelcoming();
         }
 
         // Strip Jinja extensions that minijinja (Transformers.js's Rust-based Jinja engine) can't parse.
@@ -8713,7 +8719,12 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 if (kbParams.forceRefresh) { try { await purgeKbEntry(kbParams.url); } catch {} }
                 initRAG(kbParams.url, kbParams.mode, kbParams.forceRefresh);
             }
-            await showWelcomeIfFirstRun();
+            // Don't block the rest of boot on the popup being dismissed - it
+            // adds its 'open' class synchronously before returning, so it still
+            // shows immediately, but this lets initStore/cleanupModelCache/
+            // loadModel below run (and the default model start downloading)
+            // while the user is still reading it.
+            showWelcomeIfFirstRun();
             await initStore();
             pruneOld();
             if (locked) setStatus('Chats are locked. Reload and enter your PIN to access saved chats. This session will NOT be saved.', true);
