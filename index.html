@@ -323,6 +323,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
             border: none; background: none; cursor: pointer; color: var(--muted); font-size: 0.9rem;
         }
         #image-preview button:hover { color: #B91C1C; }
+        #tabular-preview {
+            display: none; align-items: center; gap: 8px; margin-bottom: 0.6rem;
+            border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 6px 10px;
+        }
+        #tabular-preview span { font-size: 0.8rem; color: var(--muted); flex-grow: 1; }
+        #tabular-preview button {
+            border: none; background: none; cursor: pointer; color: var(--muted); font-size: 0.9rem;
+        }
+        #tabular-preview button:hover { color: #B91C1C; }
         .chip {
             flex-shrink: 0; white-space: nowrap; font-size: 0.76rem; padding: 6px 12px; border-radius: 999px;
             border: 1px dashed var(--accent); background: none; color: var(--accent-dark);
@@ -845,7 +854,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     <header>
         <h1>Field Station <span>AI</span><small><sup>™</sup></small></h1>
         <select id="model-select" aria-label="Model" title="Applies to all tabs. Conversation context carries over when you switch.">
-                <option value="router:LiquidAI/LFM2.5-230M-ONNX" selected>LFM2.5-230M + Router (default, ~200 MB)</option>
+                <option value="router:LiquidAI/LFM2.5-350M-ONNX" selected>LFM2.5-350M + Router (default, ~276 MB)</option>
                 <option value="onnx-community/Qwen3-0.6B-ONNX">Qwen3-0.6B (~500 MB)</option>
                 <option value="HuggingFaceTB/SmolLM2-1.7B-Instruct">SmolLM2-1.7B (~925 MB)</option>
                 <option value="onnx-community/Llama-3.2-1B-Instruct-q4f16">Llama 3.2-1B (~1.2 GB)</option>
@@ -894,6 +903,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <img id="image-preview-thumb" alt="Pasted image preview">
         <span id="image-preview-label">Image attached - ask a question and Send.</span>
         <button id="image-preview-remove" title="Remove image">✕</button>
+    </div>
+    <div id="tabular-preview">
+        <span id="tabular-preview-label">File attached - ask a question and Send.</span>
+        <button id="tabular-preview-remove" title="Remove file">✕</button>
     </div>
 
     <div id="input-area">
@@ -1012,6 +1025,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const imagePreviewThumb = document.getElementById('image-preview-thumb');
         const imagePreviewLabel = document.getElementById('image-preview-label');
         const imagePreviewRemove = document.getElementById('image-preview-remove');
+        const tabularPreview = document.getElementById('tabular-preview');
+        const tabularPreviewLabel = document.getElementById('tabular-preview-label');
+        const tabularPreviewRemove = document.getElementById('tabular-preview-remove');
 
         // ---------- Constants ----------
 
@@ -1189,11 +1205,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const VISION_DTYPE_GPU = { embed_tokens: 'fp32', vision_encoder: 'q4', decoder_model_merged: 'q4' };
         const VISION_DTYPE_CPU = { embed_tokens: 'fp32', vision_encoder: 'fp32', decoder_model_merged: 'fp32' };
 
-        // Repos with no working q4f16 ladder step. LFM2.5-230M's docs list only
+        // Repos with no working q4f16 ladder step. LFM2.5's docs list only
         // Q4 and FP16 as supported WebGPU dtypes, so q4f16 would waste a failed
         // compile before falling back.
         const NO_Q4F16 = new Set([
-            'LiquidAI/LFM2.5-230M-ONNX'
+            'LiquidAI/LFM2.5-350M-ONNX'
         ]);
 
         // Per-model ladder overrides. Some repos have quantizations that fail
@@ -1213,56 +1229,207 @@ with this program. If not, see https://www.gnu.org/licenses/.
             ]
         };
 
-        // Router mode: a tiny dedicated NLP classifier (not an LLM prompt)
-        // picks the user's intent, and that picks a narrower, better-tailored
-        // system prompt for the base model to answer with - instead of one
-        // generic persona trying to cover every case.
-        const ROUTER_CLASSIFIER_ID = 'Xenova/distilbert-base-uncased-mnli';
-        const ROUTER_CANDIDATE_LABELS = [
-            'a greeting or casual small talk',
-            'a request to summarize something',
-            'a request for help with code or programming',
-            'a request to analyze data or numbers',
-            'a creative writing request',
-            'a factual question'
+        // Router v2: a tiered classifier (regex short-circuit -> shared MiniLM
+        // exemplar cosine -> narrow NLI tiebreak) picks the user's intent, and
+        // that picks a narrower, better-tailored system prompt fragment for the
+        // base model to answer with - instead of one generic persona trying to
+        // cover every case. See fieldstation-router-v2-design.md.
+        const ROUTER_NLI_ID = 'Xenova/nli-deberta-v3-xsmall';
+
+        // The eight real intents. Every persona/enhancement/token-cap table
+        // below is keyed by these ids. 'kb-question' and 'calculation' are new
+        // in v2; 'kb-question' deliberately aliases 'factual' everywhere except
+        // its own exemplar pool (see ROUTER_FRAGMENTS/ROUTER_ENHANCEMENTS/
+        // ROUTER_MAX_TOKENS below) - it exists as a distinct id for labeling
+        // and future divergence, not because it behaves differently today.
+        const CORE_INTENTS = ['greeting', 'summarize', 'code', 'data', 'creative', 'factual', 'kb-question', 'calculation'];
+
+        // Hint-only pseudo-intents: scored in the exact same exemplar-cosine
+        // space as CORE_INTENTS (so they compete for top1/top2 on equal
+        // footing), but they never get their own fragment/enhancement/cap -
+        // they borrow whichever CORE_INTENTS id `reuse` names. Their only job
+        // is to name a Skill for the hint mechanism (Section 6 of the design
+        // doc). Only built for skills that are actually 'ready' today
+        // (taxonomy-classify, csv-combine) - a coming-soon skill can never
+        // surface a hint, so there is no pseudo-intent for it yet. Adding one
+        // later (once e.g. emotions or transcribe ships) is just another
+        // entry here plus a matching ROUTER_EXEMPLARS list.
+        const HINT_INTENTS = {
+            'classify-into-categories': { reuse: 'data', skillId: 'taxonomy-classify' },
+            'merge-spreadsheets': { reuse: 'data', skillId: 'csv-combine' }
+        };
+
+        // Which (intent -> skill) pairs are eligible to fire the one-line
+        // "there's a Skill for this" hint. Resolved against SKILLS/findSkill()
+        // at runtime, so a renamed or still-coming-soon skill just silently
+        // never hints (findSkill lookup fails or status !== 'ready').
+        const SKILL_HINT_TABLE = [
+            { intent: 'summarize', skillId: 'summarize' },
+            { intent: 'classify-into-categories', skillId: 'taxonomy-classify' },
+            { intent: 'merge-spreadsheets', skillId: 'csv-combine' }
         ];
-        // Personas are the "who to be"; enhancements are the "how to reply this
-        // one time" - a per-turn suffix appended to the user's message so the
-        // model sees an explicit shape hint. Small instruct models tend to
-        // over-explain, so both leans are aggressively concise.
-        //
-        // Scope note: personas and enhancements apply ONLY to the forward pass
-        // of the turn that was classified. They swap into msgs[0] inside
-        // buildGenMessages and are never written to chat.messages, so nothing
-        // about a greeting persona carries into a later coding or factual turn
-        // in the same chat. The two initial welcome bubbles come from
-        // makeGreeting() and are unrelated to this routing table.
-        const ROUTER_PERSONAS = {
-            'a greeting or casual small talk': 'You reply to greetings and small talk with a single short, friendly sentence. Do not ask follow-up questions and do not elaborate.',
-            'a request to summarize something': 'You are a precise summarizer. Give a short faithful summary using only what was provided. Never add outside information. No preamble.',
-            'a request for help with code or programming': 'You are a precise programming assistant. Give correct, minimal code and one-line explanations. No preamble, no filler.',
-            'a request to analyze data or numbers': 'You are a careful data analyst. Base every claim only on the numbers given - never invent statistics. Be concise and direct.',
-            'a creative writing request': 'You are an imaginative creative writing assistant. Be vivid but concise - no meta commentary about the writing.',
-            'a factual question': 'You are a precise, helpful assistant. Answer directly and accurately in one or two sentences. Say so if you are unsure. No preamble.'
+
+        // Tier 1 exemplars: short example turns per intent (core + hint-only),
+        // encoded once with the shared MiniLM pipeline and cached. A turn's
+        // score for an intent is the max cosine similarity over that intent's
+        // list. Data, not logic - edit freely without touching routing code.
+        const ROUTER_EXEMPLARS = {
+            'greeting': [
+                'hi', 'hey there', 'good morning', 'thanks so much', 'thank you',
+                'ok cool', 'sounds good', 'hello!', 'hiya', 'appreciate it'
+            ],
+            'summarize': [
+                'give me the tl;dr of this', 'summarize the key points below',
+                "what's the short version", 'can you condense this into a few sentences',
+                'sum up what this document says', 'give me the highlights',
+                'boil this down for me', 'what are the main takeaways here',
+                'shorten this to a paragraph', 'recap what we just discussed'
+            ],
+            'code': [
+                'why does this function throw a null pointer', 'write a python script to reverse a string',
+                "what's wrong with this regex", 'fix this bug in my javascript',
+                'how do I loop over a dictionary in python', 'explain this stack trace',
+                'refactor this function to be more readable', 'write a sql query to join these two tables',
+                'what does this error message mean', 'how do I install this npm package'
+            ],
+            'data': [
+                "what's the average of this column", 'how many rows have missing values',
+                'is there a correlation here', 'what trend do you see in these numbers',
+                'which category has the highest count', 'summarize the statistics for this dataset',
+                'find outliers in this data', 'what does this spreadsheet show',
+                'compare these two columns', 'how many unique values are in this field'
+            ],
+            'creative': [
+                'write a short poem about autumn', 'give me a story opening',
+                'brainstorm names for a mascot', 'write a haiku about coffee',
+                'come up with a catchy slogan', 'write a short fictional dialogue',
+                'invent a fantasy creature', 'write song lyrics about the ocean',
+                'give me a creative metaphor for change', 'write a whimsical bedtime story'
+            ],
+            'factual': [
+                'what year did this happen', 'what does HbA1c measure',
+                'is this statement true', 'who discovered this',
+                "what's the capital of this country", 'define this term for me',
+                'how does this process work', 'what is the difference between these two things',
+                'when was this founded', 'what causes this condition'
+            ],
+            'kb-question': [
+                'what does the protocol say about this', 'per our documentation, how do we handle this',
+                'what is the policy on this', 'according to the guidelines, what should I do',
+                'what does the manual say about this procedure', 'is this covered in our documentation',
+                'what year did this happen', 'what does HbA1c measure',
+                'who discovered this', "what's the capital of this country"
+            ],
+            'calculation': [
+                'convert 5 miles to kilometers', "what's 15% of 240",
+                'how many days between these two dates', 'what is 12 times 8',
+                'add up these numbers for me', 'how many ounces in a liter',
+                'what is the square root of 144', 'convert 98.6 fahrenheit to celsius',
+                'divide 450 by 15', "what's 20 percent off of 60 dollars"
+            ],
+            'classify-into-categories': [
+                'sort these responses into categories', 'which bucket does this fall into',
+                'classify this text by topic', 'group these entries by theme',
+                'assign each response to a label', 'categorize these survey answers',
+                'what category best fits this comment', 'tag these items by type',
+                'sort this list into groups', 'bucket these entries by subject'
+            ],
+            'merge-spreadsheets': [
+                'combine these two csvs', 'merge these spreadsheets into one file',
+                'match up the columns between these exports', 'join these excel files together',
+                'combine multiple csv exports into one table', 'merge these data files',
+                'stitch these spreadsheets together', 'consolidate these exports into one sheet',
+                'align the columns across these files and merge them', 'combine these participant exports'
+            ]
         };
+
+        // Tier 2 (NLI tiebreak) candidate-label phrasing, one per id above.
+        // Only the winning turn's top 2-3 Tier 1 ids are ever passed as
+        // candidate_labels - never the full set.
+        const ROUTER_NLI_HYPOTHESES = {
+            'greeting': 'a greeting or casual small talk',
+            'summarize': 'a request to summarize something',
+            'code': 'a request for help with code or programming',
+            'data': 'a request to analyze data or numbers',
+            'creative': 'a creative writing request',
+            'factual': 'a factual question',
+            'kb-question': 'a factual question that may be answered by a knowledge base',
+            'calculation': 'a math calculation or unit conversion request',
+            'classify-into-categories': 'a request to sort or classify text into categories',
+            'merge-spreadsheets': 'a request to combine or merge spreadsheet files'
+        };
+
+        // Fragments are short ADDITIVE clauses, not full personas: the system
+        // prompt sent to the model is always SYSTEM_PROMPT.content (the
+        // neutral, anti-fabrication base) plus up to two of these appended -
+        // never a wholesale replacement. This is what makes "floor confidence"
+        // behave identically to router-off (composeFragments() below).
+        const ROUTER_FRAGMENTS = {
+            'greeting': 'Reply with a single short, friendly sentence. Do not ask follow-up questions.',
+            'summarize': 'Give a short faithful summary using only what was provided. Never add outside information.',
+            'code': 'Give correct, minimal code and a one-line explanation. No preamble, no filler.',
+            'data': 'Base every claim only on the numbers given - never invent statistics. Be concise and direct.',
+            'creative': 'Be vivid but concise - no meta commentary about the writing.',
+            'factual': 'Answer directly and accurately in one or two sentences. Say so if unsure.',
+            'calculation': 'Present the numeric result clearly, then at most one short sentence of context.'
+        };
+        // kb-question deliberately aliases factual's fragment (assigned after
+        // the literal so the two can never drift apart independently).
+        ROUTER_FRAGMENTS['kb-question'] = ROUTER_FRAGMENTS['factual'];
+
+        // Per-turn user-message enhancement (appended to the user's own last
+        // message, never to the system fragment). Single-intent, keyed to the
+        // winner only - never composed with a secondary intent.
         const ROUTER_ENHANCEMENTS = {
-            'a greeting or casual small talk': 'Answer in one short friendly sentence.',
-            'a request to summarize something': '[Reply with a compact summary - at most 3 bullets or 3 short sentences.]',
-            'a request for help with code or programming': '[Reply with the code and at most one short line of explanation.]',
-            'a request to analyze data or numbers': '[Reply with the analysis directly - numbers first, then a one-sentence takeaway.]',
-            'a creative writing request': '[Keep it brief and vivid. No preamble.]',
-            'a factual question': '[Answer in one or two sentences. Say "I am not sure" if unsure.]'
+            'greeting': 'Answer in one short friendly sentence.',
+            'summarize': '[Reply with a compact summary - at most 3 bullets or 3 short sentences.]',
+            'code': '[Reply with the code and at most one short line of explanation.]',
+            'data': '[Reply with the analysis directly - numbers first, then a one-sentence takeaway.]',
+            'creative': '[Keep it brief and vivid. No preamble.]',
+            'factual': '[Answer in one or two sentences. Say "I am not sure" if unsure.]',
+            'calculation': '[Reply with the number first, then at most one short sentence.]'
         };
+        ROUTER_ENHANCEMENTS['kb-question'] = ROUTER_ENHANCEMENTS['factual'];
+
         // Per-intent max_new_tokens override so a small model doesn't burn a
         // 1024-token budget answering "hi". Falls back to MAX_NEW_TOKENS.
         const ROUTER_MAX_TOKENS = {
-            'a greeting or casual small talk': 60,
-            'a request to summarize something': 384,
-            'a request for help with code or programming': 512,
-            'a request to analyze data or numbers': 384,
-            'a creative writing request': 320,
-            'a factual question': 160
+            'greeting': 60,
+            'summarize': 384,
+            'code': 512,
+            'data': 384,
+            'creative': 320,
+            'factual': 160,
+            'calculation': 100
         };
+        ROUTER_MAX_TOKENS['kb-question'] = ROUTER_MAX_TOKENS['factual'];
+
+        // Tuning knobs, named so they can be adjusted without touching logic.
+        // ROUTER_CONFIDENCE_FLOOR: below this score (cosine for Tier 1, NLI
+        // top score for Tier 2), the router uses the neutral base prompt with
+        // no fragment, suffix, cap, or hint - identical to router-off.
+        const ROUTER_CONFIDENCE_FLOOR = 0.32;
+        // ROUTER_TIER2_MARGIN: if Tier 1's top1-top2 gap is smaller than this,
+        // escalate to the Tier 2 NLI tiebreak on just those top candidates.
+        const ROUTER_TIER2_MARGIN = 0.08;
+        // ROUTER_STICKY_BIAS: small additive bonus to the previous turn's
+        // winning CORE intent's score before picking this turn's winner.
+        // Overwritten every turn (that overwrite IS the one-turn decay).
+        const ROUTER_STICKY_BIAS = 0.05;
+
+        // Tier 0 regexes: deterministic, zero-cost, checked before any model
+        // call. GREETING_RE is the pre-existing pattern, reused as-is.
+        const GREETING_RE = /^\s*(hi|hello|hey|yo|howdy|hiya|greetings|good\s+(morning|afternoon|evening|day|night)|thanks?|thank\s+you|thx|ty|ok(?:ay)?|cool|nice|sure|bye|goodbye|see\s+ya|later)[\s.!?]*$/i;
+        const URL_RE = /https?:\/\/\S+/i;
+        const SUMMARIZE_KEYWORD_RE = /\b(summar(y|ize|ise)|tl;?dr|key points|main points)\b/i;
+        const CODE_HINT_RE = /```|^\s*(function|def|class|import|from|const|let|var)\b/m;
+        // A prefix like "calculate"/"compute"/"what is"/"=" is optional; the
+        // remainder must be pure arithmetic characters with at least one
+        // operator, so this never misfires on ordinary prose containing a
+        // stray digit or hyphen.
+        const CALC_PREFIX_RE = /^\s*(calculate|compute|what'?s|what is|solve)\b[:\s]*/i;
+        const CALC_EXPR_RE = /^[\d\s+\-*/^%().]+$/;
+        const CALC_HAS_OP_RE = /[+\-*/^%]/;
 
         // ---------- Skills registry (Phase 9a) ----------
         // Declarative list of task-specific tools that run parallel to chat.
@@ -1303,7 +1470,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // Context window sizes (tokens) per model; unknown models fall back to 8192
         const MODEL_CTX = {
-            'LiquidAI/LFM2.5-230M-ONNX': 32768,
+            'LiquidAI/LFM2.5-350M-ONNX': 32768,
             'onnx-community/Qwen3-0.6B-ONNX': 32768,
             'HuggingFaceTB/SmolLM2-1.7B-Instruct': 8192,
             'onnx-community/Llama-3.2-1B-Instruct-q4f16': 131072,
@@ -1354,9 +1521,33 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const daisyFamily = 'smolvlm';
         let pendingImage = null; // { blob } awaiting Send in vision mode
 
+        // Pending tabular attachment: mirrors pendingImage's lifecycle (attach
+        // -> preview chip -> consumed once at Send -> cleared), but lives in
+        // normal chat/router mode rather than vision mode. profileText holds
+        // ONLY column names/dtypes/null-fraction - deliberately never sample
+        // cell values, so this path never needs destination-aware redaction.
+        let pendingTabularFile = null; // { name, rowCount, profileText }
+
         // Router mode
         let routerActive = false;     // true only when a "router:<base>" option is selected
-        let routerClassifier = null;  // cached zero-shot classifier, kept resident once loaded
+        // Tier 1: reuses ensureKbEmbedder()'s shared MiniLM pipeline directly,
+        // so there is no router-owned embedder variable here.
+        // Tier 1 exemplar vectors, built lazily once per session and cached
+        // forever (routerExemplarVecs is a flat Float32Array of KB_DIMS-wide
+        // rows; routerExemplarIds is the parallel per-row intent id).
+        let routerExemplarVecs = null;
+        let routerExemplarIds = null;
+        let routerExemplarBuilding = null; // in-flight promise guard
+        // Tier 2: NLI tiebreak classifier, loaded lazily (unlike Tier 1, which
+        // loads eagerly the moment a "router:" option is selected).
+        let routerNliClassifier = null;
+        let routerNliLoadingPromise = null;
+        let routerNliForceWasm = false; // session-only WebGPU GatherND/int64 fallback flag, mirrors skillForceWasm
+        // Sticky prior: previous turn's winning CORE intent per chat. Read
+        // once, then always overwritten with this turn's winner - that
+        // overwrite is the "decays after one turn" behavior; no extra
+        // bookkeeping needed. Cleared entirely on model switch (loadModelInner).
+        const routerStickyByChat = new Map();
 
         // Set when the user clicks New Chat mid-generation. Consumers in
         // handleSend check it to skip DOM writes, discard the partial reply,
@@ -1829,7 +2020,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 updated: Date.now(),
                 greeting: makeGreeting(),
                 messages: [structuredClone(SYSTEM_PROMPT)],
-                draft: ''
+                draft: '',
+                hintedSkills: [] // skill ids already hinted this chat, so a hint fires at most once per skill per chat
             };
             store.chats.push(chat);
             store.activeId = chat.id;
@@ -2785,7 +2977,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
             setStatus('');
             currentModelId = value;
             clearImagePreview(); // a queued image belongs to the previous model's mode
+            clearPendingTabularFile(); // a queued attachment belongs to the previous model's mode
             routerActive = false;
+            routerStickyByChat.clear(); // sticky prior resets on model switch, per the router v2 design
             // Any generation in progress was already interrupted by the change
             // event, but busy could linger if a previous load failed hard;
             // reset it here so the send button can't stay stuck disabled.
@@ -2850,25 +3044,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (value.startsWith('router:')) {
                 targetId = value.slice(7);
                 currentModelId = targetId; // route MODEL_CTX / think-token predicates / etc. against the real base model id
-                if (!routerClassifier) {
-                    try {
-                        const cachedRc = isCached(ROUTER_CLASSIFIER_ID);
-                        const cb = makeCacheAwareProgress(cachedRc, 'Downloading router classifier to your browser...');
-                        const rc = await pipeline('zero-shot-classification', ROUTER_CLASSIFIER_ID, {
-                            dtype: 'q8',
-                            progress_callback: cb
-                        });
-                        if (stale()) return;
-                        routerClassifier = rc;
-                        markCached(ROUTER_CLASSIFIER_ID);
-                        finishProgress();
-                        hideProgress();
-                    } catch (e) {
-                        if (stale()) return;
-                        hideProgress();
-                        setStatus(`Could not set up the helper that tailors replies to your question type. The main model will still answer, but its replies may be less focused.`, true);
-                        routerClassifier = null; // classifyIntent() will no-op and generation still works
-                    }
+                // Tier 1 (shared MiniLM) warms up eagerly here, occupying the
+                // lifecycle slot the old DistilBERT classifier used to hold.
+                // Tier 2 (NLI) stays lazy - it only loads on a turn that
+                // actually needs a low-margin tiebreak (see routeIntent).
+                try {
+                    await ensureKbEmbedder();
+                } catch (e) {
+                    if (stale()) return;
+                    setStatus(`Could not set up the helper that tailors replies to your question type. The main model will still answer, but its replies may be less focused.`, true);
                 }
                 routerActive = true;
             }
@@ -3187,6 +3371,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
             pendingImage = null;
         }
 
+        function showTabularPreview(name, rowCount) {
+            tabularPreviewLabel.textContent = `"${name}" attached - ${rowCount} rows. Ask your question and Send.`;
+            tabularPreview.style.display = 'flex';
+        }
+
+        function clearPendingTabularFile() {
+            tabularPreview.style.display = 'none';
+            pendingTabularFile = null;
+        }
+
         // Lazily load a second, independent SmolVLM instance for the daisy chain,
         // so it never competes with visionModel used by the dedicated vision mode.
         // Loaded once per session, then reused. Always SmolVLM-500M regardless
@@ -3232,26 +3426,23 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 let question = userText ? userText.slice(0, 200) : 'Describe this image.';
 
                 // Steer the caption prompt by the user's intent (if any typed
-                // text and the router classifier is reachable). code-shaped
-                // prompts should ask for a transcription, data-shaped prompts
-                // should ask for numbers/labels/axes, etc. If the classifier
-                // isn't loaded yet we opportunistically pull it in - it's tiny
-                // (~70 MB) compared to SmolVLM already downloading here.
+                // text). code-shaped prompts should ask for a transcription,
+                // data-shaped prompts should ask for numbers/labels/axes, etc.
+                // No chat/sticky context for a one-off caption call, so
+                // routeIntent is called with chat=null.
                 if (userText) {
-                    // fire-and-forget kick, but await it here so we can actually
-                    // use the classifier this call. It's cheap once cached.
-                    await ensureRouterClassifier();
-                    const intent = await classifyIntent(userText);
-                    if (intent === 'a request for help with code or programming') {
+                    const route = await routeIntent(userText, null);
+                    const intent = route && !route.floor ? route.intent : null;
+                    if (intent === 'code') {
                         question = 'Transcribe any code visible in this image, exactly as shown.';
-                    } else if (intent === 'a request to analyze data or numbers') {
+                    } else if (intent === 'data') {
                         question = 'List the numeric values, labels, and axes shown in this image.';
-                    } else if (intent === 'a factual question') {
+                    } else if (intent === 'factual' || intent === 'kb-question') {
                         question = 'Describe this image briefly, focusing on what would help answer: ' + userText.slice(0, 160);
-                    } else if (intent === 'a request to summarize something') {
+                    } else if (intent === 'summarize') {
                         question = 'Summarize the content visible in this image in one or two sentences.';
                     }
-                    // greeting/creative/unknown fall through to the user's own text
+                    // greeting/creative/calculation/unknown fall through to the user's own text
                 }
 
             const description = await visionInferWithFallback(
@@ -3281,63 +3472,321 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         // ---------- Generation ----------
+        // ---------- Router v2: tiered intent classification ----------
+        // Tier 0 (regex) -> Tier 1 (shared MiniLM exemplar cosine) -> Tier 2
+        // (narrow NLI tiebreak) -> confidence floor / fragment composition /
+        // hint resolution. See fieldstation-router-v2-design.md section 3.
 
-        // Classifies user intent with the dedicated NLP classifier (not an LLM
-        // prompt - a real zero-shot-classification model, so it's fast and
-        // doesn't burn generation budget). Returns null on any failure so
-        // generation always falls back gracefully to the plain persona.
-        // Short, unambiguous greetings/small-talk get a hardcoded intent -
-        // cheaper and more reliable than the classifier on 5-character input,
-        // and works even if the classifier failed to load.
-        const GREETING_RE = /^\s*(hi|hello|hey|yo|howdy|hiya|greetings|good\s+(morning|afternoon|evening|day|night)|thanks?|thank\s+you|thx|ty|ok(?:ay)?|cool|nice|sure|bye|goodbye|see\s+ya|later)[\s.!?]*$/i;
-
-        async function classifyIntent(text) {
-            if (text.length < 40 && GREETING_RE.test(text.trim())) {
-                return 'a greeting or casual small talk';
+        // --- Safe arithmetic (calculation dispatch) ---
+        // Hand-rolled recursive-descent parser over + - * / % ^ ( ) and
+        // decimal numbers only. No eval()/Function() - CALC_EXPR_RE already
+        // rejects any character outside this set before this ever runs, so
+        // this is safe by construction, not just by the regex pre-filter.
+        function safeEvalArithmetic(expr) {
+            let i = 0;
+            const s = expr.replace(/\s+/g, '');
+            if (!s) throw new Error('empty expression');
+            function peek() { return s[i]; }
+            function parseNumber() {
+                const start = i;
+                while (i < s.length && /[\d.]/.test(s[i])) i++;
+                if (i === start) throw new Error('expected number at ' + i);
+                const n = parseFloat(s.slice(start, i));
+                if (!isFinite(n)) throw new Error('invalid number');
+                return n;
             }
-            if (!routerClassifier) return null;
+            function parseUnary() {
+                if (peek() === '-') { i++; return -parseUnary(); }
+                if (peek() === '+') { i++; return parseUnary(); }
+                if (peek() === '(') {
+                    i++;
+                    const v = parseExpr();
+                    if (peek() !== ')') throw new Error('expected )');
+                    i++;
+                    return v;
+                }
+                return parseNumber();
+            }
+            function parsePow() {
+                let v = parseUnary();
+                if (peek() === '^') { i++; v = Math.pow(v, parsePow()); }
+                return v;
+            }
+            function parseTerm() {
+                let v = parsePow();
+                while (peek() === '*' || peek() === '/' || peek() === '%') {
+                    const op = s[i]; i++;
+                    const rhs = parsePow();
+                    if ((op === '/' || op === '%') && rhs === 0) throw new Error('division by zero');
+                    v = op === '*' ? v * rhs : op === '/' ? v / rhs : v % rhs;
+                }
+                return v;
+            }
+            function parseExpr() {
+                let v = parseTerm();
+                while (peek() === '+' || peek() === '-') {
+                    const op = s[i]; i++;
+                    const rhs = parseTerm();
+                    v = op === '+' ? v + rhs : v - rhs;
+                }
+                return v;
+            }
+            const result = parseExpr();
+            if (i !== s.length) throw new Error('unexpected trailing input at ' + i);
+            if (!isFinite(result)) throw new Error('non-finite result');
+            return result;
+        }
+        // Only a clean arithmetic expression gets a deterministic dispatch
+        // value. A natural-language unit-conversion request ("how many feet
+        // in a mile") still gets the calculation persona/enhancement, just
+        // without an injected computed result - generation handles it.
+        function evalArithmeticIfPresent(text) {
+            const stripped = text.trim().replace(CALC_PREFIX_RE, '').replace(/=\s*$/, '').trim();
+            if (!CALC_EXPR_RE.test(stripped) || !CALC_HAS_OP_RE.test(stripped)) return null;
             try {
-                const result = await routerClassifier(text.slice(0, 400), ROUTER_CANDIDATE_LABELS);
-                return result.labels[0];
+                return safeEvalArithmetic(stripped);
             } catch (e) {
-                console.error('Router classification failed:', e);
                 return null;
             }
         }
 
-        // Lazily load the router classifier from any code path that could
-        // benefit from intent routing (vision Q&A, daisy chain). If a router
-        // option is picked, loadModel already wires this up during startup -
-        // this is the "someone else wants a classification" hook. Loads at
-        // most once per session; if the load fails, routerClassifier stays
-        // null and callers fall back gracefully.
-        let routerLoadingPromise = null;
-        function ensureRouterClassifier() {
-            if (routerClassifier) return Promise.resolve(routerClassifier);
-            if (routerLoadingPromise) return routerLoadingPromise;
-            routerLoadingPromise = (async () => {
+        // --- Tier 1: shared MiniLM exemplar cosine ---
+        // Reuses ensureKbEmbedder() directly - the literal shared-pipeline
+        // reuse point the design doc asks for. No separate router embedder.
+        async function buildRouterExemplarVecs() {
+            if (routerExemplarVecs) return;
+            if (routerExemplarBuilding) return routerExemplarBuilding;
+            routerExemplarBuilding = (async () => {
+                const em = await ensureKbEmbedder();
+                const ids = [];
+                const strings = [];
+                const allIntents = Object.keys(ROUTER_EXEMPLARS);
+                for (const id of allIntents) {
+                    for (const s of ROUTER_EXEMPLARS[id]) { ids.push(id); strings.push(s); }
+                }
+                const out = await em(strings, { pooling: 'mean', normalize: true });
+                routerExemplarVecs = out.data; // flat Float32Array, ids.length * KB_DIMS
+                routerExemplarIds = ids;
+            })().catch(e => {
+                routerExemplarBuilding = null;
+                throw e;
+            });
+            return routerExemplarBuilding;
+        }
+        // Per-intent score = max cosine (dot product; both sides normalized)
+        // over that intent's exemplar rows. Returns { qVec, scores }.
+        async function scoreTier1(text) {
+            const em = await ensureKbEmbedder();
+            await buildRouterExemplarVecs();
+            const out = await em(text.slice(0, 400), { pooling: 'mean', normalize: true });
+            const qVec = out.data;
+            const dims = KB_DIMS;
+            const scores = {};
+            for (let r = 0; r < routerExemplarIds.length; r++) {
+                const off = r * dims;
+                let dot = 0;
+                for (let d = 0; d < dims; d++) dot += qVec[d] * routerExemplarVecs[off + d];
+                const id = routerExemplarIds[r];
+                if (!(id in scores) || dot > scores[id]) scores[id] = dot;
+            }
+            return { qVec, scores };
+        }
+
+        // --- Tier 2: NLI tiebreak (Xenova/nli-deberta-v3-xsmall) ---
+        // Lazy-loaded (unlike Tier 1's shared MiniLM, which loads eagerly the
+        // moment a "router:" option is picked - see loadModelInner).
+        function ensureRouterNli() {
+            if (routerNliClassifier) return Promise.resolve(routerNliClassifier);
+            if (routerNliLoadingPromise) return routerNliLoadingPromise;
+            routerNliLoadingPromise = (async () => {
                 try {
-                    const cachedRc = isCached(ROUTER_CLASSIFIER_ID);
-                    const cb = makeCacheAwareProgress(cachedRc, 'Downloading router classifier to your browser...');
-                    const rc = await pipeline('zero-shot-classification', ROUTER_CLASSIFIER_ID, {
-                        dtype: 'q8',
-                        progress_callback: cb
-                    });
-                    routerClassifier = rc;
-                    markCached(ROUTER_CLASSIFIER_ID);
+                    const cachedRc = isCached(ROUTER_NLI_ID);
+                    const cb = makeCacheAwareProgress(cachedRc, 'Downloading router tiebreak model to your browser...');
+                    let ladder = routerNliForceWasm ? [
+                        { device: 'wasm', dtype: 'q8' }
+                    ] : [
+                        { device: 'webgpu', dtype: 'q8' },
+                        { device: 'wasm', dtype: 'q8' }
+                    ];
+                    ladder = reorderLadderBySavedRung(ladder, loadModelRung(ROUTER_NLI_ID));
+                    let rc = null, lastErr = 'unknown error';
+                    for (const step of ladder) {
+                        try {
+                            rc = await pipeline('zero-shot-classification', ROUTER_NLI_ID, {
+                                dtype: step.dtype, device: step.device, progress_callback: cb
+                            });
+                            saveModelRung(ROUTER_NLI_ID, step.device, step.dtype);
+                            break;
+                        } catch (e) {
+                            lastErr = errMsg(e);
+                            console.warn('Router tiebreak load failed [' + step.dtype + '/' + step.device + ']:', e);
+                        }
+                    }
+                    if (!rc) throw new Error(lastErr);
+                    routerNliClassifier = rc;
+                    markCached(ROUTER_NLI_ID);
                     finishProgress();
                     hideProgress();
                     return rc;
                 } catch (e) {
                     hideProgress();
-                    console.error('Router classifier lazy load failed:', e);
+                    console.error('Router tiebreak lazy load failed:', e);
                     return null;
                 } finally {
-                    routerLoadingPromise = null;
+                    routerNliLoadingPromise = null;
                 }
             })();
-            return routerLoadingPromise;
+            return routerNliLoadingPromise;
         }
+        // Mirrors the skills' tryClassify wrapper: on the known WebGPU
+        // GatherND/int64 failure, reload on WASM (session-only) and retry once.
+        async function tryClassifyRouterNli(text, hyps, opts) {
+            const classifier = await ensureRouterNli();
+            if (!classifier) return null;
+            try {
+                return await classifier(text, hyps, opts);
+            } catch (e) {
+                if (!isWebGpuInt64Failure(e)) throw e;
+                console.warn('Router tiebreak WebGPU int64 failure; reloading on WASM for this session.');
+                routerNliForceWasm = true;
+                routerNliClassifier = null;
+                const reloaded = await ensureRouterNli();
+                if (!reloaded) throw new Error('Could not reload the router tiebreak model.');
+                return await reloaded(text, hyps, opts);
+            }
+        }
+
+        // --- Fragment composition + hint text ---
+        // Base is ALWAYS the neutral SYSTEM_PROMPT; fragments are short
+        // additive clauses on top. This is what makes floor-confidence
+        // behavior identical to router-off (design doc section 3.3).
+        function composeFragments(intent, secondaryIntent, hintSkillId) {
+            let text = SYSTEM_PROMPT.content;
+            if (ROUTER_FRAGMENTS[intent]) text += ' ' + ROUTER_FRAGMENTS[intent];
+            if (secondaryIntent && secondaryIntent !== intent && ROUTER_FRAGMENTS[secondaryIntent]) {
+                text += ' ' + ROUTER_FRAGMENTS[secondaryIntent];
+            }
+            if (hintSkillId) {
+                const frag = hintFragmentFor(hintSkillId);
+                if (frag) text += ' ' + frag;
+            }
+            return text;
+        }
+        function hintFragmentFor(skillId) {
+            const skill = findSkill(skillId);
+            if (!skill || skill.status !== 'ready') return null;
+            return `This app also has a "${skill.name}" skill in the Skills panel for tasks like this - `
+                + 'you may mention it in one short sentence if relevant.';
+        }
+
+        // --- Main orchestrator ---
+        // Returns { intent, secondaryIntent, hintSkillId, qVec, floor }.
+        // `intent` is null when floor is true (neutral base, no fragment/
+        // suffix/cap/hint - identical to router-off). `chat` may be null
+        // (vision/daisy call sites) - sticky prior and hint memory are then
+        // skipped since there's no chat to key them on.
+        async function routeIntent(text, chat) {
+            const trimmed = text.trim();
+
+            // Tier 0: regex short-circuit. Never produces a hint (design doc
+            // risk: hints must never fire from Tier 0's file-presence heuristic
+            // alone, so Tier 0 as a whole is kept hint-free).
+            if (trimmed.length < 40 && GREETING_RE.test(trimmed)) {
+                return { intent: 'greeting', secondaryIntent: null, hintSkillId: null, qVec: null, floor: false };
+            }
+            if (pendingTabularFile) {
+                return { intent: 'data', secondaryIntent: null, hintSkillId: null, qVec: null, floor: false };
+            }
+            const calcResult = evalArithmeticIfPresent(trimmed);
+            if (calcResult !== null) {
+                return { intent: 'calculation', secondaryIntent: null, hintSkillId: null, qVec: null, floor: false, calcResult };
+            }
+            if (URL_RE.test(trimmed)) {
+                const intent = SUMMARIZE_KEYWORD_RE.test(trimmed) ? 'summarize' : 'factual';
+                return { intent, secondaryIntent: null, hintSkillId: null, qVec: null, floor: false };
+            }
+            if (CODE_HINT_RE.test(text)) {
+                return { intent: 'code', secondaryIntent: null, hintSkillId: null, qVec: null, floor: false };
+            }
+
+            // Tier 1: shared MiniLM exemplar cosine, with a one-turn sticky
+            // bias toward the previous winning core intent for this chat.
+            let qVec = null, top1Id = null, top1Score = -Infinity, top2Id = null, top2Score = -Infinity;
+            try {
+                const { qVec: v, scores } = await scoreTier1(trimmed);
+                qVec = v;
+                const sticky = chat ? routerStickyByChat.get(chat.id) : null;
+                for (const id of Object.keys(scores)) {
+                    let s = scores[id];
+                    if (sticky && id === sticky) s += ROUTER_STICKY_BIAS;
+                    if (s > top1Score) { top2Id = top1Id; top2Score = top1Score; top1Id = id; top1Score = s; }
+                    else if (s > top2Score) { top2Id = id; top2Score = s; }
+                }
+            } catch (e) {
+                console.error('Router Tier 1 failed:', e);
+                return { intent: null, secondaryIntent: null, hintSkillId: null, qVec: null, floor: true };
+            }
+            if (top1Id === null) return { intent: null, secondaryIntent: null, hintSkillId: null, qVec, floor: true };
+
+            let winnerId = top1Id, winnerScore = top1Score;
+            const margin = top1Score - top2Score;
+
+            // Tier 2: NLI tiebreak, only on a low margin, only over the
+            // top 2-3 Tier 1 candidates - never the full label set.
+            if (margin < ROUTER_TIER2_MARGIN && top2Id) {
+                try {
+                    const candIds = [top1Id, top2Id];
+                    const hyps = candIds.map(id => ROUTER_NLI_HYPOTHESES[id] || id);
+                    const res = await tryClassifyRouterNli(trimmed.slice(0, 400), hyps);
+                    if (res && res.labels && res.labels.length) {
+                        const idx = hyps.indexOf(res.labels[0]);
+                        if (idx !== -1) { winnerId = candIds[idx]; winnerScore = res.scores[0]; }
+                    }
+                } catch (e) {
+                    console.error('Router Tier 2 failed, using Tier 1 winner:', e);
+                }
+            }
+
+            // Confidence floor.
+            if (winnerScore < ROUTER_CONFIDENCE_FLOOR) {
+                return { intent: null, secondaryIntent: null, hintSkillId: null, qVec, floor: true };
+            }
+
+            const reuse = id => (HINT_INTENTS[id] ? HINT_INTENTS[id].reuse : id);
+            const intent = reuse(winnerId);
+            let secondaryIntent = null;
+            if (top2Id && top2Score >= ROUTER_CONFIDENCE_FLOOR) {
+                const secId = reuse(top2Id);
+                if (secId !== intent) secondaryIntent = secId;
+            }
+
+            // Hint resolution: only from Tier 1/2 (tier !== 0, guaranteed
+            // here since Tier 0 already returned above), only above floor,
+            // only 'ready' skills, at most once per skill per chat.
+            let hintSkillId = null;
+            const hintEntry = SKILL_HINT_TABLE.find(h => h.intent === winnerId);
+            if (hintEntry) {
+                const skill = findSkill(hintEntry.skillId);
+                const already = chat && chat.hintedSkills && chat.hintedSkills.includes(hintEntry.skillId);
+                if (skill && skill.status === 'ready' && !already) {
+                    hintSkillId = hintEntry.skillId;
+                    if (chat) {
+                        chat.hintedSkills = chat.hintedSkills || [];
+                        chat.hintedSkills.push(hintSkillId);
+                        saveStore();
+                    }
+                }
+            }
+
+            if (chat) routerStickyByChat.set(chat.id, intent);
+
+            return { intent, secondaryIntent, hintSkillId, qVec, floor: false };
+        }
+
+        // Phase 9c hook: once the whisper daisy chain lands, transcribe
+        // first, then call routeIntent() on the transcript text and route
+        // normally. Not called from anywhere yet.
+        function routeAudioTranscriptStub() {}
 
         // ---------- KB / RAG ----------
 
@@ -3477,10 +3926,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return { site: idx.site || '', chunks: idx.chunks, dims: idx.dims, vecs };
         }
 
-        // Lazy embedder load. Mirrors ensureRouterClassifier: single in-flight
+        // Lazy embedder load. Mirrors ensureRouterNli: single in-flight
         // promise, per-session resident once loaded. Uses the same webgpu q4f16
         // -> q4 -> wasm/q4 -> wasm/fp32 fallback ladder as loadModel, since
-        // small feature-extraction models tolerate the same envelope.
+        // small feature-extraction models tolerate the same envelope. This is
+        // the exact pipeline instance router v2's Tier 1 reuses directly.
         function ensureKbEmbedder() {
             if (kbState.embedder) return Promise.resolve(kbState.embedder);
             if (kbState.embedderLoading) return kbState.embedderLoading;
@@ -3529,11 +3979,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // Brute-force top-k over pre-normalized vectors. noThreshold=true is
         // used only for the "closest URLs" list in the lockdown-empty case.
-        async function retrieveKb(query, k, noThreshold) {
+        async function retrieveKb(query, k, noThreshold, precomputedVec) {
             if (!kbState.active || !kbState.vecs || !kbState.chunks) return [];
-            const em = await ensureKbEmbedder();
-            const out = await em(query, { pooling: 'mean', normalize: true });
-            const q = out.data; // Float32Array of length dims
+            let q;
+            if (precomputedVec) {
+                q = precomputedVec; // reuse router Tier 1's embedding - one MiniLM pass per turn, not two
+            } else {
+                const em = await ensureKbEmbedder();
+                const out = await em(query, { pooling: 'mean', normalize: true });
+                q = out.data; // Float32Array of length dims
+            }
             const dims = kbState.dims;
             const N = kbState.chunks.length;
             const vecs = kbState.vecs;
@@ -3986,13 +4441,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
             try {
                 // Vision routing: classify the typed question so we can steer
-                // SmolVLM with an intent-tailored suffix. Kick off classifier
-                // load in parallel with the image encode - if it doesn't finish
-                // in time (or fails), we fall back to the unsteered question.
+                // SmolVLM with an intent-tailored suffix. No chat context for
+                // a one-off vision turn, so routeIntent is called with chat=null.
                 let steeredQuestion = question;
                 if (text) {
-                    await ensureRouterClassifier();
-                    const intent = await classifyIntent(text);
+                    const route = await routeIntent(text, null);
+                    const intent = route && !route.floor ? route.intent : null;
                     const suffix = intent ? ROUTER_ENHANCEMENTS[intent] : null;
                     if (suffix) steeredQuestion = question + '\n\n' + suffix;
                 }
@@ -4099,22 +4553,39 @@ with this program. If not, see https://www.gnu.org/licenses/.
             };
 
             try {
-                // Router (#10 rework): classify once up front with the tiny
-                // dedicated NLP classifier, then reuse the picked persona for
-                // every round of this turn (including auto-continues). This is
-                // a transient per-turn choice only - nothing about it is shown
-                // as a chat message or persisted into chat.messages.
-                // Router (#10 rework): classify once, then reuse the picked
-                // persona, per-turn user-message enhancement, and token cap for
-                // every round of this turn (including auto-continues). Nothing
-                // here is persisted to chat.messages or shown as a chat bubble.
-                const intent = routerActive ? await classifyIntent(text) : null;
-                const routedSystem = intent ? ROUTER_PERSONAS[intent] : null;
+                // Router v2 (tiered): classify once up front (regex -> shared
+                // MiniLM cosine -> narrow NLI tiebreak), then reuse the picked
+                // fragments, per-turn user-message enhancement, and token cap
+                // for every round of this turn (including auto-continues).
+                // This is a transient per-turn choice only - nothing here is
+                // persisted to chat.messages or shown as a chat bubble.
+                const route = routerActive ? await routeIntent(text, chat) : null;
+                const intent = route && !route.floor ? route.intent : null;
+                const routedSystem = intent ? composeFragments(intent, route.secondaryIntent, route.hintSkillId) : null;
                 const routedSuffix = intent ? ROUTER_ENHANCEMENTS[intent] : null;
                 const routedCap = intent ? ROUTER_MAX_TOKENS[intent] : null;
 
+                // One-shot tabular-file dispatch: Tier 0 already forced
+                // intent='data' whenever a file is pending, so this fires
+                // exactly when a file was attached. Consumed and cleared here
+                // regardless of what else happens this turn, mirroring
+                // pendingImage's one-shot vision behavior.
+                let tabularBlock = null;
+                if (pendingTabularFile) {
+                    const f = pendingTabularFile;
+                    tabularBlock = `Column profile for "${f.name}" (${f.rowCount} rows):\n${f.profileText}`;
+                    clearPendingTabularFile();
+                }
+
+                // Calculation dispatch: Tier 0 already computed the result for
+                // a clean arithmetic expression (see evalArithmeticIfPresent).
+                let calcBlock = null;
+                if (intent === 'calculation' && route && route.calcResult !== null && route.calcResult !== undefined) {
+                    calcBlock = `The exact result is: ${route.calcResult}. Present this clearly.`;
+                }
+
                 // KB retrieval: fresh per turn, never pinned across turns.
-                // Router persona (if any) stays the base; KB suffix wraps it.
+                // Router fragment (if any) stays the base; KB suffix wraps it.
                 // Lockdown + no hits: skip generation entirely, render a canned
                 // reply with the closest URLs so the user gets a useful signal
                 // rather than an empty/wrong small-model answer.
@@ -4122,17 +4593,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 let kbClosest = []; // top-k regardless of threshold, for the lockdown-empty case
                 let kbBlock = null;
                 let kbUsed = false;
-                // Skip KB retrieval on greetings/small-talk: prepending a wall of
-                // excerpts to "hello" (plus a small per-intent token cap) leaves
-                // the model no room to answer and produces garbage. Real questions
-                // still hit the KB path below.
-                const skipKbForIntent = intent === 'a greeting or casual small talk';
+                // Skip KB retrieval on greetings/small-talk and calculation:
+                // prepending a wall of excerpts to "hello" or a math request
+                // (plus a small per-intent token cap) leaves the model no room
+                // to answer and produces garbage. Real questions still hit the
+                // KB path below.
+                const skipKbForIntent = intent === 'greeting' || intent === 'calculation';
                 if (kbState.active && !skipKbForIntent) {
                     try {
                         // One embedding, both views: pass noThreshold=true and
                         // filter locally so the "closest URLs" fallback doesn't
-                        // re-embed the same text.
-                        kbClosest = await retrieveKb(text, Math.max(KB_TOPK, 3), true);
+                        // re-embed the same text. Reuse the router's Tier 1
+                        // embedding when available instead of re-embedding.
+                        kbClosest = await retrieveKb(text, Math.max(KB_TOPK, 3), true, route && route.qVec);
                         kbHits = kbClosest.filter(h => h.s >= KB_SCORE_MIN).slice(0, KB_TOPK);
                     } catch (kbErr) {
                         console.error('KB retrieve failed:', kbErr);
@@ -4167,6 +4640,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 }
                 const baseSys = routedSystem || SYSTEM_PROMPT.content;
                 const finalSys = withLanguageLock(kbUsed ? kbSystemPrompt(baseSys, kbState.mode) : routedSystem);
+                // Merge every extra-context block (KB excerpts, tabular column
+                // profile, calculation result) into the single user-message
+                // prefix buildGenMessages already supports - no new parameter.
+                const combinedPrefix = [kbBlock, tabularBlock, calcBlock].filter(Boolean).join('\n\n') || null;
 
                 let rounds = 0;
                 while (true) {
@@ -4174,11 +4651,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     // Suffix only applies on the FIRST round; on auto-continue
                     // the last user message becomes the "keep going" instruction.
                     const suffix = rounds === 0 ? routedSuffix : null;
-                    // KB block is a first-round-only prefix on the user message.
-                    // Subsequent auto-continue rounds do not re-inject it - the
-                    // continuation prompt is short and the block is already in
-                    // the model's context from round 0.
-                    const kbPrefix = rounds === 0 ? kbBlock : null;
+                    // Context block is a first-round-only prefix on the user
+                    // message. Subsequent auto-continue rounds do not
+                    // re-inject it - the continuation prompt is short and the
+                    // block is already in the model's context from round 0.
+                    const kbPrefix = rounds === 0 ? combinedPrefix : null;
                     const genMsgs = buildGenMessages(chat, partial, finalSys, suffix, kbPrefix);
                     let r;
                     try {
@@ -4335,31 +4812,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         const round2 = n => Math.round(n * 100) / 100;
-
-        function datasetPrompt(name, rows) {
-            const cols = Object.keys(rows[0]);
-            const lines = [
-                'Analyze this dataset and recommend key insights to check and the best visualizations for it.',
-                '',
-                `File: ${name} (${rows.length} rows, ${cols.length} columns)`,
-                'Columns:'
-            ];
-            for (const c of cols.slice(0, 15)) {
-                const vals = rows.map(r => r[c]).filter(v => v !== null && v !== undefined && v !== '');
-                const nums = vals.filter(v => typeof v === 'number' && isFinite(v));
-                if (nums.length && nums.length > vals.length * 0.8) {
-                    let min = Infinity, max = -Infinity, sum = 0;
-                    for (const v of nums) { if (v < min) min = v; if (v > max) max = v; sum += v; }
-                    lines.push(`- ${c} (numeric): min ${round2(min)}, max ${round2(max)}, mean ${round2(sum / nums.length)}`);
-                } else {
-                    const uniq = [...new Set(vals.map(String))];
-                    lines.push(`- ${c} (text): ${uniq.length} unique values, e.g. ${uniq.slice(0, 3).join(', ')}`);
-                }
-            }
-            lines.push('', 'First 5 rows:', cols.join(','));
-            for (const r of rows.slice(0, 5)) lines.push(cols.map(c => r[c]).join(','));
-            return lines.join('\n');
-        }
 
         // ---------- Shared skill-agnostic helpers (Phase 9a) ----------
         // These live outside any skill so future phases (audio, bulk archives,
@@ -4613,8 +5065,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             'HuggingFaceTB/SmolLM2-135M-Instruct': 0.135,
             'HuggingFaceTB/SmolLM2-360M-Instruct': 0.36,
             'HuggingFaceTB/SmolLM3-3B-ONNX': 3,
-            'LiquidAI/LFM2-350M': 0.35,
-            'LiquidAI/LFM2.5-230M-ONNX': 0.23,
+            'LiquidAI/LFM2.5-350M-ONNX': 0.35,
             'onnx-community/Qwen2.5-0.5B-Instruct': 0.5,
             'onnx-community/Qwen2.5-1.5B-Instruct': 1.5,
             'onnx-community/Qwen3-0.6B-ONNX': 0.6,
@@ -5628,6 +6079,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
             el.classList.toggle('error', !!isError);
         }
 
+        // Build the router's tabular column-profile text: names, dtypes, and
+        // null fraction only - deliberately no sample cell values, so this
+        // block never needs destination-aware redaction regardless of whether
+        // generation ends up going to the local model or Ollama.
+        function buildColumnProfileText(columns) {
+            const lines = [];
+            for (const c of columns) {
+                lines.push(`- ${c.header} (${c.dtype}, ${Math.round(c.nullFraction * 100)}% empty)`);
+            }
+            return lines.join('\n');
+        }
+
         async function handleFile(file) {
             if (file.type && file.type.startsWith('image/')) {
                 handleImageInput(file);
@@ -5640,7 +6103,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             let parsed;
             try {
                 setStatus(`Parsing ${file.name} locally...`);
-                parsed = await parseTabularFile(file);
+                parsed = await parseTabularFileRaw(file);
             } catch (e) {
                 if (/Unsupported format/.test(errMsg(e))) {
                     setStatus('Unsupported format. For R (.rds) or pandas (.pkl) files, export to CSV first.', true);
@@ -5649,13 +6112,21 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 }
                 return;
             }
-            const rows = parsed.rows;
-            if (!rows || !rows.length) {
+            const rawRows = parsed.rows;
+            if (!rawRows || !rawRows.length) {
                 setStatus('No rows found in the file.', true);
                 return;
             }
-            setStatus(`${file.name} parsed: ${rows.length} rows. Summary placed in the prompt box - edit and send.`);
-            input.value = datasetPrompt(file.name, rows);
+            // Reuse the skill-agnostic detection layer (do not reimplement
+            // header detection here) - same functions the CSV Combiner uses.
+            const sampled = sampleRowsForLLM(rawRows);
+            const structure = sniffTabularStructure(rawRows, sampled);
+            const built = buildColumnsFromHeader(rawRows, structure.headerRow);
+            const rowCount = Math.max(0, rawRows.length - structure.dataStartRow);
+            const profileText = buildColumnProfileText(built.columns);
+            pendingTabularFile = { name: file.name, rowCount, profileText };
+            showTabularPreview(file.name, rowCount);
+            setStatus(`${file.name} attached: ${rowCount} rows, ${built.columns.length} columns. Ask your question and Send.`);
             input.focus();
         }
 
@@ -8076,12 +8547,13 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         // Retired models can otherwise sit in Cache Storage indefinitely as the
         // dropdown lineup evolves. On startup we compute the set of "known"
         // repo ids from what's actually in the dropdown right now (plus the
-        // router classifier and the daisy-chain vision model, which are never
+        // router's Tier 2 NLI tiebreak model, the shared KB/Tier-1 MiniLM
+        // embedder, and the daisy-chain vision model, none of which are ever
         // listed as their own selectable options - the daisy chain always uses
         // SmolVLM-500M even when the selected vision option is Qwen2-VL) and
         // drop cache entries for anything else.
         function knownModelIds() {
-            const ids = new Set([ROUTER_CLASSIFIER_ID, DAISY_VISION_ID, KB_EMBED_ID]);
+            const ids = new Set([ROUTER_NLI_ID, DAISY_VISION_ID, KB_EMBED_ID]);
             for (const s of SKILLS) if (s.modelId) ids.add(s.modelId);
             for (const opt of modelSelect.querySelectorAll('option')) {
                 let v = opt.value;
@@ -8225,6 +8697,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             }
         });
         imagePreviewRemove.addEventListener('click', clearImagePreview);
+        tabularPreviewRemove.addEventListener('click', clearPendingTabularFile);
 
         (async () => {
             // KB / RAG bootstrap: if ?kb=<url> is present, parse params first so
