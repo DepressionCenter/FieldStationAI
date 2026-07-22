@@ -66,12 +66,12 @@ DELAY = 0.5
 #   [r"/KB/", r"/Articles/"]              # multiple allowed subtrees
 # ---------------------------------------------------------------------------
 INCLUDE_PATTERNS = [
-    r"/TDClient/210/DepressionCenter/", # Depression Center Knowledge Base
-    r"depressioncenter\.org/research-services/", # Depression Center public site - research resources
-    r"depressioncenter\.org/outreach-education/", # Depression Center public site - outreach and education program and depression toolkit
-    r"code\.depressioncenter\.org", # Depression Center code repository hub
-    r"github\.com/depressioncenter/[A-Za-z0-9_.-]+(?:/|$)", # Depression Center GitHub org
-    r"github\.com/DepressionCenter/[A-Za-z0-9_.-]+(?:/|$)" # Depression Center GitHub org (case-sensitive)
+    #r"/TDClient/210/DepressionCenter/", # Depression Center Knowledge Base
+    #r"depressioncenter\.org/research-services/", # Depression Center public site - research resources
+    #r"depressioncenter\.org/outreach-education/", # Depression Center public site - outreach and education program and depression toolkit
+    #r"code\.depressioncenter\.org", # Depression Center code repository hub
+    #r"github\.com/depressioncenter/[A-Za-z0-9_.-]+(?:/|$)", # Depression Center GitHub org
+    #r"github\.com/DepressionCenter/[A-Za-z0-9_.-]+(?:/|$)" # Depression Center GitHub org (case-sensitive)
 
     #r"github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/|$)", # GitHub repo landing page and subpaths
     #r"gitlab\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/|$)", # GitLab repo landing page and subpaths
