@@ -1,5 +1,9 @@
 # .gitignore - special file for Git telling it which files to ignore when committing changes to the repository
 
+# Ignore all data files except the one that's tracked
+# Example: .csv
+# Example: !sample-data.csv
+
 # Ignore RStudio project files/folders
 .Rproj.user/
 *.Rproj
@@ -11,24 +15,32 @@
 .Ruserdata
 .Rapp.history
 
-# Ignore all data files except the one that's tracked
-# Example: .csv
-# Example: !sample-data.csv
-
-# OS cruft
+# Ignore OS cruft
 .DS_Store
 Thumbs.db
 
-# Logs
+# Ignore Logs
 *.log
+log.txt
+logs.txt
+logs/*
 
-# Editor cruft
+# Ignore Editor cruft
 .vscode/
 .idea/
 *.swp
+
+# Ignore AI coding tool configuration files
 .claude
 .gemini
+CLAUDE.md
+CLAUDECODE.md
+GEMINI.md
+KIMI.md
+CODEX.md
+CHATGPT.md
 
 # Ignore cache files
 *.cache
 __pycache__/
+.venv/

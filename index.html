@@ -858,13 +858,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 <option value="webllm:Qwen3-0.6B-q4f16_1-MLC">Qwen3-0.6B (~350 MB)</option>
                 <option value="webllm:gemma3-1b-it-q4f16_1-MLC">Gemma 3-1B (~530 MB)</option>
                 <option value="webllm:Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2-1B (~630 MB)</option>
-                <option value="webllm:DeepSeek-R1-Distill-Qwen-1.5B-q4f16_1-MLC">DeepSeek R1 1.5B (~880 MB)</option>
                 <option value="webllm:SmolLM2-1.7B-Instruct-q4f16_1-MLC">SmolLM2-1.7B (~1.0 GB)</option>
                 <option value="webllm:Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2-3B (~1.8 GB)</option>
                 <option value="webllm:Ministral-3-3B-Instruct-2512-BF16-q4f16_1-MLC">Ministral 3-3B (~1.8 GB)</option>
                 <option value="webllm:Phi-4-mini-instruct-q4f16_1-MLC">Phi-4-mini 3.8B (~2.2 GB)</option>
                 <option value="webllm:Qwen3.5-4B-q4f16_1-MLC">Qwen3.5-4B (~2.3 GB)</option>
+                <option value="webllm:gemma-2-2b-it-q4f32_1-MLC">Gemma 2-2B (~2.5 GB)</option>
                 <option value="webllm:Hermes-3-Llama-3.1-8B-q4f16_1-MLC">Hermes 3 8B (~4.6 GB)</option>
+                <option value="webllm:DeepSeek-R1-Distill-Qwen-7B-q4f16_1-MLC">DeepSeek R1 7B (~4.8 GB)</option>
                 <option value="vision:HuggingFaceTB/SmolVLM-500M-Instruct">SmolVLM-500M (image Q&amp;A, ~360 MB)</option>
                 <option value="vision:onnx-community/Qwen2-VL-2B-Instruct">Qwen2-VL-2B (image Q&amp;A, ~2.7 GB)</option>
         </select>
@@ -897,7 +898,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
     <div id="chat-box"></div>
 
-    <div class="scroll-wrap">
+    <div class="scroll-wrap" id="prompt-chips-wrap">
         <button id="chips-scroll-left" class="scroll-arrow" title="Scroll left">‹</button>
         <div id="chips-row"></div>
         <button id="chips-scroll-right" class="scroll-arrow" title="Scroll right">›</button>
@@ -990,7 +991,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     <footer id="app-footer">© 2026 The Regents of the University of Michigan &nbsp;|&nbsp; <a href="https://depressioncenter.org" target="_blank" rel="noopener noreferrer">Eisenberg Family Depression Center</a></footer>
 
     <script type="module">
-        import { pipeline, TextStreamer, InterruptableStoppingCriteria, AutoProcessor, AutoModelForVision2Seq, Qwen2VLForConditionalGeneration, RawImage, env, LogLevel, ModelRegistry, LogitsProcessor } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
+        import { pipeline, TextStreamer, InterruptableStoppingCriteria, AutoProcessor, AutoModelForVision2Seq, Qwen2VLForConditionalGeneration, RawImage, env, LogLevel, ModelRegistry } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
 
         // Run ORT-WASM in a Web Worker so the main thread stays free to paint
         // and dispatch clicks (Stop, New Chat) between token dispatches. Without
@@ -1208,29 +1209,23 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const VISION_DTYPE_GPU = { embed_tokens: 'fp32', vision_encoder: 'q4', decoder_model_merged: 'q4' };
         const VISION_DTYPE_CPU = { embed_tokens: 'fp32', vision_encoder: 'fp32', decoder_model_merged: 'fp32' };
 
-        // Repos with no working q4f16 ladder step. LFM2.5's docs list only
-        // Q4 and FP16 as supported WebGPU dtypes, so q4f16 would waste a failed
-        // compile before falling back.
-        const NO_Q4F16 = new Set([
-            'LiquidAI/LFM2.5-350M-ONNX'
-        ]);
+        // Repos with no working q4f16 ladder step. No entries currently -
+        // every text model in the dropdown now runs on WebLLM; the only
+        // repo that ever reached this Transformers.js ladder as a plain
+        // pick (LFM2.5, the pre-WebLLM default) is gone from the dropdown.
+        // Kept as an extension point for CPU_FALLBACK_TJS_ID or any future
+        // Transformers.js text model that needs it.
+        const NO_Q4F16 = new Set([]);
 
         // Per-model ladder overrides. Some repos have quantizations that fail
         // in Transformers.js with bare numeric error codes and no readable
         // message; the generic ladder walks through them and produces confusing
         // output. Only add a model here when the community has reported which
         // combo actually works. Format: array of {device, dtype} in try order.
-        //
-        // gemma-3-1b-it-ONNX-GQA: q4/q4f16 both throw numeric errors on WASM
-        // and (per HF discussions) commonly on WebGPU too; q8 on WASM is the
-        // consistently-working config per the model's own community thread.
-        // We still try WebGPU rungs first for machines where they do work.
-        const MODEL_LADDER_OVERRIDES = {
-            'onnx-community/gemma-3-1b-it-ONNX-GQA': [
-                { device: 'webgpu', dtype: 'q4' },
-                { device: 'wasm',   dtype: 'q8' }
-            ]
-        };
+        // No entries currently - the gemma-3-1b-it-ONNX-GQA override predates
+        // the WebLLM engine swap and that repo is no longer reachable from
+        // the dropdown (WebGPU picks run via WebLLM's own MLC build now).
+        const MODEL_LADDER_OVERRIDES = {};
 
         // Router v2: a tiered classifier (regex short-circuit -> shared MiniLM
         // exemplar cosine -> narrow NLI tiebreak) picks the user's intent, and
@@ -1458,7 +1453,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const SKILL_ZEROSHOT_ID = 'Xenova/bart-large-mnli';
         const SKILLS = [
             { id: 'taxonomy-classify', name: 'Sort text into categories', desc: 'Sort documents or spreadsheet rows into categories you choose. Useful for mapping expertise from publication abstracts.', icon: 'tags', engine: 'zeroshot', modelId: SKILL_ZEROSHOT_ID, modelSize: '~400 MB', status: 'ready' },
-            { id: 'csv-combine',       name: 'Combine spreadsheets',     desc: 'Merge many CSV or Excel files into one, with help matching up columns that have different names.', icon: 'columns',   engine: 'llm',        status: 'ready' },
+            { id: 'csv-combine',       name: 'Combine spreadsheets',     desc: 'Merge many CSV or Excel files into one, with help matching up columns that have different names.', icon: 'columns',   engine: 'llm',        heuristicOnly: true, status: 'ready' },
             { id: 'transcribe',        name: 'Transcribe audio',         desc: 'Turn interview recordings or dictation into text, without sending audio to any cloud service.',   icon: 'mic',       engine: 'asr',        status: 'coming-soon' },
             { id: 'summarize',         name: 'Summarize or find themes', desc: 'Shorten long text or pull out the main themes from a document.',                                   icon: 'file-text', engine: 'llm',        status: 'coming-soon' },
             { id: 'emotions',          name: 'Emotions and sentiment',   desc: 'Detect emotions in text (joy, sadness, nervousness, and 25 more) and overall positive/negative tone.', icon: 'heart',   engine: 'classifier', status: 'coming-soon' },
@@ -1471,7 +1466,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         const TAXONOMIES_KEY = 'fieldstation_taxonomies_v1';
 
-        // Context window sizes (tokens) per model; unknown models fall back to 8192
+        // Context window sizes (tokens) per model; unknown models fall back to 8192.
+        // TODO(review): CPU_FALLBACK_TJS_ID (HuggingFaceTB/SmolLM2-360M-Instruct)
+        // has no explicit entry here and relies on that 8192 default, which
+        // happens to match its real context - worth an explicit entry so
+        // that's documented rather than coincidental.
         const MODEL_CTX = {
             'LiquidAI/LFM2.5-350M-ONNX': 32768,
             'onnx-community/Qwen3-0.6B-ONNX': 32768,
@@ -1493,13 +1492,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
             'webllm:Qwen3-0.6B-q4f16_1-MLC': 4096,
             'webllm:gemma3-1b-it-q4f16_1-MLC': 4096,
             'webllm:Llama-3.2-1B-Instruct-q4f16_1-MLC': 4096,
-            'webllm:DeepSeek-R1-Distill-Qwen-1.5B-q4f16_1-MLC': 4096,
             'webllm:SmolLM2-1.7B-Instruct-q4f16_1-MLC': 4096,
             'webllm:Llama-3.2-3B-Instruct-q4f16_1-MLC': 4096,
             'webllm:Ministral-3-3B-Instruct-2512-BF16-q4f16_1-MLC': 4096,
             'webllm:Phi-4-mini-instruct-q4f16_1-MLC': 4096,
             'webllm:Qwen3.5-4B-q4f16_1-MLC': 4096,
-            'webllm:Hermes-3-Llama-3.1-8B-q4f16_1-MLC': 4096
+            'webllm:gemma-2-2b-it-q4f32_1-MLC': 4096,
+            'webllm:Hermes-3-Llama-3.1-8B-q4f16_1-MLC': 4096,
+            'webllm:DeepSeek-R1-Distill-Qwen-7B-q4f16_1-MLC': 4096
         };
 
         // ---------- State ----------
@@ -1526,6 +1526,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Skill gating helper (used by CPU-only skill logic): true when the
         // active model cannot do fast LLM work (no engine, or CPU fallback).
         function isCpuOnly() { return runningOnCpu || (mode === 'webllm' && !webllmEngine); }
+        // A skill needs a real (non-CPU-fallback) LLM when it's tagged
+        // engine:'llm' and hasn't been given a full heuristic fallback path
+        // (heuristicOnly: true - see 'csv-combine' in SKILLS, which degrades
+        // to CSV_ALIAS_MAP/dtype heuristics instead of being gated).
+        function skillNeedsGpu(s) { return s.engine === 'llm' && !s.heuristicOnly; }
+        // User-facing reason a GPU-only skill is disabled right now.
+        function llmGateMessage() {
+            return 'Needs a GPU model. Your browser ' + (hasWebGPU === false ? 'does not support WebGPU.' : 'is running a CPU model.');
+        }
         async function disposeWebllmEngine() {
             const e = webllmEngine; webllmEngine = null;
             if (e) { try { await e.unload(); } catch (_) {} }
@@ -3004,7 +3013,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 return r;
             } finally {
                 anyLoadInProgress = false;
+                refreshSkillsGridIfShown();
             }
+        }
+        // Every model load (success, hard failure, or CPU fallback) funnels
+        // through loadModel, so this is the single place that needs to
+        // refresh the Skills grid's GPU-only gating (skillNeedsGpu/isCpuOnly)
+        // after a model switch - covers both "grid is open right now" and
+        // "leave it correct for the next open" (openSkills only rebuilds on
+        // first-ever open).
+        function refreshSkillsGridIfShown() {
+            if (skillsCurrentId === null && skillsBody.hasChildNodes()) renderSkillsGrid();
         }
         // Force-stop any in-flight model load. Bumps loadToken so the
         // loader's stale() check fires on its next await, and clears the
@@ -3058,6 +3077,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (value.startsWith('ollama:')) {
                 mode = 'ollama';
                 generator = null;
+                runningOnCpu = false; // Ollama is a real network LLM, never the CPU fallback
                 setStatus('');
                 setControls(true, false);
                 focusInputUnlessWelcoming();
@@ -3184,8 +3204,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         // fall through to the Transformers.js ladder below
                     }
                 }
-            } else {
-                runningOnCpu = false; // plain Transformers.js pick; ladder decides webgpu vs wasm
+                // Every dropdown option is webllm:/vision:/router:-prefixed,
+                // and vision:/ollama: already returned above, so targetId is
+                // always 'webllm:...' here - runningOnCpu is fully decided by
+                // the branch above (true on no-GPU/hard-fail fallback, false
+                // on a real WebLLM engine) before falling into the ladder.
             }
 
             mode = 'local';
@@ -6180,6 +6203,96 @@ with this program. If not, see https://www.gnu.org/licenses/.
             };
         }
 
+        // Shared "Header row (1-based)" numeric control, used by any skill
+        // that ingests raw tabular rows and needs the user to be able to
+        // correct an auto-detected header row (CSV Combiner and the
+        // taxonomy skill's spreadsheet upload both call this). Stateless:
+        // the caller owns rebuilding its own data and re-rendering on
+        // onChange(newHeaderRow0Based).
+        function renderHeaderRowAdjuster(hostEl, rows, headerRow, onChange) {
+            const ctrl = document.createElement('div');
+            ctrl.className = 'csvc-inline-controls';
+            const hdrLabel = document.createElement('label');
+            hdrLabel.className = 'skill-hint';
+            hdrLabel.textContent = 'Header row (1-based):';
+            const hdrInput = document.createElement('input');
+            hdrInput.type = 'number';
+            hdrInput.min = 1; hdrInput.max = rows.length;
+            hdrInput.value = headerRow + 1;
+            hdrInput.className = 'skill-input csvc-num';
+            const applyHdr = () => {
+                let r = parseInt(hdrInput.value, 10);
+                if (!Number.isFinite(r) || r < 1) r = 1;
+                if (r > rows.length) r = rows.length;
+                hdrInput.value = r;
+                onChange(r - 1);
+            };
+            // Fire on step/arrow AND on typed changes.
+            hdrInput.addEventListener('input', applyHdr);
+            hdrInput.addEventListener('change', applyHdr);
+            ctrl.appendChild(hdrLabel);
+            ctrl.appendChild(hdrInput);
+            hostEl.appendChild(ctrl);
+            return ctrl;
+        }
+
+        // Shared compact preview of a file's raw rows so the user can see
+        // where the preamble ends and the real data starts. Shows the first
+        // N rows (or fewer for very short files); the sniffed header row is
+        // highlighted and each row's number is clickable to snap the header
+        // onto it via onSetHeader(rowIndex0Based). Stateless: caller owns
+        // re-rendering after the callback fires.
+        function renderRawRowsPreview(rows, headerRow, dataStartRow, onSetHeader) {
+            const wrap = document.createElement('div');
+            wrap.className = 'csvc-raw-preview';
+            const hint = document.createElement('div');
+            hint.className = 'skill-hint';
+            hint.textContent = 'Raw rows from your file. Click a row number to set it as the header.';
+            wrap.appendChild(hint);
+            const table = document.createElement('table');
+            table.className = 'csvc-raw-table';
+            const tbody = document.createElement('tbody');
+            const total = rows.length;
+            const shownCount = Math.min(total, 30);
+            const maxCols = 12;
+            for (let i = 0; i < shownCount; i++) {
+                const tr = document.createElement('tr');
+                if (i === headerRow) tr.className = 'csvc-raw-header-row';
+                else if (i >= dataStartRow) tr.className = 'csvc-raw-data-row';
+                else tr.className = 'csvc-raw-preamble-row';
+                const num = document.createElement('td');
+                num.className = 'csvc-raw-num';
+                num.textContent = String(i + 1);
+                num.title = 'Set row ' + (i + 1) + ' as the header';
+                num.addEventListener('click', () => onSetHeader(i));
+                tr.appendChild(num);
+                const row = rows[i] || [];
+                const cells = row.slice(0, maxCols);
+                for (const c of cells) {
+                    const td = document.createElement('td');
+                    const s = String(c == null ? '' : c);
+                    td.textContent = s.length > 40 ? s.slice(0, 39) + '...' : s;
+                    tr.appendChild(td);
+                }
+                if (row.length > maxCols) {
+                    const td = document.createElement('td');
+                    td.className = 'muted';
+                    td.textContent = '(+' + (row.length - maxCols) + ' more)';
+                    tr.appendChild(td);
+                }
+                tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+            wrap.appendChild(table);
+            if (total > shownCount) {
+                const more = document.createElement('div');
+                more.className = 'skill-hint';
+                more.textContent = 'Showing first ' + shownCount + ' of ' + total.toLocaleString() + ' rows.';
+                wrap.appendChild(more);
+            }
+            return wrap;
+        }
+
         // Sample a small set of rows from an arbitrarily large file, for
         // shipping to an LLM. Deterministic - same input gives the same
         // sampled rows across runs, so we don't quietly change what the AI
@@ -6270,15 +6383,21 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // Column alias map for the fuzzy fallback. Small and hand-curated;
         // grows as new vendors appear. Values are canonical unified names.
+        // glucose_mg_dl/timestamp/participant_id/study_id also double as the
+        // CSV Combiner's zero-LLM role heuristic (see roleForHeader below) -
+        // their patterns include both anchored "header IS this field" forms
+        // and unanchored "field name appears as a token in a longer header"
+        // forms (e.g. "cgm_study_id", "Sensor_Timestamp_UTC") so a role can
+        // be recognized without needing the LLM to name it.
         const CSV_ALIAS_MAP = [
-            { canonical: 'glucose_mg_dl', patterns: [/^glucose(_mg[_\-]?dl)?$/i, /^historic[_\-]?glucose/i, /^scan[_\-]?glucose/i, /^bg$/i, /^blood[_\-]?glucose/i] },
-            { canonical: 'timestamp', patterns: [/^timestamp/i, /^date[_\-]?time/i, /^device[_\-]?timestamp/i, /^recorded[_\-]?at/i, /^time$/i, /^datetime/i] },
+            { canonical: 'glucose_mg_dl', patterns: [/^glucose(_mg[_\-]?dl)?$/i, /^historic[_\-]?glucose/i, /^scan[_\-]?glucose/i, /^bg$/i, /^blood[_\-]?glucose/i, /glucose/i, /\bbg\b/i, /blood[_\s\-]?sugar/i] },
+            { canonical: 'timestamp', patterns: [/^timestamp/i, /^device[_\-]?timestamp/i, /^recorded[_\-]?at/i, /^time$/i, /^datetime/i, /timestamp/i, /date[_\s\-]?time/i, /recorded[_\s\-]?at/i, /device[_\s\-]?time/i] },
             { canonical: 'date', patterns: [/^date$/i] },
             { canonical: 'time', patterns: [/^time$/i] },
             { canonical: 'device', patterns: [/^device$/i, /^device[_\-]?name/i, /^instrument/i] },
             { canonical: 'device_serial', patterns: [/^serial(_?number)?$/i, /^sn$/i, /^device[_\-]?serial/i, /^device[_\-]?id/i] },
-            { canonical: 'participant_id', patterns: [/mrn/i, /participant/i, /^subject/i, /^record[_\-]?id/i, /^pt[_\-\s]?id/i, /^patient[_\-]?id/i] },
-            { canonical: 'study_id', patterns: [/^study[_\-]?id/i] },
+            { canonical: 'participant_id', patterns: [/mrn/i, /participant/i, /^subject/i, /^record[_\-]?id/i, /^pt[_\-\s]?id/i, /^patient[_\-]?id/i, /(^|[_\s\-])(mrn|participant|subject|pt[_\s]?id|patient[_\s]?id)([_\s\-]|$)/i] },
+            { canonical: 'study_id', patterns: [/^study[_\-]?id/i, /(^|[_\s\-])study[_\s\-]?id($|[_\s\-])/i] },
             { canonical: 'record_type', patterns: [/^record[_\-]?type/i, /^event[_\-]?type/i, /^type$/i] },
             { canonical: 'notes', patterns: [/^notes?$/i, /^comments?$/i] },
             { canonical: 'carbs_g', patterns: [/^carb/i] },
@@ -6294,12 +6413,49 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             return null;
         }
+        // CSV_ALIAS_MAP canonical -> VERDICT_ROLES value, for the CSV
+        // Combiner's zero-LLM role heuristic. Canonicals with no role
+        // equivalent (device, device_serial, notes, ...) fall through to
+        // 'other', same as an unmatched header.
+        const ALIAS_TO_VERDICT_ROLE = {
+            glucose_mg_dl: 'glucose',
+            timestamp: 'timestamp',
+            participant_id: 'participant_id',
+            study_id: 'study_id'
+        };
+        // Zero-LLM role guess for one header, using the alias map first and
+        // a dtype-based tiebreak second. dtype is only used to promote an
+        // otherwise-unmatched column to 'timestamp' when it's clearly a
+        // date/datetime and nothing else has claimed that role yet - never
+        // used to guess 'glucose' from a numeric range alone, since that's
+        // too easy to get wrong on unrelated numeric columns. Checked in
+        // this fixed precedence (study_id > participant_id > timestamp >
+        // glucose) rather than CSV_ALIAS_MAP's declaration order, so a
+        // header that could plausibly match more than one role resolves
+        // the same way this fallback always has.
+        const ROLE_PRECEDENCE = ['study_id', 'participant_id', 'timestamp', 'glucose_mg_dl'];
+        function roleForHeader(header, dtype) {
+            for (const canonical of ROLE_PRECEDENCE) {
+                const entry = CSV_ALIAS_MAP.find(a => a.canonical === canonical);
+                if (entry && entry.patterns.some(p => p.test(header))) return ALIAS_TO_VERDICT_ROLE[canonical];
+            }
+            if ((dtype === 'date' || dtype === 'datetime') && /time|date|stamp/i.test(header)) return 'timestamp';
+            return 'other';
+        }
         // Normalize a header for cluster comparison.
         function normalizeHeader(h) {
             return String(h || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
         }
         // Fuzzy harmonization: never fails. Same shape as the LLM Call B
         // output: { unified_columns, mappings, notes }.
+        // TODO(review): this function is never called anywhere - the
+        // verdict/role model (VERDICT_ROLES: study_id/participant_id/
+        // timestamp/glucose/other) superseded cross-file column-name
+        // harmonization before it got wired in. CSV_ALIAS_MAP is reused
+        // above for per-file role detection (roleForHeader), but "other"
+        // columns with different names across merged files are never
+        // reconciled into one unified column. Wiring this in (or removing
+        // it) is a separate, larger feature decision than this pass covers.
         function fuzzyHarmonize(fileSchemas) {
             const mappings = {};
             const unifiedSet = new Map(); // canonical -> insertion order
@@ -6572,11 +6728,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const grid = document.createElement('div');
             grid.className = 'skills-grid';
             for (const s of SKILLS) {
+                const gpuGated = s.status !== 'coming-soon' && skillNeedsGpu(s) && isCpuOnly();
+                const disabled = s.status === 'coming-soon' || gpuGated;
                 const card = document.createElement('div');
-                card.className = 'skills-card' + (s.status === 'coming-soon' ? ' coming-soon' : '');
+                card.className = 'skills-card' + (disabled ? ' coming-soon' : '');
                 card.setAttribute('role', 'button');
-                card.setAttribute('tabindex', s.status === 'coming-soon' ? '-1' : '0');
-                card.setAttribute('aria-disabled', s.status === 'coming-soon' ? 'true' : 'false');
+                card.setAttribute('tabindex', disabled ? '-1' : '0');
+                card.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+                if (gpuGated) card.title = llmGateMessage();
                 const icon = document.createElement('div');
                 icon.innerHTML = SKILL_ICONS[s.icon] || '';
                 const name = document.createElement('div');
@@ -6598,6 +6757,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     const ribbon = document.createElement('div');
                     ribbon.className = 'skill-ribbon';
                     ribbon.textContent = 'Coming soon';
+                    card.appendChild(ribbon);
+                } else if (gpuGated) {
+                    const ribbon = document.createElement('div');
+                    ribbon.className = 'skill-ribbon';
+                    ribbon.textContent = 'Needs GPU model';
                     card.appendChild(ribbon);
                 } else {
                     const activate = () => enterSkill(s);
@@ -6707,9 +6871,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // Local state, scoped to this mount
             let inputMode = 'files';
             let ingestedDocs = [];    // [{name, text, warning?}]
-            let bulkRows = null;      // Array<Object> from parseTabularFile
+            let bulkRows = null;      // Array<Object>, built from bulkFile via rowsToRecords
             let bulkHeaders = [];
             let bulkFileName = '';
+            // Raw ingested spreadsheet + heuristic header/data-start detection,
+            // shared with the CSV Combiner (ingestFiles/sampleRowsForLLM/
+            // buildForensics) so both skills detect multi-row preambles the
+            // same way instead of assuming row 0 is always the header.
+            let bulkFile = null;      // {name, rows: string[][], forensics, sampled, _previewOpen?}
             let runningBatch = false;
             let lastResultsSummary = null;  // set once render happens; used by state probe
 
@@ -6817,6 +6986,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     <button class="skill-btn" id="tax-bulk-btn">Choose a spreadsheet...</button>
                     <input type="file" id="tax-bulk-input" accept="text/csv,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,.tsv,.xlsx,.xls" hidden>
                     <div id="tax-bulk-file" class="skill-hint" style="margin-top:6px;"></div>
+                    <div id="tax-bulk-header-ctrl"></div>
                     <div class="skill-row" id="tax-bulk-cols" hidden>
                         <label style="font-size:0.78rem;color:var(--muted);">Which column has the person's name or ID?
                             <select class="skill-select" id="tax-bulk-id" style="margin-left:4px;"></select>
@@ -6839,6 +7009,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const bulkBtn = sectionB.querySelector('#tax-bulk-btn');
             const bulkInput = sectionB.querySelector('#tax-bulk-input');
             const bulkFileLabel = sectionB.querySelector('#tax-bulk-file');
+            const bulkHeaderCtrl = sectionB.querySelector('#tax-bulk-header-ctrl');
             const bulkColsRow = sectionB.querySelector('#tax-bulk-cols');
             const bulkIdSel = sectionB.querySelector('#tax-bulk-id');
             const bulkTextSel = sectionB.querySelector('#tax-bulk-text');
@@ -6917,47 +7088,109 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const ID_HINT_RE = /^(mrn|participant|subject|record|pt[_\s]?id|uniqname|email|name|id)$/i;
             const TEXT_HINT_RE = /abstract|text|body|description|content/i;
 
+            // Turn raw string rows + a resolved header row into the
+            // array-of-objects shape the rest of this skill already expects
+            // (id/text column pickers below, and the per-row sort loop
+            // further down). Taxonomy-specific: the CSV Combiner never
+            // needs row objects, only column definitions, so this isn't
+            // shared with it the way ingestion/header-detection are.
+            function rowsToRecords(rows, headerRow, dataStart) {
+                const headerCells = (rows[headerRow] || []).map(v => String(v == null ? '' : v).trim());
+                while (headerCells.length && headerCells[headerCells.length - 1] === '') headerCells.pop();
+                const headers = headerCells.map((h, i) => h || ('column_' + (i + 1)));
+                const records = [];
+                for (let r = dataStart; r < rows.length; r++) {
+                    const row = rows[r];
+                    if (!row) continue;
+                    const obj = {};
+                    for (let c = 0; c < headers.length; c++) obj[headers[c]] = row[c] != null ? row[c] : '';
+                    records.push(obj);
+                }
+                return { headers, records };
+            }
+
+            // Rebuild bulkHeaders/bulkRows for a given header row (either the
+            // initial heuristic guess or a user override) and re-render the
+            // id/text column pickers + preview. Keeps the user's previous
+            // column choices when the new header list still has them.
+            function applyBulkHeaderRow(headerRow, dataStart) {
+                const rows = bulkFile.rows;
+                const dataStartRow = dataStart != null ? dataStart : Math.min(headerRow + 1, rows.length);
+                bulkFile.forensics.headerRow = headerRow;
+                bulkFile.forensics.dataStart = dataStartRow;
+                const prevId = bulkIdSel.value, prevText = bulkTextSel.value;
+                const built = rowsToRecords(rows, headerRow, dataStartRow);
+                bulkHeaders = built.headers;
+                bulkRows = built.records;
+                bulkFileName = bulkFile.name;
+                bulkFileLabel.textContent = bulkFileName + '  (' + bulkRows.length + ' row' + (bulkRows.length === 1 ? '' : 's') + ', ' + bulkHeaders.length + ' column' + (bulkHeaders.length === 1 ? '' : 's') + ')';
+
+                bulkHeaderCtrl.innerHTML = '';
+                if (bulkFile.forensics.confidence === 'low') {
+                    const banner = document.createElement('div');
+                    banner.className = 'skill-banner';
+                    banner.textContent = 'The header/data-start detection was not very confident about this file. Please double-check the header row below.';
+                    bulkHeaderCtrl.appendChild(banner);
+                }
+                const ctrl = renderHeaderRowAdjuster(bulkHeaderCtrl, rows, headerRow, (newRow) => applyBulkHeaderRow(newRow));
+                const pvBtn = document.createElement('button');
+                pvBtn.type = 'button';
+                pvBtn.className = 'skill-btn small';
+                pvBtn.textContent = bulkFile._previewOpen ? 'Hide raw rows' : 'Show raw rows';
+                pvBtn.addEventListener('click', () => {
+                    bulkFile._previewOpen = !bulkFile._previewOpen;
+                    applyBulkHeaderRow(headerRow, dataStartRow);
+                });
+                ctrl.appendChild(pvBtn);
+                if (bulkFile._previewOpen) {
+                    bulkHeaderCtrl.appendChild(renderRawRowsPreview(rows, headerRow, dataStartRow, (rowIndex) => applyBulkHeaderRow(rowIndex)));
+                }
+
+                if (!bulkHeaders.length) {
+                    bulkColsRow.hidden = true;
+                    bulkPreview.innerHTML = '<div class="skill-banner error">This spreadsheet does not have column headers. Make sure the header row is set correctly above.</div>';
+                    return;
+                }
+                const idGuess = bulkHeaders.includes(prevId) ? prevId : (bulkHeaders.find(h => ID_HINT_RE.test(h)) || bulkHeaders[0]);
+                const textGuess = bulkHeaders.includes(prevText) ? prevText : (bulkHeaders.find(h => TEXT_HINT_RE.test(h)) || bulkHeaders[Math.min(1, bulkHeaders.length - 1)]);
+                bulkIdSel.innerHTML = bulkHeaders.map(h => '<option value="' + h.replace(/"/g, '&quot;') + '">' + h + '</option>').join('');
+                bulkTextSel.innerHTML = bulkIdSel.innerHTML;
+                bulkIdSel.value = idGuess;
+                bulkTextSel.value = textGuess;
+                bulkColsRow.hidden = false;
+                const renderPreview = () => {
+                    const idCol = bulkIdSel.value;
+                    const textCol = bulkTextSel.value;
+                    const rows3 = bulkRows.slice(0, 3);
+                    bulkPreview.innerHTML = '<table class="skill-table"><thead><tr><th>' + idCol + '</th><th>' + textCol + '</th></tr></thead><tbody>' +
+                        rows3.map(r => {
+                            const id = String(r[idCol] !== undefined ? r[idCol] : '');
+                            const t = String(r[textCol] !== undefined ? r[textCol] : '');
+                            const tShort = t.length > 120 ? t.slice(0, 120) + '...' : t;
+                            return '<tr><td>' + id.replace(/</g, '&lt;') + '</td><td>' + tShort.replace(/</g, '&lt;') + '</td></tr>';
+                        }).join('') + '</tbody></table>';
+                };
+                bulkIdSel.onchange = renderPreview;
+                bulkTextSel.onchange = renderPreview;
+                renderPreview();
+            }
+
             bulkBtn.addEventListener('click', () => bulkInput.click());
             bulkInput.addEventListener('change', async () => {
                 if (!bulkInput.files.length) return;
                 const file = bulkInput.files[0];
                 bulkInput.value = '';
                 try {
-                    const parsed = await parseTabularFile(file);
-                    bulkRows = parsed.rows;
-                    bulkHeaders = parsed.headers;
-                    bulkFileName = parsed.name;
-                    bulkFileLabel.textContent = bulkFileName + '  (' + bulkRows.length + ' row' + (bulkRows.length === 1 ? '' : 's') + ', ' + bulkHeaders.length + ' column' + (bulkHeaders.length === 1 ? '' : 's') + ')';
-                    if (!bulkHeaders.length) {
-                        bulkColsRow.hidden = true;
-                        bulkPreview.innerHTML = '<div class="skill-banner error">This spreadsheet does not have column headers. Make sure the first row of your file has column names.</div>';
-                        return;
-                    }
-                    const idGuess = bulkHeaders.find(h => ID_HINT_RE.test(h)) || bulkHeaders[0];
-                    const textGuess = bulkHeaders.find(h => TEXT_HINT_RE.test(h)) || bulkHeaders[Math.min(1, bulkHeaders.length - 1)];
-                    bulkIdSel.innerHTML = bulkHeaders.map(h => '<option value="' + h.replace(/"/g, '&quot;') + '">' + h + '</option>').join('');
-                    bulkTextSel.innerHTML = bulkIdSel.innerHTML;
-                    bulkIdSel.value = idGuess;
-                    bulkTextSel.value = textGuess;
-                    bulkColsRow.hidden = false;
-                    const renderPreview = () => {
-                        const idCol = bulkIdSel.value;
-                        const textCol = bulkTextSel.value;
-                        const rows3 = bulkRows.slice(0, 3);
-                        bulkPreview.innerHTML = '<table class="skill-table"><thead><tr><th>' + idCol + '</th><th>' + textCol + '</th></tr></thead><tbody>' +
-                            rows3.map(r => {
-                                const id = String(r[idCol] !== undefined ? r[idCol] : '');
-                                const t = String(r[textCol] !== undefined ? r[textCol] : '');
-                                const tShort = t.length > 120 ? t.slice(0, 120) + '...' : t;
-                                return '<tr><td>' + id.replace(/</g, '&lt;') + '</td><td>' + tShort.replace(/</g, '&lt;') + '</td></tr>';
-                            }).join('') + '</tbody></table>';
-                    };
-                    bulkIdSel.addEventListener('change', renderPreview);
-                    bulkTextSel.addEventListener('change', renderPreview);
-                    renderPreview();
+                    const [ingested] = await ingestFiles([file], { raw: true, accept: ['csv', 'tsv', 'xlsx', 'xls'] });
+                    if (!ingested || !ingested.rows) throw new Error('Could not read this file.');
+                    ingested.sampled = sampleRowsForLLM(ingested.rows);
+                    ingested.forensics = buildForensics(ingested.rows, ingested.sampled);
+                    bulkFile = ingested;
+                    applyBulkHeaderRow(bulkFile.forensics.headerRow, bulkFile.forensics.dataStart);
                 } catch (e) {
-                    bulkRows = null; bulkHeaders = [];
+                    bulkFile = null; bulkRows = null; bulkHeaders = [];
                     bulkFileLabel.textContent = '';
+                    bulkHeaderCtrl.innerHTML = '';
                     bulkColsRow.hidden = true;
                     bulkPreview.innerHTML = '<div class="skill-banner error">Could not read this spreadsheet. Try saving it as a CSV or a fresh .xlsx. Details: ' + errMsg(e).replace(/</g, '&lt;') + '</div>';
                 }
@@ -7425,8 +7658,10 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 const { tier, redact } = currentRedact();
                 // Header/data-start: heuristic already ran at ingest. Only
                 // consult the LLM, with a narrow prompt naming just the top
-                // 2-3 candidates, when the heuristic itself isn't confident.
-                if (f.forensics && f.forensics.confidence !== 'high' && !f.forensics.noHeader) {
+                // 2-3 candidates, when the heuristic itself isn't confident
+                // AND a real LLM is actually available - the CPU fallback
+                // model never spends time on this, silently.
+                if (!isCpuOnly() && f.forensics && f.forensics.confidence !== 'high' && !f.forensics.noHeader) {
                     f.forensics = await resolveTabularHeaderWithLlm(f.forensics, f.rows, oneShotWithToken(token),
                         { redact, tier, preHeaderMax: 6 });
                     if (f.forensics.method === 'llm') {
@@ -7437,12 +7672,22 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     if (token !== skillLoadToken) return null;
                 }
 
+                // Column roles/vendor: fallbackVerdict already runs the
+                // CSV_ALIAS_MAP + dtype heuristic (roleForHeader) and is a
+                // complete, sensible verdict on its own. The LLM is only
+                // worth a call as a tiebreak/enhancement when it's actually
+                // available (not CPU-only) and the heuristic itself flagged
+                // this file's structure as uncertain - never as a
+                // requirement.
+                const heuristic = fallbackVerdict(f);
+                if (isCpuOnly() || (f.forensics && f.forensics.confidence === 'high')) return heuristic;
+
                 const digest = buildRedactedHead(f, { tier, jobSeed: redactionJobSeed });
                 const prompt = sniffPromptFor(tier) + '\n\n' + digest;
                 let parsed = null;
                 const { call, meta } = oneShotJsonWithToken(token, VERDICT_SCHEMA);
                 try {
-                    parsed = await runLlmJson(prompt, 300, call);
+                    parsed = await runLlmJson(prompt, verdictMaxTokens(f), call);
                 } catch (_) {
                     parsed = null;
                 }
@@ -7450,7 +7695,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 if (parsed && typeof parsed === 'object') {
                     return normalizeVerdict(parsed, f, meta.constrained);
                 }
-                return fallbackVerdict(f);
+                return heuristic;
             }
 
             function normalizeVerdict(parsed, f, constrained) {
@@ -7550,47 +7795,34 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 },
                 required: ['header_row', 'data_start_row', 'delimiter', 'preamble_summary', 'vendor', 'columns', 'confidence', 'notes']
             };
-            // Cheap startup self-check, not a test file: compiles once per
-            // "enter skill" so an unsupported-schema regression here is a
-            // loud console error instead of a silent fallback to
-            // unconstrained generation the next time a file is sniffed.
-            const PARTICIPANT_RE_V = /(^|[_\s\-])(mrn|participant|subject|record|pt[_\s]?id|patient[_\s]?id)([_\s\-]|$)/i;
-            const STUDY_RE_V = /(^|[_\s\-])study[_\s\-]?id($|[_\s\-])/i;
-            const TIMESTAMP_RE_V = /(timestamp|date[_\s\-]?time|recorded[_\s\-]?at|device[_\s\-]?time)/i;
-            const GLUCOSE_RE_V = /(glucose|\bbg\b|blood[_\s\-]?sugar)/i;
+            // Response budget for a VERDICT_SCHEMA call: one JSON object per
+            // column plus a fixed wrapper overhead. Scales with column count
+            // so wide files (many columns) don't get truncated mid-JSON and
+            // fail to parse; still bounded by promptFitsContext's 4096-token
+            // ceiling for every WebLLM build we offer.
+            function verdictMaxTokens(f) {
+                const numCols = (f.forensics && f.forensics.columns && f.forensics.columns.length) || 10;
+                return Math.min(900, 150 + 25 * numCols);
+            }
             function fallbackRoleDetectVerdict(columns) {
                 for (const c of columns) {
                     if (c.role && c.role !== 'other') continue;
-                    if (STUDY_RE_V.test(c.raw)) c.role = 'study_id';
-                    else if (PARTICIPANT_RE_V.test(c.raw)) c.role = 'participant_id';
-                    else if (TIMESTAMP_RE_V.test(c.raw)) c.role = 'timestamp';
-                    else if (GLUCOSE_RE_V.test(c.raw)) c.role = 'glucose';
+                    c.role = roleForHeader(c.raw, c.dtype);
                 }
             }
 
             // Recompute verdict columns after the user edits the header row.
             function recomputeVerdictAt(f, newHeaderRow) {
-                const rows = f.rows;
-                const headerCells = (rows[newHeaderRow] || []).map(v => String(v == null ? '' : v).trim());
-                while (headerCells.length && headerCells[headerCells.length - 1] === '') headerCells.pop();
-                const columns = headerCells.map((raw, i) => {
-                    // Sniff dtype from the first 20 non-empty samples.
-                    const samples = [];
-                    for (let k = newHeaderRow + 1; k < rows.length && samples.length < 20; k++) {
-                        const v = rows[k] && rows[k][i];
-                        const s = v == null ? '' : String(v).trim();
-                        if (s !== '') samples.push(s);
-                    }
-                    return {
-                        index: i,
-                        raw: raw || ('column_' + (i + 1)),
-                        role: 'other',
-                        dtype: sniffDtype(samples) || 'string'
-                    };
-                });
+                const built = buildColumnsFromHeader(f.rows, newHeaderRow);
+                const columns = built.columns.map((c, i) => ({
+                    index: i,
+                    raw: c.header,
+                    role: 'other',
+                    dtype: c.dtype || 'string'
+                }));
                 fallbackRoleDetectVerdict(columns);
                 f.verdict.header_row = newHeaderRow;
-                f.verdict.data_start_row = Math.min(newHeaderRow + 1, rows.length);
+                f.verdict.data_start_row = Math.min(newHeaderRow + 1, f.rows.length);
                 f.verdict.columns = columns;
                 f.verdict.source = 'user';
             }
@@ -7739,7 +7971,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         if (f._userEditedHeader || f._userEditedRoles) continue;   // never overwrite the user.
                         if (executeStatus) executeStatus('Applying your fixes to ' + f.name + ' (' + (i + 1) + ' of ' + later.length + ')...');
                         const { tier, redact } = currentRedact();
-                        if (f.forensics && f.forensics.confidence !== 'high' && !f.forensics.noHeader) {
+                        if (!isCpuOnly() && f.forensics && f.forensics.confidence !== 'high' && !f.forensics.noHeader) {
                             f.forensics = await resolveTabularHeaderWithLlm(f.forensics, f.rows, oneShotWithToken(myToken),
                                 { redact, tier, preHeaderMax: 6 });
                             if (f.forensics.method === 'llm') {
@@ -7749,13 +7981,26 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                             }
                             if (myToken !== skillLoadToken) return;
                         }
+                        // Heuristic verdict first, reinforced with the
+                        // user's own confirmed roles from the reviewed files
+                        // (matched by normalized header text) - this alone
+                        // is often enough to skip the LLM call below entirely.
+                        const heuristic = fallbackVerdict(f);
+                        for (const col of heuristic.columns) {
+                            const hint = roleByHeader.get(normalizeHeader(col.raw));
+                            if (hint && (!col.role || col.role === 'other')) col.role = hint;
+                        }
+                        if (isCpuOnly() || (f.forensics && f.forensics.confidence === 'high')) {
+                            f.verdict = heuristic;
+                            continue;
+                        }
                         const digest = buildRedactedHead(f, { tier, jobSeed: redactionJobSeed });
                         const prompt = sniffPromptFor(tier) + '\n\n' + 'Hints from files the user has already reviewed:\n' + hintBlock + '\n\n' + digest;
                         let parsed = null;
                         const { call, meta } = oneShotJsonWithToken(myToken, VERDICT_SCHEMA);
-                        try { parsed = await runLlmJson(prompt, 300, call); } catch (_) {}
+                        try { parsed = await runLlmJson(prompt, verdictMaxTokens(f), call); } catch (_) {}
                         if (myToken !== skillLoadToken) return;
-                        f.verdict = parsed ? normalizeVerdict(parsed, f, meta.constrained) : fallbackVerdict(f);
+                        f.verdict = parsed ? normalizeVerdict(parsed, f, meta.constrained) : heuristic;
                     }
                     sniffing = false;
                     setStage('verdict');
@@ -7818,36 +8063,22 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     const readout = document.createElement('div');
                     readout.className = 'csvc-file-meta';
                     const sampledN = (f.sampled && f.sampled.length) || Math.min(f.rows.length, 56);
-                    let readText = 'AI reviewed ' + sampledN + ' sampled rows out of ' + f.rows.length.toLocaleString() + ' in this file.';
+                    // "AI reviewed" only applies when the verdict actually came
+                    // from an LLM call - v.source === 'js' means every field
+                    // below came from the CSV_ALIAS_MAP/dtype heuristic instead.
+                    let readText = v.source === 'js'
+                        ? 'Column roles and vendor were text-matched from ' + f.rows.length.toLocaleString() + ' row(s) in this file - no AI call was needed.'
+                        : 'AI reviewed ' + sampledN + ' sampled rows out of ' + f.rows.length.toLocaleString() + ' in this file.';
                     if (v.preamble_summary) readText += ' Preamble: ' + v.preamble_summary;
                     if (v.notes) readText += ' Note: ' + v.notes;
                     readout.textContent = readText;
                     body.appendChild(readout);
 
-                    const ctrl = document.createElement('div');
-                    ctrl.className = 'csvc-inline-controls';
-                    const hdrLabel = document.createElement('label');
-                    hdrLabel.className = 'skill-hint';
-                    hdrLabel.textContent = 'Header row (1-based):';
-                    const hdrInput = document.createElement('input');
-                    hdrInput.type = 'number';
-                    hdrInput.min = 1; hdrInput.max = f.rows.length;
-                    hdrInput.value = v.header_row + 1;
-                    hdrInput.className = 'skill-input csvc-num';
-                    const applyHdr = () => {
-                        let r = parseInt(hdrInput.value, 10);
-                        if (!Number.isFinite(r) || r < 1) r = 1;
-                        if (r > f.rows.length) r = f.rows.length;
-                        hdrInput.value = r;
-                        recomputeVerdictAt(f, r - 1);
+                    const ctrl = renderHeaderRowAdjuster(body, f.rows, v.header_row, (newRow) => {
+                        recomputeVerdictAt(f, newRow);
                         f._userEditedHeader = true;
                         fillVerdictBody();          // in-place rerender: no scroll jump.
-                    };
-                    // Fire on step/arrow AND on typed changes.
-                    hdrInput.addEventListener('input', applyHdr);
-                    hdrInput.addEventListener('change', applyHdr);
-                    ctrl.appendChild(hdrLabel);
-                    ctrl.appendChild(hdrInput);
+                    });
                     // Data preview toggle
                     const pvBtn = document.createElement('button');
                     pvBtn.type = 'button';
@@ -7858,13 +8089,16 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         fillVerdictBody();
                     });
                     ctrl.appendChild(pvBtn);
-                    body.appendChild(ctrl);
 
                     // Raw-rows preview: shows the top rows of the file with
                     // the sniffed header row highlighted, so the analyst can
                     // eyeball where preamble ends and data starts.
                     if (f._previewOpen) {
-                        body.appendChild(renderRawRowsPreview(f));
+                        body.appendChild(renderRawRowsPreview(f.rows, v.header_row, v.data_start_row, (rowIndex) => {
+                            recomputeVerdictAt(f, rowIndex);
+                            f._userEditedHeader = true;
+                            fillVerdictBody();       // in-place rerender: no scroll jump.
+                        }));
                     }
 
                     // Column verdict table.
@@ -7898,77 +8132,6 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 }
             }
 
-            // Render a compact preview of the raw rows so the user can see
-            // where the preamble ends and the real data starts. Shows the
-            // first N rows (or fewer for very short files); the sniffed
-            // header row is highlighted and each row's number is clickable
-            // to snap the header spinner onto it.
-            function renderRawRowsPreview(f) {
-                const wrap = document.createElement('div');
-                wrap.className = 'csvc-raw-preview';
-                const hint = document.createElement('div');
-                hint.className = 'skill-hint';
-                hint.textContent = 'Raw rows from your file. Click a row number to set it as the header.';
-                wrap.appendChild(hint);
-                const table = document.createElement('table');
-                table.className = 'csvc-raw-table';
-                const tbody = document.createElement('tbody');
-                const total = f.rows.length;
-                const shownCount = Math.min(total, 30);
-                const maxCols = 12;
-                for (let i = 0; i < shownCount; i++) {
-                    const tr = document.createElement('tr');
-                    if (i === f.verdict.header_row) tr.className = 'csvc-raw-header-row';
-                    else if (i >= f.verdict.data_start_row) tr.className = 'csvc-raw-data-row';
-                    else tr.className = 'csvc-raw-preamble-row';
-                    const num = document.createElement('td');
-                    num.className = 'csvc-raw-num';
-                    num.textContent = String(i + 1);
-                    num.title = 'Set row ' + (i + 1) + ' as the header';
-                    num.addEventListener('click', () => {
-                        recomputeVerdictAt(f, i);
-                        f._userEditedHeader = true;
-                        // Rerender just this box.
-                        const box = num.closest('details.csvc-file-box');
-                        if (box) {
-                            const body = box.querySelector('.csvc-file-body');
-                            const summary = box.querySelector('summary');
-                            if (body && summary) {
-                                const parent = box.parentElement;
-                                const prev = box.previousSibling;
-                                const newSec = document.createDocumentFragment();
-                                renderVerdictBox(newSec, f);
-                                box.replaceWith(newSec);
-                            }
-                        }
-                    });
-                    tr.appendChild(num);
-                    const row = f.rows[i] || [];
-                    const cells = row.slice(0, maxCols);
-                    for (const c of cells) {
-                        const td = document.createElement('td');
-                        const s = String(c == null ? '' : c);
-                        td.textContent = s.length > 40 ? s.slice(0, 39) + '...' : s;
-                        tr.appendChild(td);
-                    }
-                    if (row.length > maxCols) {
-                        const td = document.createElement('td');
-                        td.className = 'muted';
-                        td.textContent = '(+' + (row.length - maxCols) + ' more)';
-                        tr.appendChild(td);
-                    }
-                    tbody.appendChild(tr);
-                }
-                table.appendChild(tbody);
-                wrap.appendChild(table);
-                if (total > shownCount) {
-                    const more = document.createElement('div');
-                    more.className = 'skill-hint';
-                    more.textContent = 'Showing first ' + shownCount + ' of ' + total.toLocaleString() + ' rows.';
-                    wrap.appendChild(more);
-                }
-                return wrap;
-            }
 
             // Provenance + per-file fallback marker for the notebook (design
             // doc Section 7: "provenance... a visible marker on any
