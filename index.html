@@ -854,14 +854,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
     <header>
         <h1>Field Station <span>AI</span><small><sup>™</sup></small></h1>
         <select id="model-select" aria-label="Model" title="Applies to all tabs. Conversation context carries over when you switch.">
-                <option value="router:LiquidAI/LFM2.5-350M-ONNX" selected>LFM2.5-350M + Router (default, ~276 MB)</option>
-                <option value="onnx-community/Qwen3-0.6B-ONNX">Qwen3-0.6B (~500 MB)</option>
-                <option value="HuggingFaceTB/SmolLM2-1.7B-Instruct">SmolLM2-1.7B (~925 MB)</option>
-                <option value="onnx-community/Llama-3.2-1B-Instruct-q4f16">Llama 3.2-1B (~1.2 GB)</option>
-                <option value="onnx-community/DeepSeek-R1-Distill-Qwen-1.5B-ONNX">DeepSeek R1 1.5B (~1.3 GB)</option>
-                <option value="onnx-community/gemma-3-1b-it-ONNX-GQA">Gemma 3-1B (~1.65 GB)</option>
-                <option value="onnx-community/Llama-3.2-3B-Instruct-onnx-web-gqa">Llama 3.2-3B (~2.1 GB)</option>
-                <option value="HuggingFaceTB/SmolLM3-3B-ONNX">SmolLM3-3B (~2.1 GB)</option>
+                <option value="router:webllm:SmolLM2-360M-Instruct-q4f16_1-MLC" selected>SmolLM2-360M + Router (default, ~210 MB)</option>
+                <option value="webllm:Qwen3-0.6B-q4f16_1-MLC">Qwen3-0.6B (~350 MB)</option>
+                <option value="webllm:gemma3-1b-it-q4f16_1-MLC">Gemma 3-1B (~530 MB)</option>
+                <option value="webllm:Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2-1B (~630 MB)</option>
+                <option value="webllm:DeepSeek-R1-Distill-Qwen-1.5B-q4f16_1-MLC">DeepSeek R1 1.5B (~880 MB)</option>
+                <option value="webllm:SmolLM2-1.7B-Instruct-q4f16_1-MLC">SmolLM2-1.7B (~1.0 GB)</option>
+                <option value="webllm:Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2-3B (~1.8 GB)</option>
+                <option value="webllm:Ministral-3-3B-Instruct-2512-BF16-q4f16_1-MLC">Ministral 3-3B (~1.8 GB)</option>
+                <option value="webllm:Phi-4-mini-instruct-q4f16_1-MLC">Phi-4-mini 3.8B (~2.2 GB)</option>
+                <option value="webllm:Qwen3.5-4B-q4f16_1-MLC">Qwen3.5-4B (~2.3 GB)</option>
+                <option value="webllm:Hermes-3-Llama-3.1-8B-q4f16_1-MLC">Hermes 3 8B (~4.6 GB)</option>
                 <option value="vision:HuggingFaceTB/SmolVLM-500M-Instruct">SmolVLM-500M (image Q&amp;A, ~360 MB)</option>
                 <option value="vision:onnx-community/Qwen2-VL-2B-Instruct">Qwen2-VL-2B (image Q&amp;A, ~2.7 GB)</option>
         </select>
@@ -1477,13 +1480,56 @@ with this program. If not, see https://www.gnu.org/licenses/.
             'onnx-community/DeepSeek-R1-Distill-Qwen-1.5B-ONNX': 131072,
             'onnx-community/gemma-3-1b-it-ONNX-GQA': 32768,
             'onnx-community/Llama-3.2-3B-Instruct-onnx-web-gqa': 131072,
-            'HuggingFaceTB/SmolLM3-3B-ONNX': 65536
+            'HuggingFaceTB/SmolLM3-3B-ONNX': 65536,
+            // WebLLM (MLC) builds. Every prebuilt entry we offer compiles
+            // its KV cache to a fixed context_window_size of 4096 (confirmed
+            // against MLC's own prebuilt config, not guessed) - the wasm
+            // library is compiled for this size, so it cannot be safely
+            // raised at load time. This value drives BOTH the client-side
+            // chat-history trimmer AND the proactive skill-prompt size guard
+            // in runLlmJson (see promptFitsContext), so a skill never sends
+            // a prompt doomed to overflow the model's real context.
+            'webllm:SmolLM2-360M-Instruct-q4f16_1-MLC': 4096,
+            'webllm:Qwen3-0.6B-q4f16_1-MLC': 4096,
+            'webllm:gemma3-1b-it-q4f16_1-MLC': 4096,
+            'webllm:Llama-3.2-1B-Instruct-q4f16_1-MLC': 4096,
+            'webllm:DeepSeek-R1-Distill-Qwen-1.5B-q4f16_1-MLC': 4096,
+            'webllm:SmolLM2-1.7B-Instruct-q4f16_1-MLC': 4096,
+            'webllm:Llama-3.2-3B-Instruct-q4f16_1-MLC': 4096,
+            'webllm:Ministral-3-3B-Instruct-2512-BF16-q4f16_1-MLC': 4096,
+            'webllm:Phi-4-mini-instruct-q4f16_1-MLC': 4096,
+            'webllm:Qwen3.5-4B-q4f16_1-MLC': 4096,
+            'webllm:Hermes-3-Llama-3.1-8B-q4f16_1-MLC': 4096
         };
 
         // ---------- State ----------
 
         let store = { chats: [], activeId: null, templates: [], lastModel: null };
         let generator = null;
+        // ---------- WebLLM engine state (Phase W1) ----------
+        // Main chat models run on WebLLM (WebGPU-only, MLC builds). Helper
+        // models (router MiniLM/NLI, zero-shot, vision, embeddings) stay on
+        // Transformers.js - WebLLM ships no equivalents for those. When the
+        // browser has no WebGPU, webllm: picks fall back to a small
+        // Transformers.js model on WASM CPU so the app still runs.
+        let webllmModule = null;   // lazy import of @mlc-ai/web-llm (esm.run CDN)
+        let webllmEngine = null;   // active MLCEngine, or null
+        let hasWebGPU = null;      // null until detected; then boolean
+        let runningOnCpu = false;  // true when the active chat model executes on CPU (WASM fallback)
+        const CPU_FALLBACK_TJS_ID = 'HuggingFaceTB/SmolLM2-360M-Instruct';
+        async function detectWebGPU() {
+            if (hasWebGPU !== null) return hasWebGPU;
+            try { hasWebGPU = !!navigator.gpu && !!(await navigator.gpu.requestAdapter()); }
+            catch (_) { hasWebGPU = false; }
+            return hasWebGPU;
+        }
+        // Skill gating helper (used by CPU-only skill logic): true when the
+        // active model cannot do fast LLM work (no engine, or CPU fallback).
+        function isCpuOnly() { return runningOnCpu || (mode === 'webllm' && !webllmEngine); }
+        async function disposeWebllmEngine() {
+            const e = webllmEngine; webllmEngine = null;
+            if (e) { try { await e.unload(); } catch (_) {} }
+        }
         let currentModelId = modelSelect.value;
         let mode = 'local';          // 'local' (transformers.js), 'ollama', or 'vision'
         let busy = false;
@@ -2698,7 +2744,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         let progShown = 0;                 // last-drawn percent (0-100)
         let progPhase = 'download';        // 'download' or 'compile'
         let compileTicker = null;          // interval id for the synthetic compile ramp
-        const DOWNLOAD_CEIL = 50;          // the download half's ceiling on the bar
+        const DOWNLOAD_CEIL = 75;          // the download phase's ceiling on the bar (rest = compile)
         const COMPILE_CEIL_SYNTHETIC = 95; // the synthetic compile ramp stops here
         const COMPILE_TICK_MS = 15000;
 
@@ -2799,7 +2845,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             let l = 0, t = 0;
             for (const f of Object.values(progFiles)) { l += f.loaded; t += f.total; }
             // Scale download bytes into 0..DOWNLOAD_CEIL, so 100% of bytes
-            // shows as 50% on the visible bar.
+            // shows as 75% on the visible bar.
             const scaled = t ? Math.min(DOWNLOAD_CEIL, (l / t) * DOWNLOAD_CEIL) : 0;
             if (scaled > progShown) {
                 progShown = scaled;
@@ -2814,7 +2860,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Wraps a progress callback for the loader. If we already know the
         // model is cached, we skip the download half of the bar entirely and
         // land in the compile phase immediately - the visible bar goes from
-        // 50% -> 100% as compile finishes, no misleading download animation.
+        // 75% -> 100% as compile finishes, no misleading download animation.
         // If the model turns out NOT to be cached (progress events with real
         // totals arrive), we fall back to the full 0-50 download half.
         function makeCacheAwareProgress(expectCached, downloadText) {
@@ -2992,6 +3038,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             busy = false;
             stopBtn.hidden = true;
             await disposeGenerator();
+            await disposeWebllmEngine();
             // Also drop any vision session held by a previous mode. The daisy
             // instance stays only if the new target is still a text model
             // that could use it - purging on every switch would defeat the
@@ -3063,9 +3110,87 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 routerActive = true;
             }
 
+            // ---------- WebLLM branch (main chat models) ----------
+            if (targetId.startsWith('webllm:')) {
+                const mlcId = targetId.slice(7);
+                const gpu = await detectWebGPU();
+                if (stale()) return;
+                if (!gpu) {
+                    // No WebGPU: WebLLM cannot run at all (it has no CPU
+                    // path). Fall back to a small Transformers.js model on
+                    // WASM so the app still works; skills that need real LLM
+                    // throughput check isCpuOnly() and degrade or disable.
+                    runningOnCpu = true;
+                    setStatus('This browser has no WebGPU, so the fast engine is unavailable. Loading a small CPU model instead - replies will be slower.', true);
+                    targetId = CPU_FALLBACK_TJS_ID;
+                    currentModelId = targetId;
+                    // fall through to the Transformers.js ladder below
+                } else {
+                    runningOnCpu = false;
+                    mode = 'webllm';
+                    generator = null;
+                    currentModelId = targetId; // keep the webllm: prefix so predicates and MODEL_CTX match
+                    const shortNameW = friendlyModelName(value);
+                    try {
+                        if (!webllmModule) {
+                            showProgress('Preparing the fast AI engine...');
+                            webllmModule = await import('https://esm.run/@mlc-ai/web-llm');
+                            if (stale()) return;
+                        }
+                        const cachedW = isCached(targetId);
+                        showProgress(cachedW
+                            ? 'Compiling ' + shortNameW + ' for your GPU (this can take a moment)...'
+                            : 'Downloading ' + shortNameW + ' to your browser...');
+                        // Progress contract (#9): download maps to 0-75 using
+                        // the shard counter WebLLM reports ("cache[k/n]"); the
+                        // GPU load/compile phase walks 75-95; finish pins 100.
+                        const wCb = (report) => {
+                            if (stale()) return;
+                            const t = (report && report.text) || '';
+                            let pct = null;
+                            const m = t.match(/\[(\d+)\/(\d+)\]/);
+                            if (/fetch/i.test(t) && m) {
+                                pct = Math.min(DOWNLOAD_CEIL, (parseInt(m[1], 10) / Math.max(1, parseInt(m[2], 10))) * DOWNLOAD_CEIL);
+                            } else if (/loading model to gpu|loading gpu shader|shader/i.test(t) && m) {
+                                pct = DOWNLOAD_CEIL + (parseInt(m[1], 10) / Math.max(1, parseInt(m[2], 10))) * (95 - DOWNLOAD_CEIL);
+                            } else if (/finish loading/i.test(t)) {
+                                pct = 99;
+                            } else if (typeof report.progress === 'number' && report.progress > 0) {
+                                pct = Math.min(DOWNLOAD_CEIL, report.progress * DOWNLOAD_CEIL);
+                            }
+                            if (pct !== null && pct > progShown) { progShown = pct; drawProgress(); }
+                        };
+                        const eng = await webllmModule.CreateMLCEngine(mlcId, { initProgressCallback: wCb });
+                        if (stale()) { try { await eng.unload(); } catch (_) {} return; }
+                        webllmEngine = eng;
+                        markCached(targetId);
+                        requestPersistentStorageOnce();
+                        finishProgress();
+                        hideProgress();
+                        setStatus('');
+                        setControls(true, false);
+                        focusInputUnlessWelcoming();
+                        return;
+                    } catch (e) {
+                        if (stale()) return;
+                        hideProgress();
+                        console.warn('WebLLM load failed:', e);
+                        // Hard failure on a WebGPU browser (driver quirk, OOM):
+                        // fall back to the small CPU model rather than a dead app.
+                        runningOnCpu = true;
+                        setStatus('Could not start the fast engine (' + errMsg(e) + '). Loading a small CPU model instead.', true);
+                        targetId = CPU_FALLBACK_TJS_ID;
+                        currentModelId = targetId;
+                        // fall through to the Transformers.js ladder below
+                    }
+                }
+            } else {
+                runningOnCpu = false; // plain Transformers.js pick; ladder decides webgpu vs wasm
+            }
+
             mode = 'local';
             generator = null;
-            const shortName = friendlyModelName(value); // user-facing label, no repo id leakage
+            const shortName = friendlyModelName(runningOnCpu ? value : targetId) || friendlyModelName(value); // user-facing label, no repo id leakage
 
             // Fallback ladder: fastest config first, most compatible last.
             // Models in NO_Q4F16 skip the q4f16 step entirely - either they
@@ -3110,6 +3235,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     fixupChatTemplate(generator, targetId);
                     markCached(targetId);
                     saveModelRung(targetId, step.device, step.dtype);
+                    runningOnCpu = (step.device === 'wasm'); // truth over intent: the ladder decides where this model actually runs
                     requestPersistentStorageOnce();
                     finishProgress();
                     hideProgress();
@@ -3157,6 +3283,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         fixupChatTemplate(generator, targetId);
                         markCached(targetId);
                         saveModelRung(targetId, step.device, step.dtype);
+                        runningOnCpu = (step.device === 'wasm');
                         requestPersistentStorageOnce();
                         finishProgress();
                         hideProgress();
@@ -4304,6 +4431,33 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return { hitCap: nTok >= cap - 1 };
         }
 
+        // Streaming round on the WebLLM engine. Mirrors localRound's contract:
+        // calls onToken per delta, honors Stop via engine.interruptGenerate()
+        // (wired in ModelGateway.interrupt), returns { hitCap }.
+        async function webllmRound(genMsgs, onToken, maxTokens) {
+            const cap = maxTokens || (/deepseek-r1|qwen3/i.test(currentModelId) ? 2048 : MAX_NEW_TOKENS);
+            const chunks = await webllmEngine.chat.completions.create({
+                messages: genMsgs,
+                stream: true,
+                stream_options: { include_usage: true },
+                max_tokens: cap,
+                temperature: currentTemperature()
+            });
+            let usage = null;
+            for await (const chunk of chunks) {
+                const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content;
+                if (delta) {
+                    onToken(delta);
+                    // Same macrotask yield as localRound: keeps Stop/New Chat
+                    // clickable and lets streamed text paint between deltas.
+                    await new Promise(r => setTimeout(r, 0));
+                }
+                if (chunk.usage) usage = chunk.usage;
+            }
+            const genTok = usage && usage.completion_tokens || 0;
+            return { hitCap: genTok >= cap - 1 };
+        }
+
         async function ollamaRound(model, genMsgs, onToken, maxTokens) {
             abortCtl = new AbortController();
             const cap = maxTokens || MAX_NEW_TOKENS;
@@ -4338,470 +4492,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return { hitCap };
         }
 
-        // ---------- Schema-constrained JSON decoding (Phase 3) ----------
-        // Transformers.js v4 has no native JSON-schema-guided generation
-        // (huggingface/transformers.js#1328 is still open) and no
-        // in-browser grammar decoder exists to import, but v4's generate()
-        // does accept a logits_processor array - confirmed directly against
-        // the pinned 4.2.0 source rather than assumed:
-        // TextGenerationPipeline._call destructures a few pipeline-specific
-        // keys out of generate_kwargs and spreads the rest straight into
-        // model.generate({...}), and generate()'s _get_logits_processor
-        // does `if (logits_processor !== null) processors.extend(logits_processor)`.
-        // LogitsProcessor is a Callable subclass (`_call(input_ids, logits)`,
-        // input_ids is Array<Array<number>> per batch item, logits is
-        // Array<{data: Float32Array}> per batch item) - confirmed against
-        // the real RepetitionPenaltyLogitsProcessor/SuppressTokensLogitsProcessor
-        // bodies. This app only ever runs batch size 1, no beam search.
-        //
-        // Scope is deliberately narrow: fixed-key objects, strings/numbers/
-        // integers/booleans/enums (incl. nullable), arrays of those, and
-        // one level of arrays-of-fixed-key-objects (needed for the
-        // combiner verdict's `columns` array). No recursion, no $ref, no
-        // allOf/anyOf/if-then. Built inline in this file, with no separate
-        // module/build step and no automated tests, per an explicit,
-        // confirmed decision that narrows master design doc Section 4.3's
-        // original "standalone, separately publishable, independently
-        // testable module" framing for this phase only.
-
-        function SchemaUnsupportedError(reason) {
-            this.name = 'SchemaUnsupportedError';
-            this.message = reason;
-        }
-        SchemaUnsupportedError.prototype = Object.create(Error.prototype);
-
-        // ----- Schema -> character-level DFA -----
-        // A state is { edges: Map<char, stateId>, wildcard: {test(ch), to}|null }.
-        // wildcard is only ever set on a free-string content state (see
-        // compileFreeString) - every other state is fully enumerated by
-        // exact-char edges, which is what keeps the whole DFA finite and
-        // small for this subset (no recursion means no unbounded nesting;
-        // arrays only add a bounded number of extra states plus one loop
-        // edge, not unbounded states, since array length is not encoded in
-        // the state count).
-        function newDfaBuilder() {
-            const states = [];
-            function addState() {
-                const id = states.length;
-                states.push({ edges: new Map(), wildcard: null });
-                return id;
-            }
-            function edge(from, ch, to) { states[from].edges.set(ch, to); }
-            return { states, addState, edge };
-        }
-
-        // Attaches every char of `str` as a chain of fresh states starting
-        // from `from`. `from` may be a single state id or an array of state
-        // ids (e.g. the multiple valid "number is done here" exits from
-        // compileNumber) - in the array case every source gets an edge on
-        // the literal's first char into one freshly-created shared next
-        // state, then the chain continues normally. Used for structural
-        // punctuation, object keys, and the true/false/null literals -
-        // multi-token alignment is handled entirely by the trie walk further
-        // down, not here, so this never needs to special-case token
-        // boundaries.
-        function attach(b, exits, ch, to) {
-            for (const e of Array.isArray(exits) ? exits : [exits]) b.edge(e, ch, to);
-        }
-        function attachLiteral(b, from, str) {
-            const chars = Array.from(str);
-            let cur;
-            if (Array.isArray(from)) {
-                cur = b.addState();
-                attach(b, from, chars[0], cur);
-            } else {
-                cur = b.addState();
-                b.edge(from, chars[0], cur);
-            }
-            for (let i = 1; i < chars.length; i++) {
-                const next = b.addState();
-                b.edge(cur, chars[i], next);
-                cur = next;
-            }
-            return cur;
-        }
-
-        // "Any JSON string content" state: everything except an unescaped
-        // quote, backslash, or control char (<0x20) self-loops back onto
-        // itself, and the closing quote is the only way out. Deliberately
-        // does NOT implement the backslash-escape sub-grammar (\", \n,
-        // \uXXXX, ...) - the wildcard.test predicate above is what actually
-        // keeps a quote/backslash/control byte out of this state's allowed
-        // tokens (see computeAllowedForState/dfaStep further down, which
-        // exclude any token whose decoded text would fail that test partway
-        // through). A documented limitation, not an oversight: free-string
-        // fields (raw header text, vendor, notes) cannot contain a literal
-        // quote or backslash.
-        function compileFreeString(b, entry) {
-            const content = b.addState();
-            b.edge(entry, '"', content);
-            b.states[content].wildcard = {
-                test: ch => ch !== '"' && ch !== '\\' && ch.charCodeAt(0) >= 0x20,
-                to: content
-            };
-            const exit = b.addState();
-            b.edge(content, '"', exit);
-            return exit;
-        }
-
-        // A trie over a fixed set of literal strings, not a flat chain per
-        // value - VERDICT_DTYPES has "date" and "datetime", where "date" is
-        // a genuine prefix of another valid value, so literals sharing a
-        // prefix must reuse the same states up to the point they diverge
-        // rather than assuming no literal is ever a prefix of another.
-        function compileLiteralSet(b, entry, literals) {
-            const exit = b.addState();
-            for (const lit of literals) {
-                const chars = Array.from(lit);
-                let cur = entry;
-                for (let i = 0; i < chars.length; i++) {
-                    const ch = chars[i];
-                    if (i === chars.length - 1) {
-                        b.edge(cur, ch, exit);
-                    } else {
-                        let next = b.states[cur].edges.get(ch);
-                        if (next == null) { next = b.addState(); b.edge(cur, ch, next); }
-                        cur = next;
-                    }
-                }
-            }
-            return exit;
-        }
-        // Enum: string values, each JSON-quoted before being handed to the
-        // literal-set trie above.
-        function compileEnum(b, entry, values) {
-            return compileLiteralSet(b, entry, values.map(v => JSON.stringify(v)));
-        }
-
-        // JSON number grammar: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
-        // allowFraction=false compiles the bare-integer subset (used for
-        // header_row/data_start_row, which are always small non-negative
-        // row indexes in practice, but the sign branch is still compiled in
-        // general since the task calls out signed/decimal numbers as a
-        // required case). Returns an array of every state a well-formed
-        // number can legally end on (bare zero, multi-digit integer, after
-        // fraction digits, after exponent digits) - callers attach their
-        // next literal (',' or '}') to all of them via attach()/attachLiteral().
-        function compileNumber(b, entry, allowFraction) {
-            const afterSign = b.addState();
-            b.edge(entry, '-', afterSign);
-            const zero = b.addState();
-            const digits = b.addState();
-            for (const s of [entry, afterSign]) {
-                b.edge(s, '0', zero);
-                for (let d = 1; d <= 9; d++) b.edge(s, String(d), digits);
-            }
-            for (let d = 0; d <= 9; d++) b.edge(digits, String(d), digits);
-            if (!allowFraction) return [zero, digits];
-            const fracFirst = b.addState();
-            attach(b, [zero, digits], '.', fracFirst);
-            const fracDigits = b.addState();
-            for (let d = 0; d <= 9; d++) b.edge(fracFirst, String(d), fracDigits);
-            for (let d = 0; d <= 9; d++) b.edge(fracDigits, String(d), fracDigits);
-            const expFirst = b.addState();
-            for (const s of [zero, digits, fracDigits]) {
-                b.edge(s, 'e', expFirst);
-                b.edge(s, 'E', expFirst);
-            }
-            const expSign = b.addState();
-            b.edge(expFirst, '+', expSign);
-            b.edge(expFirst, '-', expSign);
-            const expDigits = b.addState();
-            for (let d = 0; d <= 9; d++) {
-                b.edge(expFirst, String(d), expDigits);
-                b.edge(expSign, String(d), expDigits);
-            }
-            for (let d = 0; d <= 9; d++) b.edge(expDigits, String(d), expDigits);
-            return [zero, digits, fracDigits, expDigits];
-        }
-
-        // Fixed-key object: '{' then "key1":value1,"key2":value2,...,"keyN":valueN then '}'.
-        // Keys are always emitted in schema-declaration order - not a
-        // subset restriction, just matches the one shape the app's prompts
-        // ever ask for, so no key-order branching is compiled.
-        function compileObject(b, entry, properties, order) {
-            let cur = attachLiteral(b, entry, '{');
-            for (let i = 0; i < order.length; i++) {
-                const key = order[i];
-                cur = attachLiteral(b, cur, JSON.stringify(key) + ':');
-                const valExit = compileValue(b, cur, properties[key]);
-                cur = i < order.length - 1 ? attachLiteral(b, valExit, ',') : valExit;
-            }
-            return attachLiteral(b, cur, '}');
-        }
-
-        // Array of `itemNode`. The item grammar is compiled TWICE - once
-        // rooted at afterOpen (first item, no leading comma; afterOpen also
-        // has the ']' edge for an empty array) and once rooted at itemStart
-        // (subsequent items, entered only via a comma, deliberately with NO
-        // ']' edge). Reusing afterOpen as the comma-loop target instead
-        // would let a trailing comma before ']' validate ("[x,]"), which is
-        // not valid JSON - duplicating the small item sub-graph is cheap
-        // and avoids that bug outright rather than relying on a trickier
-        // state-aliasing scheme that would be much harder to verify by eye
-        // with no test suite to catch a mistake.
-        function compileArray(b, entry, itemNode) {
-            const afterOpen = attachLiteral(b, entry, '[');
-            const arrayExit = b.addState();
-            b.edge(afterOpen, ']', arrayExit);
-
-            const itemStart = b.addState();
-            const laterItemExit = compileValue(b, itemStart, itemNode);
-            attach(b, laterItemExit, ',', itemStart);
-            attach(b, laterItemExit, ']', arrayExit);
-
-            const firstItemExit = compileValue(b, afterOpen, itemNode);
-            attach(b, firstItemExit, ',', itemStart);
-            attach(b, firstItemExit, ']', arrayExit);
-
-            return arrayExit;
-        }
-
-        // Dispatches a normalized IR node (see normalizeSchemaNode) to its
-        // compiler. entry -> exit (single state id or array of state ids);
-        // nullable wraps the real grammar with a `null` alternative sharing
-        // the same entry state (safe: 'n' never collides with the first
-        // char of a string/enum/boolean/number/array/object value).
-        function compileValue(b, entry, node) {
-            if (node.nullable) {
-                const nullExit = attachLiteral(b, entry, 'null');
-                const realExit = compileValueInner(b, entry, node);
-                return (Array.isArray(realExit) ? realExit : [realExit]).concat([nullExit]);
-            }
-            return compileValueInner(b, entry, node);
-        }
-        function compileValueInner(b, entry, node) {
-            switch (node.kind) {
-                case 'string': return compileFreeString(b, entry);
-                case 'enum': return compileEnum(b, entry, node.values);
-                case 'boolean': return compileLiteralSet(b, entry, ['true', 'false']);
-                case 'integer': return compileNumber(b, entry, false);
-                case 'number': return compileNumber(b, entry, true);
-                case 'array': return compileArray(b, entry, node.items);
-                case 'object': return compileObject(b, entry, node.properties, node.order);
-                default: throw new SchemaUnsupportedError('unknown node kind: ' + node.kind);
-            }
-        }
-
-        // ----- Schema validation + normalization -----
-        // Converts a small JSON-Schema-like input into the internal IR
-        // compileValue expects, and is the single place that rejects
-        // anything outside the supported subset - the compiler above never
-        // has to guess or silently mishandle something unexpected.
-        // context: 'top' for the outermost object's own properties (may be
-        // scalar/enum/nullable, or an array of those, or an array of
-        // fixed-key objects); 'leaf' for properties of any object
-        // encountered anywhere else (scalar/enum/nullable only - no
-        // further arrays or objects), which is what actually enforces "one
-        // level of arrays-of-fixed-key-objects, inner object restricted to
-        // scalars".
-        function normalizeSchemaNode(node, context) {
-            if (!node || typeof node !== 'object') throw new SchemaUnsupportedError('schema node must be an object');
-            if (node.$ref) throw new SchemaUnsupportedError('$ref is not supported');
-            if (node.allOf || node.anyOf || node.oneOf || node.if) throw new SchemaUnsupportedError('allOf/anyOf/oneOf/if-then are not supported');
-
-            let types = node.type;
-            if (!Array.isArray(types)) types = [types];
-            const nullable = types.includes('null');
-            const realTypes = types.filter(t => t !== 'null');
-            if (realTypes.length !== 1) throw new SchemaUnsupportedError('type must be exactly one non-null type, optionally plus null');
-            const type = realTypes[0];
-
-            if (type === 'string' && Array.isArray(node.enum)) {
-                if (!node.enum.every(v => typeof v === 'string')) throw new SchemaUnsupportedError('enum values must all be strings');
-                return { kind: 'enum', nullable, values: node.enum };
-            }
-            if (type === 'string') return { kind: 'string', nullable };
-            if (type === 'integer') return { kind: 'integer', nullable };
-            if (type === 'number') return { kind: 'number', nullable };
-            if (type === 'boolean') return { kind: 'boolean', nullable };
-            if (type === 'array') {
-                if (context !== 'top') throw new SchemaUnsupportedError('arrays may only appear as a top-level object property, not nested inside another array or inside an array-item object');
-                if (!node.items || Array.isArray(node.items)) throw new SchemaUnsupportedError('array items must be a single schema, not tuple-typed');
-                return { kind: 'array', nullable, items: normalizeSchemaNode(node.items, 'leaf') };
-            }
-            if (type === 'object') {
-                const props = node.properties || {};
-                const order = Object.keys(props);
-                if (!order.length) throw new SchemaUnsupportedError('object must declare at least one property');
-                const required = node.required || order;
-                if (required.length !== order.length || !order.every(k => required.includes(k))) {
-                    throw new SchemaUnsupportedError('all properties must be required - optional/additional properties are not supported');
-                }
-                const properties = {};
-                for (const k of order) properties[k] = normalizeSchemaNode(props[k], context === 'top' ? 'top' : 'leaf');
-                return { kind: 'object', nullable, properties, order };
-            }
-            throw new SchemaUnsupportedError('unsupported type: ' + type);
-        }
-
-        function compileJsonSchema(schema) {
-            const ir = normalizeSchemaNode(schema, 'top');
-            if (ir.kind !== 'object') throw new SchemaUnsupportedError('top-level schema must be an object');
-            const b = newDfaBuilder();
-            const start = b.addState();
-            const exit = compileValue(b, start, ir);
-            const acceptStates = new Set(Array.isArray(exit) ? exit : [exit]);
-            return { states: b.states, start, acceptStates };
-        }
-
-        const schemaCompileCache = new Map(); // schema object identity -> compiled DFA
-        function compileJsonSchemaCached(schema) {
-            let c = schemaCompileCache.get(schema);
-            if (!c) { c = compileJsonSchema(schema); schemaCompileCache.set(schema, c); }
-            return c;
-        }
-
-        // ----- Tokenizer alignment: real vocab -> DFA states -----
-        // Cached per tokenizer object (WeakMap, so switching models frees
-        // the previous model's table automatically instead of needing
-        // explicit cache-busting). strings[id] is the token's real decoded
-        // text - Gemma's SentencePiece pieces (space marked with U+2581)
-        // and the byte-level BPE family's pieces (space marked with
-        // U+0120; LFM2.5, Llama, Qwen, SmolLM all share that convention)
-        // are resolved by the
-        // tokenizer's own decoder, not reimplemented here, so this works
-        // the same for both tokenizer families without branching on which
-        // one is loaded. special[id] marks ids that decode to '' under
-        // skip_special_tokens - those are excluded from the trie entirely
-        // (see buildTrie), so a role/turn marker token can never be
-        // classified as ordinary string content and end up mid-value.
-        const vocabTableCache = new WeakMap();
-        function buildVocabTable(tokenizer) {
-            const cached = vocabTableCache.get(tokenizer);
-            if (cached) return cached;
-            const ids = Object.values(tokenizer.get_vocab());
-            let maxId = 0;
-            for (const id of ids) if (id > maxId) maxId = id;
-            const strings = new Array(maxId + 1);
-            const special = new Uint8Array(maxId + 1);
-            const decodeOpts = { skip_special_tokens: false, clean_up_tokenization_spaces: false };
-            const specialProbeOpts = { skip_special_tokens: true, clean_up_tokenization_spaces: false };
-            for (const id of ids) {
-                let text = null;
-                try { text = tokenizer.decode([id], decodeOpts); } catch (_) { /* leave null, excluded below */ }
-                strings[id] = text;
-                if (text) {
-                    let visible = text;
-                    try { visible = tokenizer.decode([id], specialProbeOpts); } catch (_) { /* keep visible = text, treated as non-special */ }
-                    special[id] = visible === '' ? 1 : 0;
-                }
-            }
-            const trie = buildTrie(strings, special);
-            let eosId = null;
-            if (typeof tokenizer.eos_token_id === 'number') eosId = tokenizer.eos_token_id;
-            const table = { strings, special, trie, eosId };
-            vocabTableCache.set(tokenizer, table);
-            return table;
-        }
-        function buildTrie(strings, special) {
-            const root = { children: new Map(), tokenIds: null };
-            for (let id = 0; id < strings.length; id++) {
-                const s = strings[id];
-                if (!s || special[id]) continue;
-                let node = root;
-                for (const ch of s) {
-                    let child = node.children.get(ch);
-                    if (!child) { child = { children: new Map(), tokenIds: null }; node.children.set(ch, child); }
-                    node = child;
-                }
-                if (!node.tokenIds) node.tokenIds = [];
-                node.tokenIds.push(id);
-            }
-            return root;
-        }
-
-        function dfaStep(states, stateId, ch) {
-            const s = states[stateId];
-            const exact = s.edges.get(ch);
-            if (exact !== undefined) return exact;
-            if (s.wildcard && s.wildcard.test(ch)) return s.wildcard.to;
-            return null;
-        }
-        // Walks the token trie and the DFA together, starting from one DFA
-        // state, pruning any trie branch the DFA doesn't accept - the
-        // standard outlines/llguidance construction. This is what makes
-        // multi-token literals and partial-token positions work without any
-        // special-casing: a token spanning several literal characters (or
-        // only part of one) just advances the DFA that many characters in
-        // one step, or dies partway and is excluded, exactly like a
-        // single-character token would.
-        function computeAllowedForState(states, stateId, trieRoot) {
-            const map = new Map(); // tokenId -> nextState
-            (function dfs(node, dfaState) {
-                if (node.tokenIds) { for (const tid of node.tokenIds) map.set(tid, dfaState); }
-                for (const [ch, child] of node.children) {
-                    const next = dfaStep(states, dfaState, ch);
-                    if (next != null) dfs(child, next);
-                }
-            })(trieRoot, stateId);
-            return map;
-        }
-        // Per-(compiled schema, tokenizer) lazy, memoized state->allowed-
-        // token-map. Only one schema is wired this phase (VERDICT_SCHEMA),
-        // so the cache is keyed by tokenizer alone; a second schema later
-        // would need a composite key, not built now.
-        const stateTokenCache = new WeakMap(); // tokenizer -> Map<stateId, Map<tokenId,nextState>>
-        function getAllowedMapFor(compiled, tokenizer) {
-            let perTokenizer = stateTokenCache.get(tokenizer);
-            if (!perTokenizer) { perTokenizer = new Map(); stateTokenCache.set(tokenizer, perTokenizer); }
-            return function getForState(stateId) {
-                let m = perTokenizer.get(stateId);
-                if (!m) {
-                    const vocab = buildVocabTable(tokenizer);
-                    m = computeAllowedForState(compiled.states, stateId, vocab.trie);
-                    perTokenizer.set(stateId, m);
-                }
-                return m;
-            };
-        }
-
-        // One instance per generate() call - holds call-scoped mutable
-        // state (this.state, this.seenLen), so a fresh instance must be
-        // created for every generation, never reused across calls.
-        class JsonSchemaLogitsProcessor extends LogitsProcessor {
-            constructor(compiled, tokenizer) {
-                super();
-                this.compiled = compiled;
-                this.tokenizer = tokenizer;
-                this.getAllowed = getAllowedMapFor(compiled, tokenizer);
-                this.state = compiled.start;
-                this.seenLen = null;
-            }
-            _call(input_ids, logits) {
-                const seq = input_ids[0];
-                const data = logits[0].data;
-                if (this.seenLen == null) {
-                    this.seenLen = seq.length; // prompt length - nothing generated yet this call
-                } else {
-                    for (let i = this.seenLen; i < seq.length; i++) {
-                        const tokId = Number(seq[i]);
-                        const nextState = this.getAllowed(this.state).get(tokId);
-                        // Defensive only: a token we ourselves masked in should
-                        // always be in this map. If it somehow isn't (a bug
-                        // here would have no test to catch it), hold state
-                        // rather than throwing mid-generation.
-                        if (nextState != null) this.state = nextState;
-                    }
-                    this.seenLen = seq.length;
-                }
-                const allowed = this.getAllowed(this.state);
-                if (allowed.size === 0) return logits; // defensive: don't hard-dead-end generation on a compiler bug
-                const orig = data.slice();
-                data.fill(-Infinity);
-                for (const tokId of allowed.keys()) data[tokId] = orig[tokId];
-                if (this.compiled.acceptStates.has(this.state)) {
-                    const vocab = buildVocabTable(this.tokenizer);
-                    if (vocab.eosId != null) data[vocab.eosId] = orig[vocab.eosId];
-                }
-                return logits;
-            }
-        }
-
-        function createJsonSchemaProcessor(schema, tokenizer) {
-            const compiled = compileJsonSchemaCached(schema);
-            return new JsonSchemaLogitsProcessor(compiled, tokenizer);
-        }
 
         // Non-streaming single completion, given a full messages array (same
         // shape localRound/ollamaRound take). Used by the gateway's
@@ -4810,20 +4500,32 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // whether schema enforcement actually engaged (vs a plain call, or
         // a fallback after a compile/runtime error).
         async function oneShotImpl(messages, maxTok, response_format) {
-            if (mode === 'local') {
-                if (response_format && response_format.type === 'json_schema') {
+            if (mode === 'webllm') {
+                // Native structured output: WebLLM's XGrammar-backed JSON mode
+                // runs inside the engine (no per-token JS logits processor -
+                // the old Transformers.js DFA approach is gone entirely). If
+                // the schema is rejected at runtime, retry plain; repairJson
+                // remains the bridge downstream.
+                const wantSchema = response_format && response_format.type === 'json_schema' && response_format.schema;
+                if (wantSchema) {
                     try {
-                        const proc = createJsonSchemaProcessor(response_format.schema, generator.tokenizer);
-                        const out = await generator(messages, { max_new_tokens: maxTok, logits_processor: [proc] });
-                        return { text: out[0].generated_text.at(-1).content, constrained: true };
+                        const reply = await webllmEngine.chat.completions.create({
+                            messages,
+                            max_tokens: maxTok,
+                            temperature: 0.2,
+                            response_format: { type: 'json_object', schema: JSON.stringify(response_format.schema) }
+                        });
+                        return { text: (reply.choices[0].message.content) || '', constrained: true };
                     } catch (e) {
-                        // Unsupported schema, or any runtime failure in the
-                        // masking path - fall through to a plain call below
-                        // rather than failing the whole request. repairJson
-                        // stays the bridge for whatever this doesn't cover.
-                        console.warn('Constrained decoding unavailable, falling back to unconstrained generation:', e);
+                        console.warn('WebLLM JSON mode failed, falling back to plain generation:', e);
                     }
                 }
+                const reply = await webllmEngine.chat.completions.create({ messages, max_tokens: maxTok, temperature: currentTemperature() });
+                return { text: (reply.choices[0].message.content) || '', constrained: false };
+            }
+            if (mode === 'local') {
+                // CPU fallback path: plain generation only; extractFirstJson +
+                // repairJson downstream handle JSON-ish output.
                 const out = await generator(messages, { max_new_tokens: maxTok });
                 return { text: out[0].generated_text.at(-1).content, constrained: false };
             }
@@ -4874,15 +4576,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             async function create({ messages, stream, max_tokens, onToken, response_format } = {}) {
                 if (stream) {
-                    return mode === 'ollama'
-                        ? await ollamaRound(currentModelId.slice(7), messages, onToken, max_tokens)
-                        : await localRound(messages, onToken, max_tokens);
+                    if (mode === 'ollama') return await ollamaRound(currentModelId.slice(7), messages, onToken, max_tokens);
+                    if (mode === 'webllm') return await webllmRound(messages, onToken, max_tokens);
+                    return await localRound(messages, onToken, max_tokens);
                 }
                 const { text, constrained } = await oneShotImpl(messages, max_tokens, response_format);
                 return { choices: [{ message: { role: 'assistant', content: text } }], constrained };
             }
             function interrupt() {
                 if (mode === 'local') stopper.interrupt();
+                else if (mode === 'webllm' && webllmEngine) { try { webllmEngine.interruptGenerate(); } catch (_) {} }
                 else if (abortCtl) abortCtl.abort();
             }
             return { chat: { completions: { create } }, tier, interrupt };
@@ -4892,8 +4595,25 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // on (user stopped/navigated away) by the time the model replies,
         // throw so the caller's existing try/catch treats it as a failed call
         // instead of mutating state for a screen the user already left.
+        // True when a prompt of this size, plus the requested completion
+        // budget, plus a small safety margin for chat-template overhead,
+        // should fit inside the active model's real context window. Every
+        // MLC/WebLLM build we offer compiles to a fixed 4096-token KV cache
+        // (see MODEL_CTX) that cannot be raised at load time, so sending an
+        // oversized prompt is a guaranteed ContextWindowSizeExceededError,
+        // not a recoverable one - better to skip the call and let the
+        // caller's existing fallback (JS heuristic, etc.) run immediately.
+        function promptFitsContext(promptChars, maxTok) {
+            const fallback = currentModelId.startsWith('ollama:') ? 32768 : 8192;
+            const ctx = MODEL_CTX[currentModelId] || fallback;
+            const estTokens = Math.ceil(promptChars / 4) + 32; // template/role overhead
+            return estTokens + maxTok <= ctx;
+        }
         function oneShotWithToken(token) {
             return async (promptText, maxTok) => {
+                if (!promptFitsContext(promptText.length, maxTok)) {
+                    throw new Error('Prompt too large for this model\'s context window (~' + MODEL_CTX[currentModelId] + ' tokens). Try a bigger model, or this step will use its built-in fallback.');
+                }
                 const res = await ModelGateway.chat.completions.create({
                     messages: [{ role: 'user', content: promptText }],
                     max_tokens: maxTok
@@ -4914,6 +4634,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         function oneShotJsonWithToken(token, schema) {
             const meta = { constrained: false };
             const call = async (promptText, maxTok) => {
+                if (!promptFitsContext(promptText.length, maxTok)) {
+                    throw new Error('Prompt too large for this model\'s context window (~' + MODEL_CTX[currentModelId] + ' tokens). Try a bigger model, or this step will use its built-in fallback.');
+                }
                 const res = await ModelGateway.chat.completions.create({
                     messages: [{ role: 'user', content: promptText }],
                     max_tokens: maxTok,
@@ -4998,6 +4721,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const chat = activeChat();
             if (!text || busy || !chat) return;
             if (mode === 'local' && !generator) return;
+            if (mode === 'webllm' && !webllmEngine) return;
 
             busy = true;
             userStopped = false;
@@ -5732,17 +5456,37 @@ with this program. If not, see https://www.gnu.org/licenses/.
             lines.push('Rows (cells separated by " | "):');
             const truncCell = v => {
                 const s = String(v == null ? '' : v);
-                if (s.length <= 40) return s;
-                return s.slice(0, 39) + '...';
+                if (s.length <= 32) return s;
+                return s.slice(0, 31) + '...';
             };
-            for (const s of sampled) {
+            // Keep every header / pre-header row (structure, cheap, the main
+            // signal for role detection), but only a small spread of data-row
+            // EXAMPLES. Showing all ~48 sampled data rows produced a prompt
+            // that overflowed small models' context windows (e.g. 4096 on
+            // SmolLM2-360M); a few examples per column is all the classifier
+            // needs. Column NAMES are the signal, so columns are not dropped.
+            const DIGEST_DATA_ROWS = 6;
+            const MAX_DIGEST_COLS = 40;
+            const preRows = sampled.filter(s => s.index <= preHeaderMax);
+            const dataRows = sampled.filter(s => s.index > preHeaderMax);
+            let pickedData = dataRows;
+            if (dataRows.length > DIGEST_DATA_ROWS) {
+                pickedData = [];
+                const seen = new Set();
+                for (let k = 0; k < DIGEST_DATA_ROWS; k++) {
+                    const j = Math.round(k * (dataRows.length - 1) / (DIGEST_DATA_ROWS - 1));
+                    if (!seen.has(j)) { seen.add(j); pickedData.push(dataRows[j]); }
+                }
+            }
+            const digestRows = preRows.concat(pickedData).sort((a, b) => a.index - b.index);
+            for (const s of digestRows) {
                 const idx = s.index;
                 const row = s.row || [];
                 const isPreHeader = idx <= preHeaderMax;
                 const shown = isPreHeader ? row : rowRedact(row);
                 let cells = shown.map(truncCell);
                 let tail = '';
-                if (cells.length > 24) { tail = ' (+' + (cells.length - 24) + ' more)'; cells = cells.slice(0, 24); }
+                if (cells.length > MAX_DIGEST_COLS) { tail = ' (+' + (cells.length - MAX_DIGEST_COLS) + ' more)'; cells = cells.slice(0, MAX_DIGEST_COLS); }
                 const tag = isPreHeader || tier === 'local' ? '' : ' [redacted]';
                 lines.push('Row ' + idx + tag + ': ' + cells.join(' | ') + tail);
             }
@@ -6511,6 +6255,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 try { return JSON.parse(repairJson(chunk)); } catch {}
                 return null;
             };
+            // onCall (oneShotWithToken/oneShotJsonWithToken) already guards
+            // against an oversized prompt and throws before ever reaching
+            // the model - caught here like any other call failure, which
+            // resolves to the caller's JS-heuristic fallback.
             const first = await onCall(prompt, maxTok);
             let parsed = tryParse(first);
             if (parsed) return parsed;
@@ -7694,7 +7442,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 let parsed = null;
                 const { call, meta } = oneShotJsonWithToken(token, VERDICT_SCHEMA);
                 try {
-                    parsed = await runLlmJson(prompt, 900, call);
+                    parsed = await runLlmJson(prompt, 300, call);
                 } catch (_) {
                     parsed = null;
                 }
@@ -7806,7 +7554,6 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             // "enter skill" so an unsupported-schema regression here is a
             // loud console error instead of a silent fallback to
             // unconstrained generation the next time a file is sniffed.
-            try { compileJsonSchemaCached(VERDICT_SCHEMA); } catch (e) { console.error('VERDICT_SCHEMA failed to compile for constrained decoding:', e); }
             const PARTICIPANT_RE_V = /(^|[_\s\-])(mrn|participant|subject|record|pt[_\s]?id|patient[_\s]?id)([_\s\-]|$)/i;
             const STUDY_RE_V = /(^|[_\s\-])study[_\s\-]?id($|[_\s\-])/i;
             const TIMESTAMP_RE_V = /(timestamp|date[_\s\-]?time|recorded[_\s\-]?at|device[_\s\-]?time)/i;
@@ -8006,7 +7753,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         const prompt = sniffPromptFor(tier) + '\n\n' + 'Hints from files the user has already reviewed:\n' + hintBlock + '\n\n' + digest;
                         let parsed = null;
                         const { call, meta } = oneShotJsonWithToken(myToken, VERDICT_SCHEMA);
-                        try { parsed = await runLlmJson(prompt, 900, call); } catch (_) {}
+                        try { parsed = await runLlmJson(prompt, 300, call); } catch (_) {}
                         if (myToken !== skillLoadToken) return;
                         f.verdict = parsed ? normalizeVerdict(parsed, f, meta.constrained) : fallbackVerdict(f);
                     }
