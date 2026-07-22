@@ -1093,13 +1093,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const KB_EMBED_ID = 'Xenova/all-MiniLM-L6-v2';
         const KB_DIMS = 384;                              // must match the embedder above
         const KB_MAX_BYTES = 50 * 1024 * 1024;            // hard ceiling for index.json body
-        const KB_SCORE_MIN = 0.25;                        // dot product below this = not relevant
+        const KB_SCORE_MIN = 0.45;                        // dot product below this = not relevant (raised from 0.25 - MiniLM cosine sim runs high, even for unrelated text, due to embedding-space anisotropy; tune empirically if still over/under-triggering)
         const KB_TOPK = 4;                                // hits per turn fed into the prompt
         const KB_CTX_TOKEN_BUDGET = 1500;                 // rough cap for the reference block
         const KB_TTL_MS = 7 * 24 * 60 * 60 * 1000;        // 7 days for cached index.json bodies
         const KB_META_PREFIX = 'fieldstation_kb_meta::';   // localStorage key prefix, one per KB URL
         const KB_CACHE_NAME = 'fieldstation-kb-v1';        // Cache Storage bucket for the JSON blobs
-        const KB_INCLUDE_SUFFIX = 'Prefer and prioritize the reference excerpts when relevant; cite source URLs inline. You may also use general knowledge when excerpts do not cover the question.';
+        const KB_INCLUDE_SUFFIX = 'If the reference excerpts are relevant to this question, prefer and prioritize them and cite their source URLs inline. If they are not relevant, ignore them completely and answer normally from general knowledge - do not cite or mention them.';
         const KB_LOCKDOWN_SUFFIX = 'Answer ONLY from the reference excerpts. If they do not contain the answer, say exactly that and list the closest excerpt URLs. Never use outside knowledge.';
 
         // Daisy-chain vision model: SmolVLM-500M is what auto-downloads when
@@ -1615,6 +1615,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // active flips true only after fetchKbIndex validates and initRAG succeeds.
         // embedderLoading holds the in-flight promise so concurrent retrieveKb
         // calls share one download instead of racing.
+        //
+        // GUARDRAIL: KB context (retrieveKb/buildKbContextBlock/kbSystemPrompt)
+        // is wired into handleSend()'s main-chat path ONLY. Skills
+        // (oneShotWithToken/oneShotJsonWithToken - taxonomy-classify,
+        // csv-combine) send single-user-message prompts with no system role
+        // and never touch kbState; vision (handleVisionSend/runDaisyChain/
+        // runVisionGenerate) short-circuits out of handleSend before any
+        // router/KB logic runs. Keep it that way - don't read kbState from a
+        // skill or vision path without deliberately designing KB support for
+        // it (separate token budget, prompt shape, citation UI, etc.).
         const kbState = {
             active: false, mode: 'include', url: '', site: '',
             chunks: null, vecs: null, dims: 0,
@@ -4740,6 +4750,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         async function handleSend() {
             const text = input.value.trim();
+            // Vision bails out here, before any router/KB logic below - this
+            // is what keeps handleVisionSend isolated from kbState. See the
+            // GUARDRAIL note above kbState's declaration.
             if (mode === 'vision') { await handleVisionSend(text); return; }
             const chat = activeChat();
             if (!text || busy || !chat) return;
