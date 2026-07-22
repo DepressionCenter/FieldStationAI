@@ -28,3 +28,7 @@ Thumbs.db
 *.swp
 .claude
 .gemini
+
+# Ignore cache files
+*.cache
+__pycache__/

@@ -44,7 +44,7 @@ SEED_URL = "https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/Home/"
 OUT_PATH = "index.json"
 
 # Max pages to crawl (safety ceiling)
-MAX_PAGES = 500
+MAX_PAGES = 10000
 
 # Polite delay between requests in seconds (0 = no delay)
 DELAY = 0.5
@@ -66,11 +66,22 @@ DELAY = 0.5
 #   [r"/KB/", r"/Articles/"]              # multiple allowed subtrees
 # ---------------------------------------------------------------------------
 INCLUDE_PATTERNS = [
-    # r"/TDClient/210/DepressionCenter/",
+    r"/TDClient/210/DepressionCenter/", # Depression Center Knowledge Base
+    r"depressioncenter\.org/research-services/", # Depression Center public site - research resources
+    r"depressioncenter\.org/outreach-education/", # Depression Center public site - outreach and education program and depression toolkit
+    r"code\.depressioncenter\.org", # Depression Center code repository hub
+    r"github\.com/depressioncenter/[A-Za-z0-9_.-]+(?:/|$)", # Depression Center GitHub org
+    r"github\.com/DepressionCenter/[A-Za-z0-9_.-]+(?:/|$)" # Depression Center GitHub org (case-sensitive)
+
+    #r"github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/|$)", # GitHub repo landing page and subpaths
+    #r"gitlab\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/|$)", # GitLab repo landing page and subpaths
+    # r"git\.[A-Za-z0-9_.-]+\.(?:com|edu|org|io)/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/|$)", # Generic git host repo landing page and subpaths
+    # r"(?:[A-Za-z0-9_.-]+\.)?github\.io(?:/|$)", # GitHub Pages site root and subpaths
+
 ]
 
 # ---------------------------------------------------------------------------
-# EXCLUDE_PATTERNS -- skip any URL matching at least one of these.
+# CRAWL_EXCLUDE_PATTERNS -- do not follow links matching any of these.
 #
 # Each entry is a regex string matched against the full URL (case-insensitive).
 # Evaluated after the include check.
@@ -78,17 +89,52 @@ INCLUDE_PATTERNS = [
 # The defaults below skip search, login, tag, and similar non-content pages.
 # Add more as needed.
 # ---------------------------------------------------------------------------
-EXCLUDE_PATTERNS = [
+CRAWL_EXCLUDE_PATTERNS = [
     r"/Search[/?$]",
     r"/Login[/?$]",
     r"/Login\.aspx",
-    r"/Tags?[/?$]",
+    r"/Tags[/?$]",
     r"/Print[/?$]",
     r"/PrintArticle\?ID=",
     r"\?print=",
     r"/Archive[/?$]",
-    # r"/Category/",   # example: skip category listing pages
-    # r"&tab=",        # example: skip tabbed sub-views
+    r"/FileOpen[/?$]",
+    r"/FileDownload[/?$]",
+    r"/pulse$",
+    r"/tags$",
+    r"/tagged$",
+    #r"/CategoryID=",
+    #r"/CategoryID/[0-9]+",
+    r"/TagID=",
+    r"/TagID/[0-9]+",
+    #r"/Category/",
+    #r"&tab="
+]
+
+# ---------------------------------------------------------------------------
+# INDEX_EXCLUDE_PATTERNS -- allow the page to be reached/crawled, but do not
+# add its content to the generated index.
+# ---------------------------------------------------------------------------
+INDEX_EXCLUDE_PATTERNS = [
+    r"/Search[/?$]",
+    r"/Login[/?$]",
+    r"/Login\.aspx",
+    r"/Tags[/?$]",
+    r"/Print[/?$]",
+    r"/PrintArticle\?ID=",
+    r"\?print=",
+    r"/Archive[/?$]",
+    r"/FileOpen[/?$]",
+    r"/FileDownload[/?$]",
+    r"/pulse$",
+    r"/tags$",
+    r"/tagged$",
+    r"/CategoryID=",
+    r"/CategoryID/[0-9]+",
+    r"/TagID=",
+    r"/TagID/[0-9]+",
+    r"/Category/",
+    r"&tab="
 ]
 
 # ===========================================================================
@@ -167,6 +213,15 @@ STRIP_TAGS = [
 ASSET_RE = re.compile(
     r"\.(pdf|zip|png|jpg|jpeg|gif|svg|ico|css|js|xml|json)(\?|$)", re.I
 )
+GIT_HOST_RE = re.compile(
+    r"^(?:github\.com|gitlab\.com|git\.[^.]+\.(?:com|edu|org|io)|(?:[^.]+\.)?github\.io)$",
+    re.I,
+)
+GIT_REPO_ROOT_RE = re.compile(r"^/(?:[^/]+)/(?:[^/]+)$", re.I)
+GIT_INDEXABLE_NAME_RE = re.compile(
+    r"/(?:readme\.md|index\.html|index\.py|index\.lsp|index\.aspx|demo\.html|install\.md)$",
+    re.I,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -201,10 +256,36 @@ def get_origin(url):
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def in_scope(url, auto_prefix, origin, include_res, exclude_res):
-    # Must share origin with seed
-    if not url.startswith(origin):
+def is_git_host_url(url):
+    host = urlparse(url).netloc.lower()
+    return bool(GIT_HOST_RE.match(host))
+
+
+def is_git_indexable_url(url):
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.rstrip("/").lower()
+
+    if not is_git_host_url(url):
         return False
+
+    # Git repo landing pages: https://github.com/<user>/<repo>
+    if GIT_REPO_ROOT_RE.match(path):
+        return True
+
+    # Explicit indexable content leaf names
+    if GIT_INDEXABLE_NAME_RE.search(path):
+        return True
+
+    return False
+
+
+def in_scope(url, auto_prefix, origin, include_res, crawl_exclude_res):
+    # Default rule: keep the crawl within the seed origin unless an explicit
+    # include pattern opts into a different host (e.g. GitHub/GitLab repo pages).
+    if not url.startswith(origin):
+        if not include_res or not any(r.search(url) for r in include_res):
+            return False
 
     # Skip binary assets
     if ASSET_RE.search(url):
@@ -219,8 +300,8 @@ def in_scope(url, auto_prefix, origin, include_res, exclude_res):
         if not url.startswith(auto_prefix):
             return False
 
-    # Exclude check (after include, so excludes win)
-    if any(r.search(url) for r in exclude_res):
+    # Crawl exclude check (after include, so excludes win)
+    if any(r.search(url) for r in crawl_exclude_res):
         return False
 
     return True
@@ -247,15 +328,50 @@ def fetch(session, url):
         return None
 
 
-def get_title(soup):
+def normalise_page_title(title, url=None):
+    if url and "teamdynamix." in url.lower():
+        for prefix in ("Article - ", "Question Detail - "):
+            title = title.removeprefix(prefix)
+    return title
+
+
+def get_title(soup, url=None):
     t = soup.find("title")
     if t:
-        return re.sub(r"\s*[|]\s*.+$", "", t.get_text(" ", strip=True))
+        title = re.sub(r"\s*[|]\s*.+$", "", t.get_text(" ", strip=True))
+        return normalise_page_title(title, url)
     h1 = soup.find("h1")
-    return h1.get_text(" ", strip=True) if h1 else "Untitled"
+    if h1:
+        title = h1.get_text(" ", strip=True)
+        return normalise_page_title(title, url)
+    return "Untitled"
 
 
-def extract_content(soup):
+def extract_content(soup, url=None):
+    if url and "teamdynamix." in url.lower():
+        for sel in ("#divMainContent", "#questionsContent"):
+            node = soup.select_one(sel)
+            if node:
+                for noise in STRIP_TAGS:
+                    for el in node.select(noise):
+                        el.decompose()
+                if node.get_text(" ", strip=True):
+                    return node
+        return None
+
+    if is_git_host_url(url or ""):
+        if not is_git_indexable_url(url):
+            return None
+        for sel in (".markdown-body", "#readme", ".js-readme-container", "article", "main", "body"):
+            node = soup.select_one(sel)
+            if node:
+                for noise in STRIP_TAGS:
+                    for el in node.select(noise):
+                        el.decompose()
+                if node.get_text(" ", strip=True):
+                    return node
+        return None
+
     for sel in TDX_CONTENT_SELECTORS:
         node = soup.select_one(sel)
         if node:
@@ -338,7 +454,7 @@ def embed_chunks(chunks):
 # Crawl
 # ---------------------------------------------------------------------------
 
-def crawl(seed_url, max_pages, delay, include_res, exclude_res):
+def crawl(seed_url, max_pages, delay, include_res, crawl_exclude_res, index_exclude_res):
     auto_prefix = derive_auto_prefix(seed_url)
     origin = get_origin(seed_url)
     seed_norm = normalise(seed_url)
@@ -349,7 +465,8 @@ def crawl(seed_url, max_pages, delay, include_res, exclude_res):
         print(f"Include pats: {[r.pattern for r in include_res]}")
     else:
         print(f"Include pats: (auto -- prefix only)")
-    print(f"Exclude pats: {[r.pattern for r in exclude_res]}")
+    print(f"Crawl exclude pats: {[r.pattern for r in crawl_exclude_res]}")
+    print(f"Index exclude pats: {[r.pattern for r in index_exclude_res]}")
     print()
 
     session = requests.Session()
@@ -371,20 +488,26 @@ def crawl(seed_url, max_pages, delay, include_res, exclude_res):
             continue
 
         if len(visited) == 1:
-            site_name = get_title(soup)
+            site_name = get_title(soup, url)
 
         # Enqueue new in-scope links, deduped before download
         for link in extract_links(soup, url):
             if link not in visited and link not in queued:
-                if in_scope(link, auto_prefix, origin, include_res, exclude_res):
+                if in_scope(link, auto_prefix, origin, include_res, crawl_exclude_res):
                     queued.add(link)
                     queue.append(link)
 
-        content = extract_content(soup)
+        # Index exclusion only prevents indexing, not crawling.
+        if any(r.search(url) for r in index_exclude_res):
+            if delay > 0:
+                time.sleep(delay)
+            continue
+
+        content = extract_content(soup, url)
         if content is None:
             continue
 
-        title = get_title(soup)
+        title = get_title(soup, url)
         chunks = split_into_chunks(title, content, url)
         if chunks:
             print(f"       +{len(chunks)} chunk(s): {title[:70]}")
@@ -457,10 +580,11 @@ def main():
     args = parser.parse_args()
 
     include_res = compile_patterns(INCLUDE_PATTERNS)
-    exclude_res = compile_patterns(EXCLUDE_PATTERNS)
+    crawl_exclude_res = compile_patterns(CRAWL_EXCLUDE_PATTERNS)
+    index_exclude_res = compile_patterns(INDEX_EXCLUDE_PATTERNS)
 
     chunks, site_name = crawl(args.url, args.max_pages, args.delay,
-                              include_res, exclude_res)
+                              include_res, crawl_exclude_res, index_exclude_res)
     build_index(chunks, site_name, args.out)
 
 

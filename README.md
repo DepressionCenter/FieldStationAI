@@ -74,12 +74,22 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 
 
 #### This work is based in part on the following projects, libraries and/or studies:
+
+**Used by Field Station AI™:**
 + [Transformers.js](https://github.com/huggingface/transformers.js) - Runs Hugging Face transformer models (chat, vision, classification, and embedding) directly in the browser, entirely client-side.
 + [Pyodide](https://github.com/pyodide/pyodide) - A Python distribution compiled to WebAssembly, used to run pandas-based data-cleaning code locally in the browser sandbox.
 + [PapaParse](https://github.com/mholt/PapaParse) - In-browser CSV/delimited-text parsing used when ingesting research data files.
 + [SheetJS (xlsx)](https://github.com/SheetJS/sheetjs) - Reads and writes Excel spreadsheet files entirely client-side.
 + [PDF.js](https://github.com/mozilla/pdf.js) - Renders and extracts text from PDF documents in the browser.
 + [Ollama](https://github.com/ollama/ollama) - Optional, locally-run backend the app auto-detects to offer larger language models beyond what runs directly in-browser.
+
+**Used by the knowledge-base crawler:**
++ [Requests](https://github.com/psf/requests) - A simple and elegant HTTP library for making web requests in Python.
++ [Beautiful Soup (bs4)](https://github.com/beautifulsoup/beautifulsoup) - A Python library for parsing HTML and XML documents.
++ [Sentence Transformers](https://github.com/UKPLab/sentence-transformers) - A Python framework for generating semantic embeddings and sentence-level vector representations.
++ [NumPy](https://github.com/numpy/numpy) - A foundational numerical computing library for Python, used for array and vector operations.
++ [typing_extensions](https://github.com/python/typing_extensions) - Backports and extensions for Python typing features to support compatibility across Python versions.
+
 
 
 ## License
