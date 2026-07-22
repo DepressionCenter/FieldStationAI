@@ -91,24 +91,41 @@ INCLUDE_PATTERNS = [
 # ---------------------------------------------------------------------------
 CRAWL_EXCLUDE_PATTERNS = [
     r"/Search[/?$]",
-    r"/Login[/?$]",
-    r"/Login\.aspx",
-    r"/Tags[/?$]",
-    r"/Print[/?$]",
-    r"/PrintArticle\?ID=",
-    r"\?print=",
-    r"/Archive[/?$]",
-    r"/FileOpen[/?$]",
-    r"/FileDownload[/?$]",
-    r"/pulse$",
-    r"/tags$",
-    r"/tagged$",
-    #r"/CategoryID=",
-    #r"/CategoryID/[0-9]+",
-    r"/TagID=",
-    r"/TagID/[0-9]+",
-    #r"/Category/",
-    #r"&tab="
+        r"/Login[/?$]",
+        r"/Login\.aspx",
+        r"/Tags[/?$]",
+        r"/Print[/?$]",
+        r"/PrintArticle\?ID=",
+        r"\?print=",
+        r"/Archive[/?$]",
+        r"/FileOpen[/?$]",
+        r"/FileDownload[/?$]",
+        r"/pulse$",
+        r"/tags$",
+        r"/tagged$",
+        # r"/CategoryID=",
+        # r"/CategoryID/[0-9]+",
+        r"/TagID=",
+        r"/TagID/[0-9]+",
+        # r"/Category/",
+        r"&tab=",
+        r"/tree/(?!main(?:[/?]|$))",
+        r"/issues?[/?]",
+        r"/projects?[/?]",
+        r"/pulls?[/?]",
+        r"/pushes?[/?]",
+        r"/network[/?]",
+        r"/commits?[/?]",
+        r"/discussions?[/?]",
+        r"/categories[/?]",
+        r"/announcements?[/?]",
+        r"/settings[/?]",
+        r"/contribs?[/?]",
+        r"/contributions?[/?]",
+        r"/checks?[/?]",
+        r"/comments?[/?]",
+        r"/author[/?]",
+        r"/profile[/?]"
 ]
 
 # ---------------------------------------------------------------------------
@@ -134,7 +151,24 @@ INDEX_EXCLUDE_PATTERNS = [
     r"/TagID=",
     r"/TagID/[0-9]+",
     r"/Category/",
-    r"&tab="
+    r"&tab=",
+    r"/tree/(?!main(?:[/?]|$))",
+    r"/issues?[/?]",
+    r"/projects?[/?]",
+    r"/pulls?[/?]",
+    r"/pushes?[/?]",
+    r"/network[/?]",
+    r"/commits?[/?]",
+    r"/discussions?[/?]",
+    r"/categories[/?]",
+    r"/announcements?[/?]",
+    r"/settings[/?]",
+    r"/contribs?[/?]",
+    r"/contributions?[/?]",
+    r"/checks?[/?]",
+    r"/comments?[/?]",
+    r"/author[/?]",
+    r"/profile[/?]"
 ]
 
 # ===========================================================================
@@ -168,7 +202,9 @@ _ensure("numpy")
 
 import argparse
 import base64
+import hashlib
 import json
+import os
 import time
 from collections import deque
 from urllib.parse import urljoin, urlparse
@@ -181,11 +217,18 @@ from sentence_transformers import SentenceTransformer
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-EMBED_MODEL_BROWSER_ID = "Xenova/all-MiniLM-L6-v2"
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+EMBED_MODEL_BROWSER_ID = "Xenova/bge-small-en-v1.5"
 DIMS = 384
 CHUNK_MAX_CHARS = 1200
 CHUNK_MIN_CHARS = 60
+
+# Local page cache -- add this directory to .gitignore. Speeds up repeat runs
+# by skipping re-download of pages whose Last-Modified/ETag hasn't changed.
+CACHE_DIR = ".kb_cache"
+CACHE_META_PATH = os.path.join(CACHE_DIR, "meta.json")
+CACHE_PAGES_DIR = os.path.join(CACHE_DIR, "pages")
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -313,15 +356,70 @@ def normalise(url):
 
 
 # ---------------------------------------------------------------------------
+# Local page cache
+# ---------------------------------------------------------------------------
+
+def load_cache_meta():
+    if os.path.exists(CACHE_META_PATH):
+        try:
+            with open(CACHE_META_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+    return {}
+
+
+def save_cache_meta(cache_meta):
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(CACHE_META_PATH, "w", encoding="utf-8") as f:
+        json.dump(cache_meta, f)
+
+
+def cache_page_path(url):
+    h = hashlib.sha1(url.encode("utf-8")).hexdigest()
+    return os.path.join(CACHE_PAGES_DIR, h + ".html")
+
+
+# ---------------------------------------------------------------------------
 # Fetch + parse
 # ---------------------------------------------------------------------------
 
-def fetch(session, url):
+def fetch(session, url, cache_meta):
+    entry = cache_meta.get(url)
+    if entry:
+        try:
+            head = session.head(url, headers=HEADERS, timeout=15, allow_redirects=True)
+            last_mod = head.headers.get("Last-Modified")
+            etag = head.headers.get("ETag")
+            unchanged = head.status_code == 200 and (
+                (last_mod and entry.get("last_modified") == last_mod)
+                or (etag and entry.get("etag") == etag)
+            )
+            if unchanged:
+                try:
+                    with open(cache_page_path(url), "r", encoding="utf-8") as f:
+                        html = f.read()
+                    print("       (cached, not modified)")
+                    return BeautifulSoup(html, "html.parser")
+                except OSError:
+                    pass  # cache file missing/corrupt -- fall through to a full GET
+        except Exception:
+            pass  # HEAD unsupported/failed -- fall through to a full GET
+
     try:
         r = session.get(url, headers=HEADERS, timeout=15)
         r.raise_for_status()
         if "text/html" not in r.headers.get("content-type", ""):
             return None
+        os.makedirs(CACHE_PAGES_DIR, exist_ok=True)
+        with open(cache_page_path(url), "w", encoding="utf-8") as f:
+            f.write(r.text)
+        cache_meta[url] = {
+            "etag": r.headers.get("ETag"),
+            "last_modified": r.headers.get("Last-Modified"),
+            "fetched_at": time.time(),
+        }
+        save_cache_meta(cache_meta)
         return BeautifulSoup(r.text, "html.parser")
     except Exception as e:
         print(f"  SKIP {url} -- {e}")
@@ -470,6 +568,7 @@ def crawl(seed_url, max_pages, delay, include_res, crawl_exclude_res, index_excl
     print()
 
     session = requests.Session()
+    cache_meta = load_cache_meta()
     visited = set()
     queued = {seed_norm}   # dedup before download
     queue = deque([seed_norm])
@@ -483,7 +582,7 @@ def crawl(seed_url, max_pages, delay, include_res, crawl_exclude_res, index_excl
         visited.add(url)
 
         print(f"[{len(visited):4d}] {url}")
-        soup = fetch(session, url)
+        soup = fetch(session, url, cache_meta)
         if soup is None:
             continue
 

@@ -1090,10 +1090,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Static-RAG mode: activated only when ?kb=<url> is present. The URL
         // points at a prebuilt index.json (see plan). Everything else defaults
         // so the app is a strict no-op when the param is absent.
-        const KB_EMBED_ID = 'Xenova/all-MiniLM-L6-v2';
+        const KB_EMBED_ID = 'Xenova/bge-small-en-v1.5';
         const KB_DIMS = 384;                              // must match the embedder above
+        // bge models are trained for asymmetric retrieval: prepend this to the
+        // query only (never to indexed passages) per BAAI's model card.
+        const KB_QUERY_INSTRUCTION = 'Represent this sentence for searching relevant passages: ';
         const KB_MAX_BYTES = 50 * 1024 * 1024;            // hard ceiling for index.json body
-        const KB_SCORE_MIN = 0.45;                        // dot product below this = not relevant (raised from 0.25 - MiniLM cosine sim runs high, even for unrelated text, due to embedding-space anisotropy; tune empirically if still over/under-triggering)
+        const KB_SCORE_MIN = 0.44;                        // dot product below this = not relevant (raised from 0.25 - MiniLM cosine sim runs high, even for unrelated text, due to embedding-space anisotropy; tune empirically if still over/under-triggering)
         const KB_TOPK = 4;                                // hits per turn fed into the prompt
         const KB_CTX_TOKEN_BUDGET = 1500;                 // rough cap for the reference block
         const KB_TTL_MS = 7 * 24 * 60 * 60 * 1000;        // 7 days for cached index.json bodies
@@ -3716,9 +3719,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
         }
 
-        // --- Tier 1: shared MiniLM exemplar cosine ---
+        // --- Tier 1: shared bge-small exemplar cosine ---
         // Reuses ensureKbEmbedder() directly - the literal shared-pipeline
         // reuse point the design doc asks for. No separate router embedder.
+        // This is a symmetric intent-classification task, not retrieval, so
+        // no KB_QUERY_INSTRUCTION prefix here - see retrieveKb().
         async function buildRouterExemplarVecs() {
             if (routerExemplarVecs) return;
             if (routerExemplarBuilding) return routerExemplarBuilding;
@@ -3730,7 +3735,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 for (const id of allIntents) {
                     for (const s of ROUTER_EXEMPLARS[id]) { ids.push(id); strings.push(s); }
                 }
-                const out = await em(strings, { pooling: 'mean', normalize: true });
+                const out = await em(strings, { pooling: 'cls', normalize: true });
                 routerExemplarVecs = out.data; // flat Float32Array, ids.length * KB_DIMS
                 routerExemplarIds = ids;
             })().catch(e => {
@@ -3744,7 +3749,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         async function scoreTier1(text) {
             const em = await ensureKbEmbedder();
             await buildRouterExemplarVecs();
-            const out = await em(text.slice(0, 400), { pooling: 'mean', normalize: true });
+            const out = await em(text.slice(0, 400), { pooling: 'cls', normalize: true });
             const qVec = out.data;
             const dims = KB_DIMS;
             const scores = {};
@@ -4060,6 +4065,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
             try { idx = JSON.parse(bodyText); }
             catch { throw new Error('KB index is not valid JSON'); }
             if (!idx || idx.v !== 1) throw new Error('KB index version mismatch (expected v:1)');
+            const staleMismatch = idx.model !== KB_EMBED_ID || idx.dims !== KB_DIMS;
+            if (staleMismatch && cameFromCache && !force) {
+                // Cache Storage is keyed only by URL, not by model, so a browser
+                // that cached this index before an embedder swap has no other way
+                // to learn it's stale. Purge and retry once against the network
+                // before giving up.
+                await purgeKbEntry(url);
+                return fetchKbIndex(url, true);
+            }
             if (idx.model !== KB_EMBED_ID) throw new Error('KB embedder mismatch (expected ' + KB_EMBED_ID + ')');
             if (idx.dims !== KB_DIMS) throw new Error('KB dims mismatch (expected ' + KB_DIMS + ')');
             if (!Array.isArray(idx.chunks) || !idx.chunks.length) throw new Error('KB has no chunks');
@@ -4145,16 +4159,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // Brute-force top-k over pre-normalized vectors. noThreshold=true is
         // used only for the "closest URLs" list in the lockdown-empty case.
-        async function retrieveKb(query, k, noThreshold, precomputedVec) {
+        // Always embeds its own query vector (rather than reusing router Tier
+        // 1's) because retrieval needs the KB_QUERY_INSTRUCTION prefix and
+        // Tier 1's symmetric intent-classification vector must stay unprefixed.
+        async function retrieveKb(query, k, noThreshold) {
             if (!kbState.active || !kbState.vecs || !kbState.chunks) return [];
-            let q;
-            if (precomputedVec) {
-                q = precomputedVec; // reuse router Tier 1's embedding - one MiniLM pass per turn, not two
-            } else {
-                const em = await ensureKbEmbedder();
-                const out = await em(query, { pooling: 'mean', normalize: true });
-                q = out.data; // Float32Array of length dims
-            }
+            const em = await ensureKbEmbedder();
+            const out = await em(KB_QUERY_INSTRUCTION + query, { pooling: 'cls', normalize: true });
+            const q = out.data; // Float32Array of length dims
             const dims = kbState.dims;
             const N = kbState.chunks.length;
             const vecs = kbState.vecs;
@@ -4878,9 +4890,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     try {
                         // One embedding, both views: pass noThreshold=true and
                         // filter locally so the "closest URLs" fallback doesn't
-                        // re-embed the same text. Reuse the router's Tier 1
-                        // embedding when available instead of re-embedding.
-                        kbClosest = await retrieveKb(text, Math.max(KB_TOPK, 3), true, route && route.qVec);
+                        // re-embed the same text. Does its own embedding pass
+                        // (not reused from router Tier 1) since retrieval needs
+                        // the KB_QUERY_INSTRUCTION prefix Tier 1 must not get.
+                        kbClosest = await retrieveKb(text, Math.max(KB_TOPK, 3), true);
                         kbHits = kbClosest.filter(h => h.s >= KB_SCORE_MIN).slice(0, KB_TOPK);
                     } catch (kbErr) {
                         console.error('KB retrieve failed:', kbErr);

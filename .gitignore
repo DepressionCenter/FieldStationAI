@@ -44,3 +44,5 @@ CHATGPT.md
 *.cache
 __pycache__/
 .venv/
+.cache/
+.kb_cache/
