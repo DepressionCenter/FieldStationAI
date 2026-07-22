@@ -3013,19 +3013,23 @@ with this program. If not, see https://www.gnu.org/licenses/.
             await disposeOne(dm);
         }
         async function loadModel(value) {
+            const myToken = ++loadToken;
             anyLoadInProgress = true;
             try {
-                const r = await loadModelInner(value);
-                // Only remember a model as "last selected" once its load
-                // path actually finished. Bookkeeping the pending value
-                // here would cause a stall mid-compile to poison
-                // store.lastModel and make the next reload try the same
-                // broken model again.
-                store.lastModel = value;
-                saveStore();
+                const r = await loadModelInner(value, myToken);
+                // Only remember a model as "last selected" once its load path
+                // actually finished AND nothing newer superseded it (e.g. a
+                // "Stop and switch" cancel while this load's background
+                // promise was still resolving) - otherwise an abandoned load
+                // can resolve after the load that replaced it and stomp
+                // store.lastModel back to the wrong model.
+                if (myToken === loadToken) {
+                    store.lastModel = value;
+                    saveStore();
+                }
                 return r;
             } finally {
-                anyLoadInProgress = false;
+                if (myToken === loadToken) anyLoadInProgress = false;
                 refreshSkillsGridIfShown();
             }
         }
@@ -3051,8 +3055,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             hideProgress();
             setControls(true, false);
         }
-        async function loadModelInner(value) {
-            const myToken = ++loadToken;
+        async function loadModelInner(value, myToken) {
             // Lock the input row while loading, but keep the model dropdown LIVE
             // so the user can switch away from a slow or failing download.
             setControls(false, false);
@@ -3193,7 +3196,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
                             }
                             if (pct !== null && pct > progShown) { progShown = pct; drawProgress(); }
                         };
-                        const eng = await webllmModule.CreateMLCEngine(mlcId, { initProgressCallback: wCb });
+                        // Some prebuilt models' HF-hosted mlc-chat-config.json ship both
+                        // context_window_size and sliding_window_size positive, which WebLLM
+                        // rejects outright (see mlc-ai/web-llm#478). Override both explicitly to
+                        // the fixed 4096 window every prebuilt entry actually compiles to (see
+                        // the MODEL_CTX comment above) rather than trusting whatever each repo's
+                        // config currently contains.
+                        const eng = await webllmModule.CreateMLCEngine(mlcId, { initProgressCallback: wCb }, {
+                            context_window_size: MODEL_CTX[targetId] || 4096,
+                            sliding_window_size: -1
+                        });
                         if (stale()) { try { await eng.unload(); } catch (_) {} return; }
                         webllmEngine = eng;
                         markCached(targetId);
