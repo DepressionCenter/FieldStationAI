@@ -519,6 +519,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
             font-size: 1.15rem; margin: 0 32px 14px 32px; text-align: center;
         }
         .skills-body { padding-top: 4px; }
+        /* Engine-lock wait state (item 12): shown while a skill is mounted
+           and some OTHER surface currently holds the shared model lock.
+           Relocates into the Field Kit panel header once that tab ships. */
+        .skills-engine-wait {
+            font-size: 0.78rem; font-weight: 600; color: var(--accent-dark);
+            background: rgba(255, 203, 5, 0.18); border: 1px solid var(--line);
+            border-radius: 8px; padding: 6px 10px; margin: 0 32px 10px; text-align: center;
+        }
         .skills-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -943,6 +951,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             <button type="button" class="skills-reset" id="skills-reset" aria-label="Start over" title="Start over (clear files and categories)" hidden>&#8635;</button>
             <button type="button" class="skills-close" id="skills-close" aria-label="Close">&#10005;</button>
             <h2 class="skills-title" id="skills-title">Skills</h2>
+            <div class="skills-engine-wait" id="skills-engine-wait" aria-live="polite" hidden></div>
             <div class="skills-body" id="skills-body"></div>
         </div>
     </div>
@@ -1567,6 +1576,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         let pinSalt = null;          // base64 salt for the current PIN
         const stopper = new InterruptableStoppingCriteria();
         let abortCtl = null;
+        // EngineLock wait-abort controllers: one per "unit of work" (a chat
+        // turn, a skill run/session). Stop calls .abort() on whichever of
+        // these is live regardless of holding/queued state - see EngineLock.
+        let chatLockWaitCtl = null;
+        let skillLockWaitCtl = new AbortController();
 
         // Vision. visionProcessor/visionModel back the dedicated vision mode
         // (whichever vision option the user picked); daisyProcessor/daisyModel
@@ -2605,15 +2619,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         // enabled controls the input row (typing/sending). The model dropdown is
-        // handled separately: it stays usable during a model DOWNLOAD/LOAD so the
-        // user can switch away from a slow or failing model, and is only locked
-        // during active generation (passing lockModel=true).
-        function setControls(enabled, lockModel) {
+        // handled separately, by an EngineLock.onEngineBusyChange subscriber -
+        // it locks whenever ANY surface (chat or a skill) holds the engine
+        // lock, decoupled entirely from this function.
+        function setControls(enabled) {
             input.disabled = !enabled;
             btn.disabled = !enabled;
             micBtn.disabled = !enabled;
             attachBtn.disabled = !enabled;
-            if (lockModel !== undefined) modelSelect.disabled = lockModel;
         }
 
         function downloadChat() {
@@ -3053,12 +3066,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
             busy = false;
             stopBtn.hidden = true;
             hideProgress();
-            setControls(true, false);
+            setControls(true);
         }
         async function loadModelInner(value, myToken) {
             // Lock the input row while loading, but keep the model dropdown LIVE
             // so the user can switch away from a slow or failing download.
-            setControls(false, false);
+            setControls(false);
             // Wipe any prior load's error text: it would otherwise sit on the
             // status line while the next model's progress bar renders below it.
             setStatus('');
@@ -3095,7 +3108,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 generator = null;
                 runningOnCpu = false; // Ollama is a real network LLM, never the CPU fallback
                 setStatus('');
-                setControls(true, false);
+                setControls(true);
                 focusInputUnlessWelcoming();
                 return;
             }
@@ -3120,11 +3133,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     if (stale()) return;
                     hideProgress();
                     setStatus(`Could not load ${friendlyVisionName(targetVisionId)}: ${errMsg(e)}`, true);
-                    setControls(true, false);
+                    setControls(true);
                     focusInputUnlessWelcoming();
                     return;
                 }
-                setControls(true, false);
+                setControls(true);
                 focusInputUnlessWelcoming();
                 return;
             }
@@ -3213,7 +3226,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         finishProgress();
                         hideProgress();
                         setStatus('');
-                        setControls(true, false);
+                        setControls(true);
                         focusInputUnlessWelcoming();
                         return;
                     } catch (e) {
@@ -3288,7 +3301,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     finishProgress();
                     hideProgress();
                     setStatus('');
-                    setControls(true, false);
+                    setControls(true);
                     focusInputUnlessWelcoming();
                     return;
                 } catch (e) {
@@ -3336,7 +3349,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         finishProgress();
                         hideProgress();
                         setStatus('');
-                        setControls(true, false);
+                        setControls(true);
                         focusInputUnlessWelcoming();
                         return;
                     } catch (e) {
@@ -3351,7 +3364,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
             hideProgress();
             setStatus(`Could not load ${shortName}: ${lastErr}. Pick another model from the list.`, true);
-            setControls(true, false);
+            setControls(true);
             focusInputUnlessWelcoming();
         }
 
@@ -3449,6 +3462,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         function stopAll() {
+            // Unconditional and identical in shape everywhere Stop is wired:
+            // abort the wait (safe no-op if not currently queued/granted) and
+            // interrupt the model runtime (safe no-op if nothing is generating).
+            if (chatLockWaitCtl) chatLockWaitCtl.abort();
             ModelGateway.interrupt();
         }
 
@@ -3514,8 +3531,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
         async function visionInferWithFallback(getModels, family, blob, question, onToken, isDaisy) {
             try {
                 const { processor, model } = getModels();
-                return await runVisionGenerate(family, processor, model, blob, question, onToken);
+                await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+                try {
+                    return await runVisionGenerate(family, processor, model, blob, question, onToken);
+                } finally {
+                    EngineLock.release();
+                }
             } catch (e) {
+                if (e.lockCancelled) throw e; // stopped while waiting; not a WebGPU retry case
                 if (family !== 'smolvlm' || !isWebGpuInt64Failure(e)) throw e;
                 console.warn('Vision WebGPU inference failed on int64; reloading as WASM.');
                 localStorage.setItem(VISION_FORCE_WASM_FLAG, '1');
@@ -3533,7 +3556,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     visionFamily = r.family;
                 }
                 const { processor, model } = getModels();
-                return await runVisionGenerate(family, processor, model, blob, question, onToken);
+                await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+                try {
+                    return await runVisionGenerate(family, processor, model, blob, question, onToken);
+                } finally {
+                    EngineLock.release();
+                }
             }
         }
 
@@ -3589,6 +3617,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (busy) { setStatus('Finish or stop the current response before adding an image.', true); return; }
             const alreadyCached = isCached(DAISY_VISION_ID);
             busy = true;
+            chatLockWaitCtl = new AbortController(); // this turn's unit of work for EngineLock
             setControls(false);
             setStatus(alreadyCached
                 ? '🖼️ Reading image (image reader stays loaded alongside your current model - uses extra memory)...'
@@ -3626,6 +3655,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     // greeting/creative/calculation/unknown fall through to the user's own text
                 }
 
+            // Wait-state UI (item 12): a one-shot snapshot check right before
+            // the lock-guarded call, since this path has no other status tick.
+            const waitSnapshot = EngineLock.snapshot();
+            if (waitSnapshot.held && waitSnapshot.holderLabel !== 'chat') {
+                setStatus(`Waiting - ${waitSnapshot.holderLabel} is using the model...`);
+            }
             const description = await visionInferWithFallback(
                     () => ({ processor: daisyProcessor, model: daisyModel }),
                     daisyFamily, blob, question, null, true
@@ -3747,7 +3782,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 for (const id of allIntents) {
                     for (const s of ROUTER_EXEMPLARS[id]) { ids.push(id); strings.push(s); }
                 }
-                const out = await em(strings, { pooling: 'cls', normalize: true });
+                await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+                let out;
+                try {
+                    out = await em(strings, { pooling: 'cls', normalize: true });
+                } finally {
+                    EngineLock.release();
+                }
                 routerExemplarVecs = out.data; // flat Float32Array, ids.length * KB_DIMS
                 routerExemplarIds = ids;
             })().catch(e => {
@@ -3761,7 +3802,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         async function scoreTier1(text) {
             const em = await ensureKbEmbedder();
             await buildRouterExemplarVecs();
-            const out = await em(text.slice(0, 400), { pooling: 'cls', normalize: true });
+            await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+            let out;
+            try {
+                out = await em(text.slice(0, 400), { pooling: 'cls', normalize: true });
+            } finally {
+                EngineLock.release();
+            }
             const qVec = out.data;
             const dims = KB_DIMS;
             const scores = {};
@@ -3827,15 +3874,26 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const classifier = await ensureRouterNli();
             if (!classifier) return null;
             try {
-                return await classifier(text, hyps, opts);
+                await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+                try {
+                    return await classifier(text, hyps, opts);
+                } finally {
+                    EngineLock.release();
+                }
             } catch (e) {
+                if (e.lockCancelled) throw e; // caller's own fallback handles it, not a WebGPU retry case
                 if (!isWebGpuInt64Failure(e)) throw e;
                 console.warn('Router tiebreak WebGPU int64 failure; reloading on WASM for this session.');
                 routerNliForceWasm = true;
                 routerNliClassifier = null;
                 const reloaded = await ensureRouterNli();
                 if (!reloaded) throw new Error('Could not reload the router tiebreak model.');
-                return await reloaded(text, hyps, opts);
+                await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+                try {
+                    return await reloaded(text, hyps, opts);
+                } finally {
+                    EngineLock.release();
+                }
             }
         }
 
@@ -4177,7 +4235,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         async function retrieveKb(query, k, noThreshold) {
             if (!kbState.active || !kbState.vecs || !kbState.chunks) return [];
             const em = await ensureKbEmbedder();
-            const out = await em(KB_QUERY_INSTRUCTION + query, { pooling: 'cls', normalize: true });
+            await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+            let out;
+            try {
+                out = await em(KB_QUERY_INSTRUCTION + query, { pooling: 'cls', normalize: true });
+            } finally {
+                EngineLock.release();
+            }
             const q = out.data; // Float32Array of length dims
             const dims = kbState.dims;
             const N = kbState.chunks.length;
@@ -4648,6 +4712,91 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return { chat: { completions: { create } }, tier, interrupt };
         })();
 
+        // ---------- Engine lock ----------
+        // Single app-level mutex serializing every call into a shared model
+        // runtime (ModelGateway AND the standalone Transformers.js pipelines -
+        // router NLI, KB embedder, skill zero-shot classifier, vision) across
+        // both surfaces that can now run concurrently (chat, Field Kit skills).
+        // FCFS queue, per-call granularity, no preemption. See master design
+        // 4.4 / implementation-plan "Pre-9c step" section C.
+        const EngineLock = (() => {
+            let holder = null;          // { label } or null
+            const queue = [];           // [{ label, resolve, reject, signal, onAbort }]
+            const listeners = new Set();
+
+            function lockCancelled() {
+                const e = new Error('lock-wait-cancelled');
+                e.lockCancelled = true;   // test this, not the message string
+                return e;
+            }
+            function snapshot() {
+                return { held: !!holder, holderLabel: holder ? holder.label : null,
+                          queueLabels: queue.map(q => q.label) };
+            }
+            function notify() {
+                const s = snapshot();
+                for (const fn of listeners) { try { fn(s); } catch (e) { console.warn('engine lock listener error:', e); } }
+            }
+            function onEngineBusyChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
+
+            // Detach an entry's abort listener as soon as it leaves the queue, whether
+            // it was granted or aborted. { once: true } only auto-removes AFTER the
+            // event fires, so a normally-granted acquire would otherwise keep its
+            // listener attached forever - and with one AbortController per unit of
+            // work plus one acquire per batch item, a 5000-row batch would accumulate
+            // 5000 live listeners and remove none.
+            function detach(entry) {
+                if (entry.signal && entry.onAbort) {
+                    entry.signal.removeEventListener('abort', entry.onAbort);
+                    entry.onAbort = null;
+                }
+            }
+
+            function pump() {
+                if (holder) return;
+                const next = queue.shift();
+                if (!next) return;
+                detach(next);
+                holder = { label: next.label };
+                notify();
+                next.resolve();
+            }
+            function acquire(label, signal) {
+                return new Promise((resolve, reject) => {
+                    if (signal && signal.aborted) { reject(lockCancelled()); return; }
+                    const entry = { label, resolve, reject, signal };
+                    if (signal) {
+                        entry.onAbort = () => {
+                            const i = queue.indexOf(entry);
+                            if (i !== -1) { queue.splice(i, 1); notify(); }
+                            detach(entry);
+                            reject(lockCancelled());
+                        };
+                        signal.addEventListener('abort', entry.onAbort, { once: true });
+                    }
+                    queue.push(entry);
+                    notify();
+                    pump();
+                });
+            }
+            function release() { holder = null; notify(); pump(); }
+            return { acquire, release, onEngineBusyChange, snapshot };
+        })();
+
+        // Model dropdown is locked whenever ANY surface (chat or a skill)
+        // currently holds the engine lock - decoupled from setControls/busy
+        // entirely, per item 15.
+        EngineLock.onEngineBusyChange(({ held }) => { modelSelect.disabled = held; });
+
+        // Wait-state UI (item 12), chat side: null when chat itself holds (or
+        // nobody holds) the lock, else the label of whichever surface does -
+        // read directly by handleSend/handleVisionSend/runDaisyChain's own
+        // status ticks instead of each guessing locally.
+        let chatEngineWaitLabel = null;
+        EngineLock.onEngineBusyChange(({ held, holderLabel }) => {
+            chatEngineWaitLabel = (held && holderLabel !== 'chat') ? holderLabel : null;
+        });
+
         // A gateway call bound to a skill-load token: if the token has moved
         // on (user stopped/navigated away) by the time the model replies,
         // throw so the caller's existing try/catch treats it as a failed call
@@ -4671,10 +4820,22 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (!promptFitsContext(promptText.length, maxTok)) {
                     throw new Error('Prompt too large for this model\'s context window (~' + MODEL_CTX[currentModelId] + ' tokens). Try a bigger model, or this step will use its built-in fallback.');
                 }
-                const res = await ModelGateway.chat.completions.create({
-                    messages: [{ role: 'user', content: promptText }],
-                    max_tokens: maxTok
-                });
+                const ownerLabel = findSkill(skillsCurrentId)?.name || 'Field Kit';
+                try {
+                    await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                } catch (e) {
+                    if (e.lockCancelled) throw new Error('stale');
+                    throw e;
+                }
+                let res;
+                try {
+                    res = await ModelGateway.chat.completions.create({
+                        messages: [{ role: 'user', content: promptText }],
+                        max_tokens: maxTok
+                    });
+                } finally {
+                    EngineLock.release();
+                }
                 const out = res.choices[0].message.content || '';
                 if (token !== skillLoadToken) throw new Error('stale');
                 return out;
@@ -4694,11 +4855,23 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (!promptFitsContext(promptText.length, maxTok)) {
                     throw new Error('Prompt too large for this model\'s context window (~' + MODEL_CTX[currentModelId] + ' tokens). Try a bigger model, or this step will use its built-in fallback.');
                 }
-                const res = await ModelGateway.chat.completions.create({
-                    messages: [{ role: 'user', content: promptText }],
-                    max_tokens: maxTok,
-                    response_format: { type: 'json_schema', schema }
-                });
+                const ownerLabel = findSkill(skillsCurrentId)?.name || 'Field Kit';
+                try {
+                    await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                } catch (e) {
+                    if (e.lockCancelled) throw new Error('stale');
+                    throw e;
+                }
+                let res;
+                try {
+                    res = await ModelGateway.chat.completions.create({
+                        messages: [{ role: 'user', content: promptText }],
+                        max_tokens: maxTok,
+                        response_format: { type: 'json_schema', schema }
+                    });
+                } finally {
+                    EngineLock.release();
+                }
                 meta.constrained = !!res.constrained;
                 const out = res.choices[0].message.content || '';
                 if (token !== skillLoadToken) throw new Error('stale');
@@ -4720,18 +4893,20 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
 
             busy = true;
+            chatLockWaitCtl = new AbortController(); // this turn's unit of work for EngineLock
             const question = text || 'Describe this image.';
             const blob = pendingImage.blob;
             clearImagePreview();
             appendMessage('user', question + ' 🖼️');
             input.value = '';
-            setControls(false, true); // lock the model dropdown during generation
+            setControls(false); // model dropdown lock now follows EngineLock, not this call
             stopBtn.hidden = true; // vision generation is not interruptible yet
 
             const botDiv = appendMessage('bot', '');
             const start = performance.now();
             const timerId = setInterval(() => {
-                botDiv.setText(`Reading image... ${((performance.now() - start) / 1000).toFixed(1)}s`);
+                if (chatEngineWaitLabel) botDiv.setText(`Waiting - ${chatEngineWaitLabel} is using the model...`);
+                else botDiv.setText(`Reading image... ${((performance.now() - start) / 1000).toFixed(1)}s`);
             }, 100);
 
             try {
@@ -4767,7 +4942,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             } finally {
                 clearInterval(timerId);
                 busy = false;
-                setControls(true, false);
+                setControls(true);
                 input.focus();
             }
         }
@@ -4788,6 +4963,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             timedOut = false;
             repStopped = false;
             cancelledForNewChat = false;
+            chatLockWaitCtl = new AbortController(); // this turn's unit of work for EngineLock
 
             // Returns false as soon as the user has moved off this chat (New
             // Chat, tab switch). Every DOM write in this function is guarded
@@ -4799,7 +4975,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             appendMessage('user', text);
             input.value = '';
             chat.draft = ''; // sent, so nothing to preserve as a per-chat draft
-            setControls(false, true); // lock the model dropdown during generation
+            setControls(false); // model dropdown lock now follows EngineLock, not this call
             stopBtn.hidden = false;
 
             chat.messages.push({ role: 'user', content: text });
@@ -4827,6 +5003,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         // token loop halts a fraction of a second later once
                         // the current in-flight token finishes.
                         botDiv.setText('Stopping...');
+                    } else if (chatEngineWaitLabel) {
+                        botDiv.setText(`Waiting - ${chatEngineWaitLabel} is using the model...`);
                     } else if (!shownAny) {
                         const label = thinkOpen(raw) ? 'Reasoning' : 'Thinking';
                         botDiv.setText(`${label}... ${(el / 1000).toFixed(1)}s`);
@@ -4927,7 +5105,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         if (!cancelledForNewChat) {
                             busy = false;
                             stopBtn.hidden = true;
-                            setControls(true, false);
+                            setControls(true);
                             renderChips();
                             input.focus();
                         }
@@ -4959,12 +5137,22 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     const genMsgs = buildGenMessages(chat, partial, finalSys, suffix, kbPrefix);
                     let r;
                     try {
-                        r = await ModelGateway.chat.completions.create({
-                            messages: genMsgs, stream: true, onToken, max_tokens: routedCap
-                        });
+                        await EngineLock.acquire('chat', chatLockWaitCtl.signal);
                     } catch (e) {
-                        if (e && e.name === 'AbortError') r = { hitCap: false }; // stopped/timed out mid-stream
-                        else throw e;
+                        if (!e.lockCancelled) throw e;
+                        r = { hitCap: false }; // stopped while waiting for the model
+                    }
+                    if (r === undefined) {
+                        try {
+                            r = await ModelGateway.chat.completions.create({
+                                messages: genMsgs, stream: true, onToken, max_tokens: routedCap
+                            });
+                        } catch (e) {
+                            if (e && e.name === 'AbortError') r = { hitCap: false }; // stopped/timed out mid-stream
+                            else throw e;
+                        } finally {
+                            EngineLock.release();
+                        }
                     }
                     rounds++;
                     const elapsed = performance.now() - start;
@@ -5051,7 +5239,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (!handedOff && !cancelledForNewChat) {
                     busy = false;
                     stopBtn.hidden = true;
-                    setControls(true, false);
+                    setControls(true);
                     renderChips();
                     input.focus();
                 }
@@ -5078,9 +5266,20 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     'Messages: "' + combined + '" Label:'
                 ].join('\n');
                 if (supportsNoThinkSwitch()) namingPrompt += ' /no_think';
-                const namingRes = await ModelGateway.chat.completions.create({
-                    messages: [{ role: 'user', content: namingPrompt }], max_tokens: 10
-                });
+                try {
+                    await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+                } catch (e) {
+                    if (e.lockCancelled) return; // stopped before naming ran; skip silently
+                    throw e;
+                }
+                let namingRes;
+                try {
+                    namingRes = await ModelGateway.chat.completions.create({
+                        messages: [{ role: 'user', content: namingPrompt }], max_tokens: 10
+                    });
+                } finally {
+                    EngineLock.release();
+                }
                 const rawName = stripThink(namingRes.choices[0].message.content || '');
                 const name = rawName.trim().replace(/[^\w\s-]/g, '').split(/\s+/).slice(0, 3).join(' ');
 
@@ -6690,7 +6889,23 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const skillsBack = document.getElementById('skills-back');
         const skillsResetBtn = document.getElementById('skills-reset');
         const skillsClose = document.getElementById('skills-close');
+        const skillsEngineWaitEl = document.getElementById('skills-engine-wait');
         let skillsCurrentId = null;
+
+        // Wait-state UI (item 12): visible only while a skill is mounted AND
+        // some OTHER surface (chat) currently holds the shared engine lock.
+        // Rendered in the modal for now; relocates into the Field Kit panel
+        // header once that tab ships.
+        EngineLock.onEngineBusyChange(({ held, holderLabel }) => {
+            if (!skillsCurrentId) { skillsEngineWaitEl.hidden = true; return; }
+            const mine = findSkill(skillsCurrentId)?.name || 'Field Kit';
+            if (held && holderLabel !== mine) {
+                skillsEngineWaitEl.textContent = `Waiting - ${holderLabel} is using the model...`;
+                skillsEngineWaitEl.hidden = false;
+            } else {
+                skillsEngineWaitEl.hidden = true;
+            }
+        });
 
         // "Minimized" pseudo-tab appears in the tab bar when the modal is
         // closed AND a mounted skill has state worth preserving (in-flight
@@ -6818,6 +7033,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         function enterSkill(skill) {
             // Bump token to invalidate any prior in-flight work
             skillLoadToken++;
+            skillLockWaitCtl = new AbortController(); // this session's unit of work for EngineLock
             skillStateProbe = null;
             skillsCurrentId = skill.id;
             skillsBack.hidden = false;
@@ -6846,6 +7062,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (!skill) return;
             if (confirm('Start over? Your files and any results in this tool will be cleared. Saved settings are kept.')) {
                 skillLoadToken++;
+                skillLockWaitCtl = new AbortController(); // fresh session for EngineLock
                 skillStateProbe = null;
                 skillsBody.innerHTML = '';
                 if (skill.id === 'taxonomy-classify') mountTaxonomySkill(skillsBody);
@@ -7286,6 +7503,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
             cancelBtn.addEventListener('click', () => {
                 skillLoadToken++;
+                skillLockWaitCtl.abort();
+                ModelGateway.interrupt();
                 skillLog(statusEl, 'Stopped.');
                 finishRun();
             });
@@ -7358,9 +7577,16 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 // model on WASM (session-only) and retries once. Any other
                 // failure propagates unchanged.
                 async function tryClassify(text, hyps, opts) {
+                    const ownerLabel = findSkill(skillsCurrentId)?.name || 'Field Kit';
                     try {
-                        return await classifier(text, hyps, opts);
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        try {
+                            return await classifier(text, hyps, opts);
+                        } finally {
+                            EngineLock.release();
+                        }
                     } catch (e) {
+                        if (e.lockCancelled) throw e; // caller's token check handles it, not a WebGPU retry case
                         if (!isWebGpuInt64Failure(e)) throw e;
                         console.warn('Skill classifier WebGPU int64 failure; reloading on WASM for this session.');
                         skillLog(statusEl, 'Your browser could not run the categorizer on the GPU. Switching to a slower CPU version and retrying...');
@@ -7369,7 +7595,12 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         classifier = await ensureSkillZeroShot(msg => skillLog(statusEl, msg));
                         if (!classifier) throw new Error('Could not reload the categorizer.');
                         // Retry once on WASM. Any failure here propagates.
-                        return await classifier(text, hyps, opts);
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        try {
+                            return await classifier(text, hyps, opts);
+                        } finally {
+                            EngineLock.release();
+                        }
                     }
                 }
 
@@ -7901,6 +8132,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 stopBtn.textContent = 'Stop';
                 stopBtn.addEventListener('click', () => {
                     skillLoadToken++;
+                    skillLockWaitCtl.abort();
+                    ModelGateway.interrupt();
                     sniffing = false;
                     setStage('files');
                 });
@@ -8242,6 +8475,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 stopBtn.addEventListener('click', () => {
                     stopped = true;
                     skillLoadToken++;
+                    skillLockWaitCtl.abort();
+                    ModelGateway.interrupt();
                     disposePyodideWorker();
                     executing = false;
                     setStage('verdict');
@@ -9181,7 +9416,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 stopAll();
                 busy = false;
                 stopBtn.hidden = true;
-                setControls(true, false);
+                setControls(true);
             }
             createChat();
             setStatus('New chat started.');
