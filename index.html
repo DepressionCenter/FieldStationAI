@@ -350,6 +350,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         .template-chip button:hover { color: var(--accent); }
 
         #input-area { display: flex; gap: 8px; align-items: flex-end; }
+        /* Single wrapper around the 4 composer siblings, toggled as one unit
+           via activeSurface - never toggled per-child. See applySurfaceVisibility(). */
+        #composer-region { display: flex; flex-direction: column; }
         .icon-btn {
             width: 44px; height: 64px; border: 1px solid var(--line); border-radius: 10px;
             background: var(--panel); cursor: pointer; font-size: 1.05rem; flex-shrink: 0;
@@ -470,34 +473,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
             .pin-pad.landscape { display: grid; }
         }
 
-        /* ============ Skills panel (Phase 9a) ============ */
-        #skills-modal {
-            position: fixed; inset: 0; z-index: 105;
-            background: rgba(23, 38, 59, 0.55);
-            display: none; align-items: center; justify-content: center; padding: 16px;
+        /* ============ Field Kit panel (Phase 9a; tab-converted) ============ */
+        /* Occupies #chat-box's flex slot when activeSurface === 'fieldkit';
+           toggled entirely via JS .style.display, see applySurfaceVisibility(). */
+        #skills-panel {
+            display: none; flex-direction: column; flex-grow: 1; min-height: 0;
         }
-        #skills-modal.open { display: flex; }
-        .skills-dialog {
-            position: relative;
-            background: var(--panel); border-radius: 16px; padding: 24px;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
-            width: 100%; max-width: 720px; max-height: 85vh; overflow-y: auto;
+        #skills-panel-header {
+            display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
+            margin-bottom: 0.9rem;
         }
-        .skills-close, .skills-back, .skills-reset {
-            position: absolute; top: 10px;
-            width: 28px; height: 28px; padding: 0; border-radius: 50%;
-            border: none; background: none; color: var(--muted);
-            font-size: 1.1rem; line-height: 1; cursor: pointer;
-            opacity: 0.6; transition: opacity 0.15s, color 0.15s, background 0.15s;
-            display: flex; align-items: center; justify-content: center;
-        }
-        .skills-close { right: 10px; }
-        .skills-back { left: 10px; font-size: 1.4rem; }
-        .skills-reset { left: 44px; font-size: 1.1rem; }
-        .skills-close:hover { opacity: 1; color: var(--danger); background: var(--bg); }
-        .skills-back:hover { opacity: 1; color: var(--accent); background: var(--bg); }
-        .skills-reset:hover { opacity: 1; color: var(--accent); background: var(--bg); }
-        /* Skill "minimized" pseudo-tab in the tab bar */
+        /* Skill "Field Kit" tab entry in the tab bar */
         .tab.skill-tab { border-color: var(--bubble); background: rgba(47, 101, 167, 0.08); color: var(--ink); }
         .tab.skill-tab:hover { border-color: var(--accent); }
         .tab.skill-tab .skill-tab-dot {
@@ -508,7 +494,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
         @keyframes skill-tab-pulse { 50% { opacity: 0.35; } }
         @media (prefers-reduced-motion: reduce) { .tab.skill-tab .skill-tab-dot { animation: none; } }
-        /* In-modal mirrored progress bar */
+        /* Progress bar mirrored into the panel */
         .skill-progress { margin: 10px 0; }
         .skill-progress-msg { font-size: 0.78rem; font-weight: 600; margin-bottom: 5px; color: var(--ink); }
         .skill-progress-msg span { color: var(--accent-dark); font-family: 'IBM Plex Mono', monospace; margin-left: 4px; }
@@ -516,16 +502,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
         .skill-progress-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.2s; }
         .skills-title {
             font-family: 'Space Grotesk', sans-serif; font-weight: 700;
-            font-size: 1.15rem; margin: 0 32px 14px 32px; text-align: center;
+            font-size: 1.15rem; margin: 0; flex-grow: 1;
         }
-        .skills-body { padding-top: 4px; }
+        .skills-body {
+            flex-grow: 1; overflow-y: auto; border: 1px solid var(--line); border-radius: 14px;
+            padding: 1.1rem; background: var(--panel); margin-bottom: 0.9rem;
+        }
         /* Engine-lock wait state (item 12): shown while a skill is mounted
-           and some OTHER surface currently holds the shared model lock.
-           Relocates into the Field Kit panel header once that tab ships. */
+           and some OTHER surface currently holds the shared model lock. */
         .skills-engine-wait {
             font-size: 0.78rem; font-weight: 600; color: var(--accent-dark);
             background: rgba(255, 203, 5, 0.18); border: 1px solid var(--line);
-            border-radius: 8px; padding: 6px 10px; margin: 0 32px 10px; text-align: center;
+            border-radius: 8px; padding: 6px 10px; margin: 0 0 10px; text-align: center;
         }
         .skills-grid {
             display: grid;
@@ -879,7 +867,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         </select>
         <button id="new-chat-btn" title="Start a new chat tab">New chat</button>
         <button id="pin-btn" title="Encrypt saved chats with a PIN">🔒</button>
-        <button id="skills-btn" title="Extra tools (sort into categories, and more coming soon)" aria-label="Extra tools">
+        <button id="skills-btn" title="Field Kit (sort into categories, and more coming soon)" aria-label="Field Kit">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h18v13H3z"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 13h18"/><path d="M10 13v2h4v-2"/></svg>
         </button>
         <div id="menu-wrap">
@@ -906,29 +894,41 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
     <div id="chat-box"></div>
 
-    <div class="scroll-wrap" id="prompt-chips-wrap">
-        <button id="chips-scroll-left" class="scroll-arrow" title="Scroll left">‹</button>
-        <div id="chips-row"></div>
-        <button id="chips-scroll-right" class="scroll-arrow" title="Scroll right">›</button>
-    </div>
-    <div id="image-preview">
-        <img id="image-preview-thumb" alt="Pasted image preview">
-        <span id="image-preview-label">Image attached - ask a question and Send.</span>
-        <button id="image-preview-remove" title="Remove image">✕</button>
-    </div>
-    <div id="tabular-preview">
-        <span id="tabular-preview-label">File attached - ask a question and Send.</span>
-        <button id="tabular-preview-remove" title="Remove file">✕</button>
+    <div id="skills-panel">
+        <div id="skills-panel-header">
+            <h2 class="skills-title" id="skills-title">Field Kit</h2>
+            <button type="button" class="skill-btn" id="skills-reset" title="Start over (clear files and categories)" hidden>&#8635; Start over</button>
+            <button type="button" class="skill-btn primary" id="skills-done" hidden>Done</button>
+        </div>
+        <div class="skills-engine-wait" id="skills-engine-wait" aria-live="polite" hidden></div>
+        <div class="skills-body" id="skills-body"></div>
     </div>
 
-    <div id="input-area">
-        <textarea id="user-input" placeholder="Type your prompt... (Enter to send, Shift+Enter for new line)" disabled></textarea>
-        <button id="mic-btn" class="icon-btn" title="Dictate. Auto-stops after a pause. Uses your browser's speech service, which may be cloud-based." disabled>🎤</button>
-        <button id="attach-btn" class="icon-btn" title="Upload a dataset (CSV, TSV, Excel) or an image. Parsed locally in your browser." disabled>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.19 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-        </button>
-        <button id="send-btn" disabled>Send</button>
-        <button id="stop-btn" hidden>Stop</button>
+    <div id="composer-region">
+        <div class="scroll-wrap" id="prompt-chips-wrap">
+            <button id="chips-scroll-left" class="scroll-arrow" title="Scroll left">‹</button>
+            <div id="chips-row"></div>
+            <button id="chips-scroll-right" class="scroll-arrow" title="Scroll right">›</button>
+        </div>
+        <div id="image-preview">
+            <img id="image-preview-thumb" alt="Pasted image preview">
+            <span id="image-preview-label">Image attached - ask a question and Send.</span>
+            <button id="image-preview-remove" title="Remove image">✕</button>
+        </div>
+        <div id="tabular-preview">
+            <span id="tabular-preview-label">File attached - ask a question and Send.</span>
+            <button id="tabular-preview-remove" title="Remove file">✕</button>
+        </div>
+
+        <div id="input-area">
+            <textarea id="user-input" placeholder="Type your prompt... (Enter to send, Shift+Enter for new line)" disabled></textarea>
+            <button id="mic-btn" class="icon-btn" title="Dictate. Auto-stops after a pause. Uses your browser's speech service, which may be cloud-based." disabled>🎤</button>
+            <button id="attach-btn" class="icon-btn" title="Upload a dataset (CSV, TSV, Excel) or an image. Parsed locally in your browser." disabled>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.19 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+            </button>
+            <button id="send-btn" disabled>Send</button>
+            <button id="stop-btn" hidden>Stop</button>
+        </div>
     </div>
     <input type="file" id="file-input" accept=".csv,.tsv,.xlsx,.xls,image/*" hidden>
 
@@ -945,16 +945,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
         </div>
     </div>
 
-    <div id="skills-modal" role="dialog" aria-modal="true" aria-labelledby="skills-title">
-        <div class="skills-dialog">
-            <button type="button" class="skills-back" id="skills-back" aria-label="Back to all tools" title="Back to all tools" hidden>&#8249;</button>
-            <button type="button" class="skills-reset" id="skills-reset" aria-label="Start over" title="Start over (clear files and categories)" hidden>&#8635;</button>
-            <button type="button" class="skills-close" id="skills-close" aria-label="Close">&#10005;</button>
-            <h2 class="skills-title" id="skills-title">Skills</h2>
-            <div class="skills-engine-wait" id="skills-engine-wait" aria-live="polite" hidden></div>
-            <div class="skills-body" id="skills-body"></div>
-        </div>
-    </div>
 
     <div id="welcome-modal" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
         <div class="welcome-dialog">
@@ -1041,6 +1031,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const tabularPreview = document.getElementById('tabular-preview');
         const tabularPreviewLabel = document.getElementById('tabular-preview-label');
         const tabularPreviewRemove = document.getElementById('tabular-preview-remove');
+        const composerRegion = document.getElementById('composer-region');
+        const skillsPanel = document.getElementById('skills-panel');
 
         // ---------- Constants ----------
 
@@ -1105,7 +1097,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // query only (never to indexed passages) per BAAI's model card.
         const KB_QUERY_INSTRUCTION = 'Represent this sentence for searching relevant passages: ';
         const KB_MAX_BYTES = 50 * 1024 * 1024;            // hard ceiling for index.json body
-        const KB_SCORE_MIN = 0.44;                        // dot product below this = not relevant (raised from 0.25 - MiniLM cosine sim runs high, even for unrelated text, due to embedding-space anisotropy; tune empirically if still over/under-triggering)
+        const KB_SCORE_MIN = 0.44;                        // dot product below this = not relevant (raised from 0.25 - bge-small cosine sim runs high, even for unrelated text, due to embedding-space anisotropy; tune empirically if still over/under-triggering)
         const KB_TOPK = 4;                                // hits per turn fed into the prompt
         const KB_CTX_TOKEN_BUDGET = 1500;                 // rough cap for the reference block
         const KB_TTL_MS = 7 * 24 * 60 * 60 * 1000;        // 7 days for cached index.json bodies
@@ -1239,7 +1231,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // the dropdown (WebGPU picks run via WebLLM's own MLC build now).
         const MODEL_LADDER_OVERRIDES = {};
 
-        // Router v2: a tiered classifier (regex short-circuit -> shared MiniLM
+        // Router v2: a tiered classifier (regex short-circuit -> shared bge-small
         // exemplar cosine -> narrow NLI tiebreak) picks the user's intent, and
         // that picks a narrower, better-tailored system prompt fragment for the
         // base model to answer with - instead of one generic persona trying to
@@ -1280,7 +1272,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         ];
 
         // Tier 1 exemplars: short example turns per intent (core + hint-only),
-        // encoded once with the shared MiniLM pipeline and cached. A turn's
+        // encoded once with the shared bge-small pipeline and cached. A turn's
         // score for an intent is the max cosine similarity over that intent's
         // list. Data, not logic - edit freely without touching routing code.
         const ROUTER_EXEMPLARS = {
@@ -1520,7 +1512,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         let generator = null;
         // ---------- WebLLM engine state (Phase W1) ----------
         // Main chat models run on WebLLM (WebGPU-only, MLC builds). Helper
-        // models (router MiniLM/NLI, zero-shot, vision, embeddings) stay on
+        // models (router bge-small/NLI, zero-shot, vision, embeddings) stay on
         // Transformers.js - WebLLM ships no equivalents for those. When the
         // browser has no WebGPU, webllm: picks fall back to a small
         // Transformers.js model on WASM CPU so the app still runs.
@@ -1563,6 +1555,35 @@ with this program. If not, see https://www.gnu.org/licenses/.
         let skillZeroShotLoading = null;
         let skillLoadToken = 0;      // bump to invalidate a running skill load or batch
         let skillBatchRunning = false; // true while a skill batch is actively processing
+        // Field Kit tab model. store.activeId keeps meaning "which chat" and
+        // is never touched by Field Kit activation; activeSurface tracks
+        // which of {chat-box+composer-region} vs {skills-panel} is shown,
+        // and which tab-bar entry gets the .active class. fieldKitTabOpen is
+        // true from first open until the tab's own close-x, independent of
+        // mere tab switches (item 7 - not persisted to store, so a reload
+        // always starts back on 'chat').
+        let fieldKitTabOpen = false;
+        let activeSurface = 'chat'; // 'chat' | 'fieldkit'
+        // One display toggle each - never toggled per-child (item 1's
+        // "contents-agnostic" rule: nothing may reach into composerRegion or
+        // skillsPanel by child id to hide/show).
+        function applySurfaceVisibility() {
+            const inFieldKit = activeSurface === 'fieldkit';
+            composerRegion.style.display = inFieldKit ? 'none' : 'flex';
+            chatBox.style.display = inFieldKit ? 'none' : 'flex';
+            skillsPanel.style.display = inFieldKit ? 'flex' : 'none';
+        }
+        // Surface isolation (item 20): hiding the composer is not sufficient
+        // on its own - #file-input's change listener is a SIBLING of
+        // #input-area, not nested inside it, so it stays reachable
+        // regardless of #composer-region's display state. This guard is
+        // checked explicitly by the paste listener, attachBtn's click
+        // listener, and fileInput's change listener, so none of the three
+        // chat-side file/paste entry points can reach handleFile/
+        // handleImageInput while Field Kit is active, regardless of how
+        // they were triggered (including firing the change event directly
+        // via devtools).
+        function chatInputSuppressed() { return activeSurface === 'fieldkit'; }
         // Session-only flag: set true after we hit the WebGPU GatherND/int64
         // failure once, so subsequent loads skip WebGPU and go straight to
         // WASM. Not persisted - a page reload lets us try WebGPU again.
@@ -1602,7 +1623,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // Router mode
         let routerActive = false;     // true only when a "router:<base>" option is selected
-        // Tier 1: reuses ensureKbEmbedder()'s shared MiniLM pipeline directly,
+        // Tier 1: reuses ensureKbEmbedder()'s shared bge-small pipeline directly,
         // so there is no router-owned embedder variable here.
         // Tier 1 exemplar vectors, built lazily once per session and cached
         // forever (routerExemplarVecs is a flat Float32Array of KB_DIMS-wide
@@ -2113,11 +2134,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
             };
             store.chats.push(chat);
             store.activeId = chat.id;
+            activeSurface = 'chat';
             input.value = '';
             saveStore();
             renderTabs();
             renderTranscript();
             renderChips();
+            applySurfaceVisibility();
             return chat;
         }
 
@@ -2127,10 +2150,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (busy) return; // no tab switching mid-generation
             captureDraft();
             store.activeId = id;
+            activeSurface = 'chat';
             saveStore();
             renderTabs();
             renderTranscript();
             renderChips();
+            applySurfaceVisibility();
         }
 
         function deleteChat(id) {
@@ -2236,7 +2261,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             tabBar.innerHTML = '';
             for (const chat of store.chats) {
                 const tab = document.createElement('div');
-                tab.className = 'tab' + (chat.id === store.activeId ? ' active' : '');
+                tab.className = 'tab' + (activeSurface === 'chat' && chat.id === store.activeId ? ' active' : '');
                 tab.title = 'Click to open, double-click to rename';
 
                 const name = document.createElement('span');
@@ -2260,42 +2285,43 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 tab.append(name, pin, x);
                 tabBar.appendChild(tab);
             }
-            // Skill "minimized" pseudo-tab. Shown when the Skills modal is
-            // closed and the mounted skill still has state worth resuming.
-            if (skillsMinimizedFor) {
-                const skill = findSkill(skillsMinimizedFor);
-                if (skill) {
-                    const tab = document.createElement('div');
-                    tab.className = 'tab skill-tab';
-                    tab.title = skillBatchRunning
-                        ? 'Sorting is running. Click to reopen and watch progress.'
-                        : 'Click to reopen this tool with your files and results.';
-                    if (skillBatchRunning) {
-                        const dot = document.createElement('span');
-                        dot.className = 'skill-tab-dot';
-                        dot.setAttribute('aria-label', 'Working...');
-                        tab.appendChild(dot);
-                    } else {
-                        const icon = document.createElement('span');
-                        icon.textContent = '🧰';
-                        icon.style.fontSize = '0.85rem';
-                        tab.appendChild(icon);
-                    }
-                    const name = document.createElement('span');
-                    name.textContent = skill.name;
-                    tab.appendChild(name);
-                    const x = document.createElement('button');
-                    x.className = 'tab-x';
-                    x.textContent = '✕';
-                    x.title = 'Close this tool and discard files/results';
-                    x.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        closeSkillMinimizedTab();
-                    });
-                    tab.append(x);
-                    tab.addEventListener('click', () => openSkills());
-                    tabBar.appendChild(tab);
+            // Field Kit tab entry. Present from first open until its own
+            // close-x (item 7 - a mere tab switch away is not a close, so
+            // this stays in the bar regardless of activeSurface). Never
+            // pushed into store.chats, so it's automatically excluded from
+            // saveStore()/initStore().
+            if (fieldKitTabOpen) {
+                const mountedSkill = skillsCurrentId ? findSkill(skillsCurrentId) : null;
+                const tab = document.createElement('div');
+                tab.className = 'tab skill-tab' + (activeSurface === 'fieldkit' ? ' active' : '');
+                tab.title = skillBatchRunning
+                    ? 'Sorting is running. Click to view progress.'
+                    : 'Click to open Field Kit.';
+                if (skillBatchRunning) {
+                    const dot = document.createElement('span');
+                    dot.className = 'skill-tab-dot';
+                    dot.setAttribute('aria-label', 'Working...');
+                    tab.appendChild(dot);
+                } else {
+                    const icon = document.createElement('span');
+                    icon.textContent = '🧰';
+                    icon.style.fontSize = '0.85rem';
+                    tab.appendChild(icon);
                 }
+                const name = document.createElement('span');
+                name.textContent = mountedSkill ? mountedSkill.name : 'Field Kit';
+                tab.appendChild(name);
+                const x = document.createElement('button');
+                x.className = 'tab-x';
+                x.textContent = '✕';
+                x.title = 'Close Field Kit';
+                x.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    closeFieldKitTab();
+                });
+                tab.append(x);
+                tab.addEventListener('click', () => openSkills());
+                tabBar.appendChild(tab);
             }
             updateTabArrows();
         }
@@ -3146,7 +3172,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (value.startsWith('router:')) {
                 targetId = value.slice(7);
                 currentModelId = targetId; // route MODEL_CTX / think-token predicates / etc. against the real base model id
-                // Tier 1 (shared MiniLM) warms up eagerly here, occupying the
+                // Tier 1 (shared bge-small) warms up eagerly here, occupying the
                 // lifecycle slot the old DistilBERT classifier used to hold.
                 // Tier 2 (NLI) stays lazy - it only loads on a turn that
                 // actually needs a low-margin tiebreak (see routeIntent).
@@ -3689,7 +3715,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // ---------- Generation ----------
         // ---------- Router v2: tiered intent classification ----------
-        // Tier 0 (regex) -> Tier 1 (shared MiniLM exemplar cosine) -> Tier 2
+        // Tier 0 (regex) -> Tier 1 (shared bge-small exemplar cosine) -> Tier 2
         // (narrow NLI tiebreak) -> confidence floor / fragment composition /
         // hint resolution. See fieldstation-router-v2-design.md section 3.
 
@@ -3823,7 +3849,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         // --- Tier 2: NLI tiebreak (Xenova/nli-deberta-v3-xsmall) ---
-        // Lazy-loaded (unlike Tier 1's shared MiniLM, which loads eagerly the
+        // Lazy-loaded (unlike Tier 1's shared bge-small, which loads eagerly the
         // moment a "router:" option is picked - see loadModelInner).
         function ensureRouterNli() {
             if (routerNliClassifier) return Promise.resolve(routerNliClassifier);
@@ -3916,7 +3942,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         function hintFragmentFor(skillId) {
             const skill = findSkill(skillId);
             if (!skill || skill.status !== 'ready') return null;
-            return `This app also has a "${skill.name}" skill in the Skills panel for tasks like this - `
+            return `This app also has a "${skill.name}" skill in the Field Kit panel for tasks like this - `
                 + 'you may mention it in one short sentence if relevant.';
         }
 
@@ -3950,7 +3976,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 return { intent: 'code', secondaryIntent: null, hintSkillId: null, qVec: null, floor: false };
             }
 
-            // Tier 1: shared MiniLM exemplar cosine, with a one-turn sticky
+            // Tier 1: shared bge-small exemplar cosine, with a one-turn sticky
             // bias toward the previous winning core intent for this chat.
             let qVec = null, top1Id = null, top1Score = -Infinity, top2Id = null, top2Score = -Infinity;
             try {
@@ -5031,7 +5057,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
             try {
                 // Router v2 (tiered): classify once up front (regex -> shared
-                // MiniLM cosine -> narrow NLI tiebreak), then reuse the picked
+                // bge-small cosine -> narrow NLI tiebreak), then reuse the picked
                 // fragments, per-turn user-message enhancement, and token cap
                 // for every round of this turn (including auto-continues).
                 // This is a transient per-turn choice only - nothing here is
@@ -5541,15 +5567,21 @@ with this program. If not, see https://www.gnu.org/licenses/.
             setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
         }
 
-        // Bridge from any skill to the active chat's prompt box. Injects text
-        // (optionally prefixed with an instruction), focuses input, and
-        // persists to the active chat's draft so a reload keeps it. Not used
-        // in Phase 9a; wired now for Phase 9c/9e.
+        // "Send to Chat" (item 6): bridges skill output to a chat tab,
+        // opening/focusing the SAME companion chat on repeat sends rather
+        // than always creating a new one or silently reusing whatever chat
+        // happens to be active. Reset to null whenever a skill session ends
+        // (Done, Reset, Field Kit tab close).
+        let skillCompanionChatId = null;
         function chatBridge(text, instruction) {
             const combined = instruction ? (instruction + '\n\n' + text) : text;
+            let chat = skillCompanionChatId && store.chats.find(c => c.id === skillCompanionChatId);
+            if (!chat) { chat = createChat(); skillCompanionChatId = chat.id; }
+            chat.draft = combined;
+            activeSurface = 'chat';
+            setActive(chat.id);
             input.value = combined;
-            const chat = activeChat();
-            if (chat) { chat.draft = combined; saveStore(); }
+            saveStore();
             input.focus();
         }
 
@@ -6882,20 +6914,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
             writeTaxonomies(map);
         }
 
-        // ----- Skills modal shell -----
-        const skillsModal = document.getElementById('skills-modal');
+        // ----- Field Kit tab shell -----
         const skillsBody = document.getElementById('skills-body');
         const skillsTitle = document.getElementById('skills-title');
-        const skillsBack = document.getElementById('skills-back');
+        const skillsDoneBtn = document.getElementById('skills-done');
         const skillsResetBtn = document.getElementById('skills-reset');
-        const skillsClose = document.getElementById('skills-close');
         const skillsEngineWaitEl = document.getElementById('skills-engine-wait');
         let skillsCurrentId = null;
 
         // Wait-state UI (item 12): visible only while a skill is mounted AND
         // some OTHER surface (chat) currently holds the shared engine lock.
-        // Rendered in the modal for now; relocates into the Field Kit panel
-        // header once that tab ships.
         EngineLock.onEngineBusyChange(({ held, holderLabel }) => {
             if (!skillsCurrentId) { skillsEngineWaitEl.hidden = true; return; }
             const mine = findSkill(skillsCurrentId)?.name || 'Field Kit';
@@ -6907,39 +6935,29 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
         });
 
-        // "Minimized" pseudo-tab appears in the tab bar when the modal is
-        // closed AND a mounted skill has state worth preserving (in-flight
-        // batch, results, or unsaved input). Click the tab to reopen.
-        let skillsMinimizedFor = null;
-
+        // Activates the Field Kit tab (from the header toolbox button, the
+        // overflow menu, or clicking the tab itself once open). Does not
+        // touch store.activeId - the chat that was active stays active,
+        // it's just not the shown surface for a moment.
         function openSkills() {
-            // If the modal was reopened from a minimized state, clear the
-            // pseudo-tab so it doesn't show while the modal is visible.
-            skillsMinimizedFor = null;
-            renderTabs();
-            skillsModal.classList.add('open');
-            // Rebuild the grid only on first open; otherwise the mounted skill
-            // stays visible with its previous state intact.
+            fieldKitTabOpen = true;
+            activeSurface = 'fieldkit';
+            // Rebuild the grid only on first-ever open; otherwise the
+            // mounted skill stays visible with its previous state intact.
             if (!skillsBody.hasChildNodes()) {
                 renderSkillsGrid();
             }
-            document.addEventListener('keydown', onSkillsKey);
-        }
-        function closeSkills() {
-            // DO NOT tear down skillsBody: preserve state across close/open.
-            // DO NOT bump skillLoadToken: an in-flight batch keeps running.
-            skillsModal.classList.remove('open');
-            document.removeEventListener('keydown', onSkillsKey);
-            // If the mounted skill still has data worth preserving, show it as
-            // a "minimized" pseudo-tab so the user can find their way back.
-            if (skillsCurrentId && skillHasStateToPreserve(skillsCurrentId)) {
-                skillsMinimizedFor = skillsCurrentId;
-            } else {
-                skillsMinimizedFor = null;
-            }
             renderTabs();
+            applySurfaceVisibility();
         }
-        function onSkillsKey(e) { if (e.key === 'Escape') closeSkills(); }
+        // Leaves Field Kit for the chat surface. Does NOT discard skill
+        // state or close the tab - per item 7, a mere tab switch away is not
+        // a close; the Field Kit tab stays in the bar with state intact.
+        // See closeFieldKitTab() for the destructive "end this session" flow.
+        function closeSkills() {
+            activeSurface = 'chat';
+            applySurfaceVisibility();
+        }
 
         // Mounted skills can register a callback that reports whether their
         // internal state is worth preserving on close. Registered by
@@ -6951,32 +6969,48 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
         function resetCurrentSkill() {
             // Bump token to stop any in-flight batch. Then clear body and go
-            // back to the grid. Called by header "Reset" and tab close-x.
+            // back to the grid. Called by "Done" and the tab's close-x.
             skillLoadToken++;
             skillStateProbe = null;
-            skillsMinimizedFor = null;
             skillsBody.innerHTML = '';
             skillsCurrentId = null;
-            skillsBack.hidden = true;
+            skillCompanionChatId = null; // "Send to Chat" starts a fresh companion next time
+            skillsDoneBtn.hidden = true;
             skillsResetBtn.hidden = true;
-            skillsTitle.textContent = 'Skills';
+            skillsTitle.textContent = 'Field Kit';
+            // Belt-and-braces (item 22). Clears TRANSIENT in-flight values
+            // only. Never extend this to delete saved attachments (Phase
+            // 4A) - a skill Reset must not destroy user data.
+            clearImagePreview();
+            clearPendingTabularFile();
             // Free the Pyodide worker on hard reset so a subsequent skill run
-            // starts clean. Kept alive across a normal modal close.
+            // starts clean.
             try { disposePyodideWorker(); } catch (_) {}
             renderTabs();
         }
-        function closeSkillMinimizedTab() {
-            // User explicitly ended the skill from the tab bar. Cancel batch,
-            // discard state, leave the modal closed.
-            resetCurrentSkill();
+        // Closes the Field Kit tab itself (item 5): stops any in-flight work
+        // unconditionally (same Stop shape as section C), discards skill
+        // state, and lands the user on a chat tab if Field Kit was showing.
+        function closeFieldKitTab() {
+            const hasState = skillsCurrentId && skillHasStateToPreserve(skillsCurrentId);
+            if ((skillBatchRunning || hasState) &&
+                !confirm('Close Field Kit? Any running batch will stop, and its files/results will be cleared.')) {
+                return;
+            }
+            skillLockWaitCtl.abort();
+            ModelGateway.interrupt();
+            fieldKitTabOpen = false;
+            if (activeSurface === 'fieldkit') activeSurface = 'chat';
+            resetCurrentSkill(); // bumps token, clears body/state, calls renderTabs()
+            applySurfaceVisibility();
         }
 
         function renderSkillsGrid() {
             skillsCurrentId = null;
-            skillsBack.hidden = true;
+            skillsDoneBtn.hidden = true;
             skillsResetBtn.hidden = true;
             skillStateProbe = null;
-            skillsTitle.textContent = 'Skills';
+            skillsTitle.textContent = 'Field Kit';
             skillsBody.innerHTML = '';
             const grid = document.createElement('div');
             grid.className = 'skills-grid';
@@ -7036,7 +7070,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             skillLockWaitCtl = new AbortController(); // this session's unit of work for EngineLock
             skillStateProbe = null;
             skillsCurrentId = skill.id;
-            skillsBack.hidden = false;
+            skillsDoneBtn.hidden = false;
             skillsResetBtn.hidden = !SKILL_HAS_RESET.has(skill.id);
             skillsTitle.textContent = skill.name;
             skillsBody.innerHTML = '';
@@ -7050,13 +7084,21 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 p.textContent = 'This tool is coming soon.';
                 skillsBody.appendChild(p);
             }
+            renderTabs(); // tab-bar entry's label follows the mounted skill's name
         }
-        skillsClose.addEventListener('click', closeSkills);
-        skillsBack.addEventListener('click', () => {
-            // Back to grid: intentional exit, discard state.
+        // "Done" (item 4): no back arrow anymore - resets the skill and
+        // returns to the grid, staying on the Field Kit tab. Confirms first
+        // if there are undownloaded results.
+        skillsDoneBtn.addEventListener('click', () => {
+            if (skillHasStateToPreserve(skillsCurrentId) &&
+                !confirm('Leave this tool? Your files and any results here will be cleared. Saved settings are kept.')) {
+                return;
+            }
             resetCurrentSkill();
             renderSkillsGrid();
         });
+        // "Start over" - separate from Done: re-mounts the same skill fresh
+        // and stays on it, still gated by SKILL_HAS_RESET.
         skillsResetBtn.addEventListener('click', () => {
             const skill = findSkill(skillsCurrentId);
             if (!skill) return;
@@ -7064,21 +7106,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 skillLoadToken++;
                 skillLockWaitCtl = new AbortController(); // fresh session for EngineLock
                 skillStateProbe = null;
+                skillCompanionChatId = null; // "Send to Chat" starts a fresh companion next time
+                // Belt-and-braces (item 22). Clears TRANSIENT in-flight values
+                // only. Never extend this to delete saved attachments (Phase
+                // 4A) - a skill Reset must not destroy user data.
+                clearImagePreview();
+                clearPendingTabularFile();
                 skillsBody.innerHTML = '';
                 if (skill.id === 'taxonomy-classify') mountTaxonomySkill(skillsBody);
                 else if (skill.id === 'csv-combine') mountCsvCombineSkill(skillsBody);
             }
-        });
-        // Backdrop click closes only if BOTH mousedown and mouseup landed on
-        // the backdrop itself. This prevents accidental closes from drags that
-        // started on the dialog and from click-throughs onto content below.
-        let skillsMouseDownOnBackdrop = false;
-        skillsModal.addEventListener('mousedown', e => {
-            skillsMouseDownOnBackdrop = (e.target === skillsModal);
-        });
-        skillsModal.addEventListener('mouseup', e => {
-            if (skillsMouseDownOnBackdrop && e.target === skillsModal) closeSkills();
-            skillsMouseDownOnBackdrop = false;
         });
 
         // ----- Taxonomy skill mini-UI -----
@@ -8800,10 +8837,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 const chatBtn = document.createElement('button');
                 chatBtn.type = 'button';
                 chatBtn.className = 'skill-btn';
-                chatBtn.textContent = 'Send summary to a new chat';
+                chatBtn.textContent = 'Send to Chat';
                 chatBtn.addEventListener('click', () => {
                     chatBridge(buildSummary(), 'Here is a summary of a CSV merge I just ran. Please help me analyze it and suggest next steps.');
-                    closeSkills();
                 });
                 btnRow.appendChild(chatBtn);
 
@@ -8928,22 +8964,6 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             lines.push('What patterns or clusters do you see across these people?');
             return lines.join('\n');
         }
-        // Create a new chat tab and drop the summary into its prompt box.
-        function sendResultsToChat(summary) {
-            // Close the Skills modal, but discard state - the user just moved
-            // this run's output into the chat and no longer needs the panel.
-            resetCurrentSkill();
-            skillsModal.classList.remove('open');
-            document.removeEventListener('keydown', onSkillsKey);
-            skillsMinimizedFor = null;
-            createChat();
-            input.value = summary;
-            const chat = activeChat();
-            if (chat) { chat.draft = summary; saveStore(); }
-            input.focus();
-            setStatus('Results moved into a new chat. Edit the question at the end if needed, then Send.');
-        }
-
         function renderErrorsSection(perDoc, container) {
             const errored = perDoc.filter(d => d.error);
             const noted = perDoc.filter(d => d.note && !d.error);
@@ -9056,9 +9076,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 dl.appendChild(btn);
                 const btnChat = document.createElement('button');
                 btnChat.className = 'skill-btn';
-                btnChat.textContent = 'Send results to a new chat';
+                btnChat.textContent = 'Send to Chat';
                 btnChat.addEventListener('click', () => {
-                    sendResultsToChat(summarizeFilesResults(labels, perDoc, ranked));
+                    chatBridge(summarizeFilesResults(labels, perDoc, ranked));
                 });
                 dl.appendChild(btnChat);
                 container.appendChild(dl);
@@ -9184,9 +9204,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             dl.appendChild(btnRow);
             const btnChat = document.createElement('button');
             btnChat.className = 'skill-btn';
-            btnChat.textContent = 'Send results to a new chat';
+            btnChat.textContent = 'Send to Chat';
             btnChat.addEventListener('click', () => {
-                sendResultsToChat(summarizeBulkResults(labels, personRows, perDoc, bulkName));
+                chatBridge(summarizeBulkResults(labels, personRows, perDoc, bulkName));
             });
             dl.appendChild(btnChat);
             container.appendChild(dl);
@@ -9267,7 +9287,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         const menuPopup = document.getElementById('menu-popup');
 
         const MENU_ITEMS = [
-            { label: 'Skills', action: () => openSkills() },
+            { label: 'Field Kit', action: () => openSkills() },
             { label: 'Load models from local Ollama server', action: () => detectOllama(true) },
             { label: 'About Field Station AI', action: () => showWelcome() }
         ];
@@ -9313,7 +9333,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         // Retired models can otherwise sit in Cache Storage indefinitely as the
         // dropdown lineup evolves. On startup we compute the set of "known"
         // repo ids from what's actually in the dropdown right now (plus the
-        // router's Tier 2 NLI tiebreak model, the shared KB/Tier-1 MiniLM
+        // router's Tier 2 NLI tiebreak model, the shared KB/Tier-1 bge-small
         // embedder, and the daisy-chain vision model, none of which are ever
         // listed as their own selectable options - the daisy chain always uses
         // SmolVLM-500M even when the selected vision option is Qwen2-VL) and
@@ -9422,10 +9442,34 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             setStatus('New chat started.');
             input.focus();
         });
-        attachBtn.addEventListener('click', () => fileInput.click());
+        attachBtn.addEventListener('click', () => {
+            if (chatInputSuppressed()) return;
+            fileInput.click();
+        });
         fileInput.addEventListener('change', () => {
+            if (chatInputSuppressed()) { fileInput.value = ''; return; }
             if (fileInput.files.length) handleFile(fileInput.files[0]);
             fileInput.value = '';
+        });
+        // Surface isolation (item 20): no page-level drag/drop handling
+        // exists anywhere in the app today, so a browser with no explicit
+        // handler navigates the whole tab away to the dropped file by
+        // default - a live hazard on both surfaces, independent of Field
+        // Kit. Absorbed unconditionally everywhere; never forwarded to any
+        // ingestion path (skills ingest through their own file inputs;
+        // chat has no drop-to-attach feature). Written as an explicit
+        // branch on activeSurface, with both arms present from the start,
+        // so Phase 4A's chat drop-to-attach changes one arm instead of
+        // restructuring the handler.
+        document.addEventListener('dragover', (e) => { e.preventDefault(); });
+        document.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (activeSurface === 'fieldkit') {
+                // Field Kit active: absorbed and discarded (skills ingest through their own UI).
+            } else {
+                // Chat active: absorbed and discarded for now. Phase 4A replaces this arm
+                // with attachment creation. Do not add chat drop-to-attach in this step.
+            }
         });
 
         // Send via Enter, newline via Shift+Enter
@@ -9449,6 +9493,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
         // Paste an image directly into the prompt box
         input.addEventListener('paste', (e) => {
+            if (chatInputSuppressed()) return;
             const items = e.clipboardData && e.clipboardData.items;
             if (!items) return;
             for (const item of items) {
@@ -9497,6 +9542,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 renderTabs();
                 renderTranscript();
                 renderChips();
+                applySurfaceVisibility(); // activeSurface always starts 'chat' on reload (item 7)
             }
             // Drop cached weights for models no longer in the dropdown. Awaited
             // so we can't race the load we're about to kick off - a delete of a
