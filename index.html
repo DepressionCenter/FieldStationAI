@@ -251,6 +251,20 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
         .system { font-style: italic; color: var(--muted); text-align: center; font-size: 0.82rem; align-self: center; background: none; }
         .system.error { color: var(--danger); font-weight: 600; font-style: normal; font-size: 0.95rem; }
+        /* PHI warning (Phase 4A Stage 3): noticeable but calm, not alarming
+           like .system.error - this is a suggestion, never a certified
+           finding, so it should read as advisory rather than as an error. */
+        .message.phi-warning {
+            font-style: normal; text-align: left; max-width: 85%;
+            background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--maize);
+            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        }
+        .phi-warning-pin-btn {
+            flex-shrink: 0; padding: 4px 12px; font-size: 0.78rem; font-weight: 600;
+            background: var(--maize); color: var(--accent); border: none; border-radius: 6px;
+            cursor: pointer; font-family: inherit;
+        }
+        .phi-warning-pin-btn:hover { filter: brightness(0.95); }
 
         .meta {
             display: flex; gap: 10px; align-items: center; align-self: flex-start;
@@ -1470,6 +1484,24 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const URL_RE = /https?:\/\/\S+/i;
         const SUMMARIZE_KEYWORD_RE = /\b(summar(y|ize|ise)|tl;?dr|key points|main points)\b/i;
         const CODE_HINT_RE = /```|^\s*(function|def|class|import|from|const|let|var)\b/m;
+
+        // PHI detection (Phase 4A Stage 3, design doc 11.2): local regex over
+        // an attachment's derived text for structured identifiers. This may
+        // flag likely PHI; it must NEVER be used to imply a clean/exhaustive
+        // scan - a bare 6-10 digit run ("id-run") deliberately errs toward
+        // over-flagging (ZIP+4, invoice numbers, etc.) since the failure mode
+        // that matters here is a missed identifier, not an extra suggestion.
+        // Person-name detection is deferred to 9e (bert-base-NER).
+        const PHI_PATTERNS = [
+            { name: 'ssn', re: /\b\d{3}-\d{2}-\d{4}\b/ },
+            { name: 'phone', re: /\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/ },
+            { name: 'email', re: /\b[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}\b/ },
+            { name: 'date', re: /\b(?:0?[1-9]|1[0-2])[\/\-](?:0?[1-9]|[12]\d|3[01])[\/\-](?:19|20)\d{2}\b/ },
+            { name: 'id-run', re: /\b\d{6,10}\b/ }
+        ];
+        function textLooksLikePHI(text) {
+            return !!text && PHI_PATTERNS.some(p => p.re.test(text));
+        }
         // A prefix like "calculate"/"compute"/"what is"/"=" is optional; the
         // remainder must be pure arithmetic characters with at least one
         // operator, so this never misfires on ordinary prose containing a
@@ -2219,6 +2251,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             for (const c of store.chats) {
                 if (typeof c.draft !== 'string') c.draft = '';
                 if (!Array.isArray(c.attachments)) c.attachments = [];
+                if (typeof c.phiWarned !== 'boolean') c.phiWarned = false;
             }
         }
 
@@ -2374,7 +2407,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 messages: [structuredClone(SYSTEM_PROMPT)],
                 draft: '',
                 hintedSkills: [], // skill ids already hinted this chat, so a hint fires at most once per skill per chat
-                attachments: [] // Phase 4A: { id, kind, name, mimeType, sizeBytes, addedAt, derivedText?, phiFlagged }
+                attachments: [], // Phase 4A: { id, kind, name, mimeType, sizeBytes, addedAt, derivedText?, phiFlagged }
+                phiWarned: false // Phase 4A Stage 3: has the PHI notice already fired once for this chat
             };
             store.chats.push(chat);
             store.activeId = chat.id;
@@ -2659,6 +2693,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             for (const m of chat.messages) {
                 if (m.role === 'system') continue;
                 if (m.role === 'note') { appendMessage('system', m.content, m.ts); continue; }
+                if (m.role === 'phi-warning') { appendPhiWarning(m.content, m.ts); continue; }
                 appendMessage(m.role === 'assistant' ? 'bot' : 'user', m.content, m.ts);
             }
             chatBox.scrollTop = chatBox.scrollHeight;
@@ -2928,7 +2963,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const lines = [`FieldStationAI chat: ${chat.name}`, `Exported: ${new Date().toLocaleString()}`, ''];
             for (const m of chat.messages) {
                 if (m.role === 'system') continue;
-                if (m.role === 'note') { lines.push('[' + m.content + ']', ''); continue; }
+                if (m.role === 'note' || m.role === 'phi-warning') { lines.push('[' + m.content + ']', ''); continue; }
                 lines.push((m.role === 'user' ? 'You: ' : 'FieldStationAI: ') + m.content, '');
             }
             const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
@@ -3948,6 +3983,47 @@ with this program. If not, see https://www.gnu.org/licenses/.
             chat.updated = ts;
         }
 
+        // PHI warning bubble (Phase 4A Stage 3, design doc 11.2): rendered
+        // like the 'system'/'note' bubbles but with an inline "Set a PIN"
+        // button. Built with createElement/textContent throughout (never
+        // innerHTML) so attachment-derived text can never inject markup.
+        function appendPhiWarning(text, ts) {
+            const div = document.createElement('div');
+            div.className = 'message system phi-warning';
+            const span = document.createElement('span');
+            span.className = 'msg-text';
+            span.textContent = text;
+            div.appendChild(span);
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'phi-warning-pin-btn';
+            btn.textContent = 'Set a PIN';
+            btn.addEventListener('click', () => { promptSetPin(); });
+            div.appendChild(btn);
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // It may flag likely PHI; it must NEVER be used to imply a clean or
+        // exhaustive scan - see textLooksLikePHI's own comment. Fires the
+        // inline notice at most once per chat, and not at all once a PIN is
+        // already active (nothing left to suggest). attachment.phiFlagged is
+        // set independently of whether the notice fires, so it stays a
+        // faithful per-attachment record even after the chat has already
+        // been warned once.
+        function checkAttachmentForPHI(chat, attachment) {
+            if (!textLooksLikePHI(attachment.derivedText)) return;
+            attachment.phiFlagged = true;
+            if (pinKey || chat.phiWarned) return;
+            chat.phiWarned = true;
+            const ts = Date.now();
+            const text = 'This looks like it may contain identifiers - consider setting a PIN to encrypt stored attachments.';
+            appendPhiWarning(text, ts);
+            chat.messages.push({ role: 'phi-warning', content: text, ts });
+            chat.updated = ts;
+            saveStore();
+        }
+
         async function createAttachment(file, forcedName) {
             const chat = activeChat();
             if (!chat) return null;
@@ -3991,6 +4067,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             appendAttachmentNote(chat, replacing
                 ? `Replaced ${name} (${formatBytes(oldSizeBytes)} -> ${formatBytes(file.size)})`
                 : `Added ${name} (${formatBytes(file.size)})`);
+            checkAttachmentForPHI(chat, attachment); // after the note, so "Added X" reads before any warning about it
             saveStore();
             renderAttachmentBar();
 
@@ -4222,6 +4299,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 chat.messages.push({ role: 'user', content: question + ' [image attached: ' + attachment.name + ']', ts: userTs });
                 chat.messages.push({ role: 'assistant', content: result, ts: Date.now() });
                 attachment.derivedText = result;
+                checkAttachmentForPHI(chat, attachment); // a vision answer can surface identifiers too (e.g. a photographed form)
                 chat.updated = Date.now();
                 saveStore();
                 renderAttachmentBar();
@@ -4995,11 +5073,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         function buildGenMessages(chat, partial, overrideSystem, overrideUserSuffix, kbUserPrefix) {
-            // 'note' messages (Phase 4A: attachment add/replace/delete audit
-            // trail) are persisted and rendered but are not real conversation
-            // turns - excluded here so they never reach the model as an
-            // unrecognized role.
-            const msgs = chat.messages.filter(m => m.role !== 'note').map(m => ({ ...m }));
+            // 'note' (attachment audit trail) and 'phi-warning' messages are
+            // persisted and rendered but are not real conversation turns -
+            // excluded here so they never reach the model as an unrecognized
+            // role.
+            const msgs = chat.messages.filter(m => m.role !== 'note' && m.role !== 'phi-warning').map(m => ({ ...m }));
             if (overrideSystem) {
                 // Per-turn routed persona - never persisted to chat.messages, so
                 // each turn can be routed independently based on its own intent
@@ -9722,6 +9800,33 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
         // ---------- PIN button ----------
 
+        // Extracted so the PHI-warning inline "Set a PIN" button (Phase 4A
+        // Stage 3) shares one code path with the pinBtn UI rather than
+        // duplicating the set-PIN flow.
+        async function promptSetPin() {
+            if (busy) return;
+            if (locked) { alert('Chats are locked. Reload the page and enter your PIN.'); return; }
+            if (pinKey) return; // already on - nothing to prompt for
+            const p1 = await openPinPad({
+                title: 'Set a PIN',
+                sub: 'Pick 4-10 emojis/digits to encrypt saved chats. A short PIN deters casual snooping, not a determined attacker.'
+            });
+            if (p1 === null) return;
+            const p2 = await openPinPad({ title: 'Confirm PIN', sub: 'Enter the same PIN again to confirm.' });
+            if (p2 === null) return;
+            if (p2 !== p1) { alert('PINs did not match. Nothing was changed.'); return; }
+            const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+            pinSalt = b64.enc(saltBytes);
+            pinKey = await deriveKey(p1, saltBytes);
+            await AttachmentStore.ready();
+            await AttachmentStore.persistDekWrapped(pinKey);
+            localStorage.removeItem(STORE_KEY);
+            saveStore();
+            pinBtn.classList.add('active');
+            pinBtn.title = 'PIN protection is on - click to remove';
+            setStatus('Chats are now encrypted. You will be asked for the PIN on next load.');
+        }
+
         pinBtn.addEventListener('click', async () => {
             if (busy) return;
             if (locked) { alert('Chats are locked. Reload the page and enter your PIN.'); return; }
@@ -9743,24 +9848,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 } catch { alert('Wrong PIN.'); }
                 return;
             }
-            const p1 = await openPinPad({
-                title: 'Set a PIN',
-                sub: 'Pick 4-10 emojis/digits to encrypt saved chats. A short PIN deters casual snooping, not a determined attacker.'
-            });
-            if (p1 === null) return;
-            const p2 = await openPinPad({ title: 'Confirm PIN', sub: 'Enter the same PIN again to confirm.' });
-            if (p2 === null) return;
-            if (p2 !== p1) { alert('PINs did not match. Nothing was changed.'); return; }
-            const saltBytes = crypto.getRandomValues(new Uint8Array(16));
-            pinSalt = b64.enc(saltBytes);
-            pinKey = await deriveKey(p1, saltBytes);
-            await AttachmentStore.ready();
-            await AttachmentStore.persistDekWrapped(pinKey);
-            localStorage.removeItem(STORE_KEY);
-            saveStore();
-            pinBtn.classList.add('active');
-            pinBtn.title = 'PIN protection is on - click to remove';
-            setStatus('Chats are now encrypted. You will be asked for the PIN on next load.');
+            await promptSetPin();
         });
 
         // ---------- Overflow menu ----------
