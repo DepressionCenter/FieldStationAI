@@ -313,25 +313,45 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         #chips-row { display: flex; gap: 8px; align-items: center; overflow-x: auto; flex-wrap: nowrap; flex-grow: 1; scrollbar-width: none; }
         #chips-row::-webkit-scrollbar { display: none; }
-        #image-preview {
-            display: none; align-items: center; gap: 8px; margin-bottom: 0.6rem;
-            border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 6px 10px;
+        /* Attachment bar (Phase 4A Stage 2): chat-scoped, docked above the
+           composer. Visibility follows #composer-region's own single
+           display toggle (item 1's contents-agnostic rule) - this element
+           never gets its own show/hide logic keyed to activeSurface. */
+        #attachment-bar {
+            display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 0.6rem;
         }
-        #image-preview img { height: 40px; width: 40px; object-fit: cover; border-radius: 6px; }
-        #image-preview span { font-size: 0.8rem; color: var(--muted); flex-grow: 1; }
-        #image-preview button {
-            border: none; background: none; cursor: pointer; color: var(--muted); font-size: 0.9rem;
+        #attachment-bar[hidden] { display: none; }
+        .attachment-pill {
+            display: flex; align-items: center; gap: 6px; max-width: 100%;
+            border: 1px solid var(--line); background: var(--panel); border-radius: 10px;
+            padding: 6px 8px; font-size: 0.8rem; color: var(--muted);
         }
-        #image-preview button:hover { color: #B91C1C; }
-        #tabular-preview {
-            display: none; align-items: center; gap: 8px; margin-bottom: 0.6rem;
-            border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 6px 10px;
+        .attachment-pill .att-icon { font-size: 1rem; line-height: 1; flex-shrink: 0; }
+        .attachment-pill .att-name {
+            max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            color: var(--text, inherit);
         }
-        #tabular-preview span { font-size: 0.8rem; color: var(--muted); flex-grow: 1; }
-        #tabular-preview button {
-            border: none; background: none; cursor: pointer; color: var(--muted); font-size: 0.9rem;
+        .attachment-pill .att-size { flex-shrink: 0; opacity: 0.8; }
+        .attachment-pill .att-unreadable { flex-shrink: 0; font-style: italic; opacity: 0.8; }
+        /* Ghost action row (matches .msg-actions): icon-only, hidden until
+           the pill is hovered/focused. max-width (not just opacity) is what
+           makes the pill visibly grow/shrink rather than just fade in place. */
+        .attachment-pill .att-actions {
+            display: flex; align-items: center; gap: 2px; flex-shrink: 0;
+            max-width: 0; overflow: hidden; opacity: 0;
+            transition: max-width 0.15s ease, opacity 0.15s ease;
         }
-        #tabular-preview button:hover { color: #B91C1C; }
+        .attachment-pill:hover .att-actions,
+        .attachment-pill:focus-within .att-actions { max-width: 6rem; opacity: 1; }
+        .attachment-pill button {
+            border: none; background: none; cursor: pointer; color: var(--muted);
+            flex-shrink: 0; width: 22px; height: 22px; padding: 3px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .attachment-pill button svg { width: 100%; height: 100%; }
+        .attachment-pill button:hover:not(:disabled) { color: var(--accent-dark); }
+        .attachment-pill button.att-delete:hover:not(:disabled) { color: #B91C1C; }
+        .attachment-pill button:disabled { opacity: 0.35; cursor: not-allowed; }
         .chip {
             flex-shrink: 0; white-space: nowrap; font-size: 0.76rem; padding: 6px 12px; border-radius: 999px;
             border: 1px dashed var(--accent); background: none; color: var(--accent-dark);
@@ -905,32 +925,24 @@ with this program. If not, see https://www.gnu.org/licenses/.
     </div>
 
     <div id="composer-region">
+        <div id="attachment-bar" hidden></div>
         <div class="scroll-wrap" id="prompt-chips-wrap">
             <button id="chips-scroll-left" class="scroll-arrow" title="Scroll left">‹</button>
             <div id="chips-row"></div>
             <button id="chips-scroll-right" class="scroll-arrow" title="Scroll right">›</button>
         </div>
-        <div id="image-preview">
-            <img id="image-preview-thumb" alt="Pasted image preview">
-            <span id="image-preview-label">Image attached - ask a question and Send.</span>
-            <button id="image-preview-remove" title="Remove image">✕</button>
-        </div>
-        <div id="tabular-preview">
-            <span id="tabular-preview-label">File attached - ask a question and Send.</span>
-            <button id="tabular-preview-remove" title="Remove file">✕</button>
-        </div>
 
         <div id="input-area">
             <textarea id="user-input" placeholder="Type your prompt... (Enter to send, Shift+Enter for new line)" disabled></textarea>
             <button id="mic-btn" class="icon-btn" title="Dictate. Auto-stops after a pause. Uses your browser's speech service, which may be cloud-based." disabled>🎤</button>
-            <button id="attach-btn" class="icon-btn" title="Upload a dataset (CSV, TSV, Excel) or an image. Parsed locally in your browser." disabled>
+            <button id="attach-btn" class="icon-btn" title="Attach files - images, PDFs, text, or spreadsheets. Parsed locally in your browser." disabled>
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.19 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
             </button>
             <button id="send-btn" disabled>Send</button>
             <button id="stop-btn" hidden>Stop</button>
         </div>
     </div>
-    <input type="file" id="file-input" accept=".csv,.tsv,.xlsx,.xls,image/*" hidden>
+    <input type="file" id="file-input" multiple hidden>
 
     <div id="pin-modal" role="dialog" aria-modal="true" aria-labelledby="pin-title">
         <div class="pin-dialog">
@@ -1024,13 +1036,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const progressMsg = document.getElementById('progress-msg');
         const progressFill = document.getElementById('progress-fill');
         const progressPct = document.getElementById('progress-pct');
-        const imagePreview = document.getElementById('image-preview');
-        const imagePreviewThumb = document.getElementById('image-preview-thumb');
-        const imagePreviewLabel = document.getElementById('image-preview-label');
-        const imagePreviewRemove = document.getElementById('image-preview-remove');
-        const tabularPreview = document.getElementById('tabular-preview');
-        const tabularPreviewLabel = document.getElementById('tabular-preview-label');
-        const tabularPreviewRemove = document.getElementById('tabular-preview-remove');
+        const attachmentBar = document.getElementById('attachment-bar');
         const composerRegion = document.getElementById('composer-region');
         const skillsPanel = document.getElementById('skills-panel');
 
@@ -1092,7 +1098,35 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const ATTACHMENT_DB_VERSION = 1;
         const ATTACHMENT_DEK_STORAGE_KEY = 'fieldstation_attach_dek_v1';
         // Checked before accepting a file, before any IndexedDB write is attempted.
-        const ATTACHMENT_SIZE_CAPS = { image: 20 * 1024 * 1024, document: 50 * 1024 * 1024, audio: 200 * 1024 * 1024 };
+        // kind names HOW A QUESTION GETS ANSWERED, not what the file is - see
+        // classifyAttachmentKind(). image/document/audio are text- or
+        // vision-answerable; video is reserved (post-9c audio-track
+        // transcription is the likely feature) and other is any unclassified
+        // file - both are stored/downloadable only, never read for an answer.
+        const ATTACHMENT_SIZE_CAPS = {
+            image: 20 * 1024 * 1024, document: 50 * 1024 * 1024, audio: 200 * 1024 * 1024,
+            video: 200 * 1024 * 1024, other: 50 * 1024 * 1024
+        };
+        // Tiny id->{addedAt, chatId} index, written/deleted in lockstep with
+        // chat.attachments. This is what makes the 30-day orphan sweep
+        // possible - if a chat is deleted, its attachments' true creation
+        // time would otherwise be lost along with the chat record, leaving
+        // no way to judge how old an orphaned IndexedDB blob actually is.
+        const ATTACHMENT_INDEX_KEY = 'fieldstation_attach_index_v1';
+        function readAttachmentIndex() {
+            try { return JSON.parse(localStorage.getItem(ATTACHMENT_INDEX_KEY)) || {}; } catch { return {}; }
+        }
+        function writeAttachmentIndex(idx) { localStorage.setItem(ATTACHMENT_INDEX_KEY, JSON.stringify(idx)); }
+        function recordAttachmentIndex(id, chatId, addedAt) {
+            const idx = readAttachmentIndex();
+            idx[id] = { addedAt, chatId };
+            writeAttachmentIndex(idx);
+        }
+        function removeAttachmentIndex(id) {
+            const idx = readAttachmentIndex();
+            delete idx[id];
+            writeAttachmentIndex(idx);
+        }
 
         // ---------- KB / RAG constants ----------
         // Static-RAG mode: activated only when ?kb=<url> is present. The URL
@@ -1623,14 +1657,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         let visionProcessor = null, visionModel = null, visionFamily = null, visionId = null;
         let daisyProcessor = null, daisyModel = null, daisyLoading = null;
         const daisyFamily = 'smolvlm';
-        let pendingImage = null; // { blob } awaiting Send in vision mode
-
-        // Pending tabular attachment: mirrors pendingImage's lifecycle (attach
-        // -> preview chip -> consumed once at Send -> cleared), but lives in
-        // normal chat/router mode rather than vision mode. profileText holds
-        // ONLY column names/dtypes/null-fraction - deliberately never sample
-        // cell values, so this path never needs destination-aware redaction.
-        let pendingTabularFile = null; // { name, rowCount, profileText }
+        // pendingImage/pendingTabularFile (one-shot, consumed-at-send globals)
+        // are retired as of Phase 4A Stage 2 - see the "Attachment object"
+        // section below. Attachments now live on chat.attachments and persist
+        // across turns and reloads instead of being burned on first use.
 
         // Router mode
         let routerActive = false;     // true only when a "router:<base>" option is selected
@@ -1669,7 +1699,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // is wired into handleSend()'s main-chat path ONLY. Skills
         // (oneShotWithToken/oneShotJsonWithToken - taxonomy-classify,
         // csv-combine) send single-user-message prompts with no system role
-        // and never touch kbState; vision (handleVisionSend/runDaisyChain/
+        // and never touch kbState; vision (answerImageAttachment/
         // runVisionGenerate) short-circuits out of handleSend before any
         // router/KB logic runs. Keep it that way - don't read kbState from a
         // skill or vision path without deliberately designing KB support for
@@ -2186,7 +2216,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (!Array.isArray(store.templates)) store.templates = [];
             if (typeof store.lastModel !== 'string') store.lastModel = null;
             // Backfill per-chat drafts on older saved stores
-            for (const c of store.chats) { if (typeof c.draft !== 'string') c.draft = ''; }
+            for (const c of store.chats) {
+                if (typeof c.draft !== 'string') c.draft = '';
+                if (!Array.isArray(c.attachments)) c.attachments = [];
+            }
         }
 
         async function initStore() {
@@ -2240,9 +2273,46 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
         }
 
+        // Attachments in a chat this prunes are deleted too - a pruned chat's
+        // attachments have no owning chat left to render their Delete button,
+        // so leaving them would be both a storage leak and a PHI leak.
+        // Deletion runs fire-and-forget (this function stays synchronous, as
+        // callers below rely on) since it is non-critical cleanup, not
+        // something the UI needs to wait on.
+        function deleteAttachmentsForChat(chat) {
+            for (const att of (chat.attachments || [])) {
+                AttachmentStore.deleteAttachment(att.id).catch(() => {});
+                removeAttachmentIndex(att.id);
+            }
+        }
+
+        // Safety-net sweep for attachments with no owning chat - typically
+        // left behind by an interrupted delete or a crash, since every normal
+        // deletion path (deleteChat, wipeAllChats, this function's own prune
+        // loop, deleteAttachmentChip) already cleans up as it goes. Expunges
+        // only entries that are BOTH unreferenced by any live chat AND at
+        // least MAX_AGE_MS old, so a transient inconsistency gets a grace
+        // period rather than being nuked on first detection.
+        function sweepOrphanedAttachments() {
+            const idx = readAttachmentIndex();
+            const cutoff = Date.now() - MAX_AGE_MS;
+            const liveAttachmentIds = new Set();
+            for (const c of store.chats) for (const a of (c.attachments || [])) liveAttachmentIds.add(a.id);
+            for (const [id, rec] of Object.entries(idx)) {
+                if (liveAttachmentIds.has(id)) continue;
+                if (!rec || typeof rec.addedAt !== 'number' || rec.addedAt > cutoff) continue;
+                AttachmentStore.deleteAttachment(id).catch(() => {});
+                removeAttachmentIndex(id);
+            }
+        }
+
         function pruneOld() {
             const cutoff = Date.now() - MAX_AGE_MS;
-            store.chats = store.chats.filter(c => c.pinned || c.updated > cutoff);
+            const kept = [], removed = [];
+            for (const c of store.chats) (c.pinned || c.updated > cutoff ? kept : removed).push(c);
+            store.chats = kept;
+            for (const c of removed) deleteAttachmentsForChat(c);
+            sweepOrphanedAttachments();
         }
 
         function defaultName() {
@@ -2303,12 +2373,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 greeting: makeGreeting(),
                 messages: [structuredClone(SYSTEM_PROMPT)],
                 draft: '',
-                hintedSkills: [] // skill ids already hinted this chat, so a hint fires at most once per skill per chat
+                hintedSkills: [], // skill ids already hinted this chat, so a hint fires at most once per skill per chat
+                attachments: [] // Phase 4A: { id, kind, name, mimeType, sizeBytes, addedAt, derivedText?, phiFlagged }
             };
             store.chats.push(chat);
             store.activeId = chat.id;
             activeSurface = 'chat';
             input.value = '';
+            pruneOld(); // Phase 4A Stage 2: a startup-only prune misses a session left open for days
             saveStore();
             renderTabs();
             renderTranscript();
@@ -2336,6 +2408,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const chat = store.chats.find(c => c.id === id);
             if (!chat) return;
             if (!confirm(`Delete "${chat.name}"?`)) return;
+            deleteAttachmentsForChat(chat);
             store.chats = store.chats.filter(c => c.id !== id);
             if (store.activeId === id) {
                 store.activeId = store.chats.length ? store.chats[store.chats.length - 1].id : null;
@@ -2345,6 +2418,22 @@ with this program. If not, see https://www.gnu.org/licenses/.
             renderTabs();
             renderTranscript();
             renderChips();
+        }
+
+        // "Clear all chats" (design doc 11.1's third deletion path - did not
+        // exist before Phase 4A). Reuses deleteChat's own per-chat cleanup
+        // rather than reimplementing attachment removal, so there is exactly
+        // one place that knows how to fully delete a chat. Confirm-before-
+        // wipe, unlike same-name replace or a single attachment delete -
+        // this one is catastrophic and rare, not routine.
+        function wipeAllChats() {
+            if (busy) return;
+            if (!confirm('Delete ALL chats and their attachments? This cannot be undone.')) return;
+            for (const chat of store.chats.slice()) deleteAttachmentsForChat(chat);
+            store.chats = [];
+            store.activeId = null;
+            createChat();
+            setStatus('All chats deleted.');
         }
 
         function togglePin(id) {
@@ -2560,6 +2649,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         function renderTranscript() {
             chatBox.innerHTML = '';
             const chat = activeChat();
+            renderAttachmentBar();
             if (!chat) return;
             // Restore any per-chat draft prompt that was left unsent.
             input.value = chat.draft || '';
@@ -2568,7 +2658,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             for (const m of chat.messages) {
                 if (m.role === 'system') continue;
-                appendMessage(m.role === 'assistant' ? 'bot' : 'user', m.content);
+                if (m.role === 'note') { appendMessage('system', m.content, m.ts); continue; }
+                appendMessage(m.role === 'assistant' ? 'bot' : 'user', m.content, m.ts);
             }
             chatBox.scrollTop = chatBox.scrollHeight;
         }
@@ -2629,7 +2720,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const ICONS = {
             copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>',
             save: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>',
-            info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg>'
+            info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg>',
+            download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+            fileText: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+            trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>'
         };
 
         function formatTimestamp(ts) {
@@ -2834,6 +2928,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const lines = [`FieldStationAI chat: ${chat.name}`, `Exported: ${new Date().toLocaleString()}`, ''];
             for (const m of chat.messages) {
                 if (m.role === 'system') continue;
+                if (m.role === 'note') { lines.push('[' + m.content + ']', ''); continue; }
                 lines.push((m.role === 'user' ? 'You: ' : 'FieldStationAI: ') + m.content, '');
             }
             const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
@@ -3275,8 +3370,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // status line while the next model's progress bar renders below it.
             setStatus('');
             currentModelId = value;
-            clearImagePreview(); // a queued image belongs to the previous model's mode
-            clearPendingTabularFile(); // a queued attachment belongs to the previous model's mode
+            // Phase 4A Stage 2: attachments are chat-scoped and persistent now,
+            // not per-model queued state, so there is nothing to clear here on
+            // a model switch (there used to be a pendingImage/pendingTabularFile
+            // to drop).
             routerActive = false;
             routerStickyByChat.clear(); // sticky prior resets on model switch, per the router v2 design
             // Any generation in progress was already interrupted by the change
@@ -3764,29 +3861,251 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
         }
 
-        function showImagePreview(blob) {
-            pendingImage = { blob };
-            if (imagePreviewThumb.src) URL.revokeObjectURL(imagePreviewThumb.src);
-            imagePreviewThumb.src = URL.createObjectURL(blob);
-            imagePreviewLabel.textContent = 'Image attached - ask a question and Send.';
-            imagePreview.style.display = 'flex';
+        // ---------- Attachment object (Phase 4A Stage 2, design doc 11.1) ----------
+        //
+        // Only chat inputs - paste, attach, drop - create attachments; skills
+        // never do (Field Kit stays ephemeral). kind names HOW A QUESTION GETS
+        // ANSWERED, not what the file is:
+        //   image    - vision-answerable; re-run the model every question (11.4)
+        //   document - text-bearing: PDF, txt, md, and tabular (derivedText is
+        //              the column profile for tabular, extracted text otherwise)
+        //   audio    - text-bearing after transcription (9c; not built here)
+        //   video    - reserved, inert today (likely post-9c: transcribe the
+        //              audio track of a recorded interview/call)
+        //   other    - any unclassified file; inert, download-only
+        // Icons come from mimeType, never from kind - see mimeToIcon().
+        //
+        // Same-name uploads REPLACE the existing attachment, no prompt - a
+        // routine re-upload is overwhelmingly "this is the updated version,"
+        // and prompting on that would be pure friction. The transcript
+        // records every add/replace/delete as a persisted 'note' message
+        // instead, so a reader can tell months later which file version an
+        // answer was actually based on.
+        function classifyAttachmentKind(file) {
+            const mt = (file.type || '').toLowerCase();
+            const name = (file.name || '').toLowerCase();
+            if (mt.startsWith('image/')) return 'image';
+            if (mt.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi)$/.test(name)) return 'video';
+            if (mt === 'application/pdf' || /\.pdf$/.test(name)) return 'document';
+            if (mt.startsWith('text/') || /\.(txt|md)$/.test(name)) return 'document';
+            if (/\.(csv|tsv|xlsx|xls)$/.test(name)) return 'document';
+            return 'other';
         }
 
-        function clearImagePreview() {
-            if (imagePreviewThumb.src) URL.revokeObjectURL(imagePreviewThumb.src);
-            imagePreviewThumb.removeAttribute('src');
-            imagePreview.style.display = 'none';
-            pendingImage = null;
+        function mimeToIcon(mimeType, kind) {
+            const mt = (mimeType || '').toLowerCase();
+            if (mt.startsWith('image/')) return '🖼️';
+            if (mt.startsWith('video/')) return '🎬';
+            if (mt.startsWith('audio/')) return '🎵';
+            if (mt === 'application/pdf') return '📕';
+            if (mt.includes('spreadsheet') || mt.includes('csv') || mt.includes('excel')) return '📊';
+            if (mt.startsWith('text/')) return '📄';
+            return kind === 'document' ? '📄' : '📎';
         }
 
-        function showTabularPreview(name, rowCount) {
-            tabularPreviewLabel.textContent = `"${name}" attached - ${rowCount} rows. Ask your question and Send.`;
-            tabularPreview.style.display = 'flex';
+        function formatBytes(n) {
+            if (n < 1024) return `${n} B`;
+            if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+            return `${(n / (1024 * 1024)).toFixed(1)} MB`;
         }
 
-        function clearPendingTabularFile() {
-            tabularPreview.style.display = 'none';
-            pendingTabularFile = null;
+        // Extraction reuses the existing PDF/tabular pipelines rather than
+        // reimplementing them (extractPdfText/ensurePdfJs were Field-Kit-only
+        // before this; parseTabularFileRaw/sampleRowsForLLM/sniffTabularStructure/
+        // buildColumnsFromHeader/buildColumnProfileText already backed the old
+        // pendingTabularFile flow). Returns null for kinds with no stable text
+        // (image, video, other) - image's derivedText is set later, from the
+        // last vision answer only, never from this function.
+        async function extractDerivedText(file, kind) {
+            if (kind !== 'document') return null;
+            const name = (file.name || '').toLowerCase();
+            if (/\.pdf$/.test(name) || file.type === 'application/pdf') {
+                const text = await extractPdfText(file);
+                return text.trim() || null;
+            }
+            if (/\.(csv|tsv|xlsx|xls)$/.test(name)) {
+                const parsed = await parseTabularFileRaw(file);
+                const rawRows = parsed.rows;
+                if (!rawRows || !rawRows.length) return null;
+                const sampled = sampleRowsForLLM(rawRows);
+                const structure = sniffTabularStructure(rawRows, sampled);
+                const built = buildColumnsFromHeader(rawRows, structure.headerRow);
+                return buildColumnProfileText(built.columns);
+            }
+            const text = await file.text();
+            return text.trim() || null;
+        }
+
+        // Appends a persisted, rendered audit-trail line. Role 'note' (not
+        // 'system' - chat.messages[0] is the real system prompt and must stay
+        // distinguishable from it) is rendered like the existing ephemeral
+        // system notices and excluded from buildGenMessages/downloadChat, but
+        // - unlike those ephemeral notices - persists and re-renders on reload.
+        function appendAttachmentNote(chat, text) {
+            const ts = Date.now();
+            appendMessage('system', text, ts);
+            chat.messages.push({ role: 'note', content: text, ts });
+            chat.updated = ts;
+        }
+
+        async function createAttachment(file, forcedName) {
+            const chat = activeChat();
+            if (!chat) return null;
+            await AttachmentStore.ready();
+            if (!AttachmentStore.isUnlocked()) {
+                setStatus('Attachments are locked. Reload and enter your PIN to attach files.', true);
+                return null;
+            }
+            const kind = classifyAttachmentKind(file);
+            const check = await AttachmentStore.checkQuota(kind, file.size);
+            if (!check.ok) { setStatus(check.message, true); return null; }
+
+            let derivedText = null, buf;
+            try {
+                derivedText = await extractDerivedText(file, kind);
+                buf = await file.arrayBuffer();
+            } catch (e) {
+                setStatus(`Could not read ${forcedName || file.name || 'this file'}: ${errMsg(e)}`, true);
+                return null;
+            }
+
+            const name = forcedName || file.name || `file-${Date.now()}`;
+            const existingIdx = chat.attachments.findIndex(a => a.name === name);
+            const replacing = existingIdx !== -1;
+            let oldSizeBytes = null;
+            if (replacing) {
+                oldSizeBytes = chat.attachments[existingIdx].sizeBytes;
+                await AttachmentStore.deleteAttachment(chat.attachments[existingIdx].id);
+                removeAttachmentIndex(chat.attachments[existingIdx].id);
+            }
+
+            const id = crypto.randomUUID();
+            const addedAt = Date.now();
+            await AttachmentStore.putBlob(id, buf);
+
+            const attachment = { id, kind, name, mimeType: file.type || '', sizeBytes: file.size, addedAt, derivedText, phiFlagged: false };
+            if (replacing) chat.attachments.splice(existingIdx, 1, attachment);
+            else chat.attachments.push(attachment);
+            recordAttachmentIndex(id, chat.id, addedAt);
+
+            appendAttachmentNote(chat, replacing
+                ? `Replaced ${name} (${formatBytes(oldSizeBytes)} -> ${formatBytes(file.size)})`
+                : `Added ${name} (${formatBytes(file.size)})`);
+            saveStore();
+            renderAttachmentBar();
+
+            // Never auto-fire a question on attach, for any kind - the user's
+            // intent for an attachment is only known once they type a real
+            // question and press Send (handleSend's pending-image intercept
+            // handles images; document-kind attachments are picked up by
+            // routeIntent's Tier 0 the same way pendingTabularFile used to).
+            if (kind === 'image') {
+                setStatus(`${name} attached. Type your question and press Send.`);
+            } else {
+                setStatus(derivedText
+                    ? `${name} attached.`
+                    : `${name} attached, but its contents could not be extracted - it is stored and downloadable only.`);
+            }
+            return attachment;
+        }
+
+        async function createAttachmentsFromFileList(files) {
+            for (const file of files) { await createAttachment(file); }
+        }
+
+        async function deleteAttachmentChip(id) {
+            const chat = activeChat();
+            if (!chat) return;
+            const idx = chat.attachments.findIndex(a => a.id === id);
+            if (idx === -1) return;
+            const att = chat.attachments[idx];
+            await AttachmentStore.deleteAttachment(id);
+            removeAttachmentIndex(id);
+            chat.attachments.splice(idx, 1);
+            appendAttachmentNote(chat, `Deleted ${att.name}`);
+            saveStore();
+            renderAttachmentBar();
+        }
+
+        function buildAttachmentPill(att) {
+            const pill = document.createElement('div');
+            pill.className = 'attachment-pill';
+
+            const icon = document.createElement('span');
+            icon.className = 'att-icon';
+            icon.setAttribute('aria-hidden', 'true');
+            icon.textContent = mimeToIcon(att.mimeType, att.kind);
+            pill.appendChild(icon);
+
+            const name = document.createElement('span');
+            name.className = 'att-name';
+            name.textContent = att.name;
+            name.title = att.name;
+            pill.appendChild(name);
+
+            const size = document.createElement('span');
+            size.className = 'att-size';
+            size.textContent = formatBytes(att.sizeBytes);
+            pill.appendChild(size);
+
+            if (att.kind === 'video' || att.kind === 'other') {
+                const note = document.createElement('span');
+                note.className = 'att-unreadable';
+                note.textContent = 'stored only - cannot be read';
+                pill.appendChild(note);
+            }
+
+            const hasText = !!att.derivedText;
+            const mk = (iconKey, title, fn, disabled) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.title = title;
+                b.setAttribute('aria-label', title);
+                b.innerHTML = ICONS[iconKey];
+                if (disabled) b.disabled = true;
+                else b.addEventListener('click', fn);
+                return b;
+            };
+
+            // Ghost row (#4's pattern): icon-only, hidden until the pill is
+            // hovered/focused, inserted between size and the always-visible
+            // delete button. max-width transition (not just opacity) is what
+            // makes the pill visibly grow/shrink rather than just fade.
+            const actions = document.createElement('span');
+            actions.className = 'att-actions';
+
+            actions.appendChild(mk('copy', 'Copy extracted text', async () => {
+                await navigator.clipboard.writeText(att.derivedText || '');
+            }, !hasText));
+
+            actions.appendChild(mk('download', 'Download original file', async () => {
+                const buf = await AttachmentStore.getBlob(att.id);
+                if (!buf) { setStatus('Could not read this attachment from storage.', true); return; }
+                downloadBlob(new Blob([buf], { type: att.mimeType || 'application/octet-stream' }), att.name);
+            }));
+
+            actions.appendChild(mk('fileText', 'Download extracted text', () => {
+                downloadBlob(new Blob([att.derivedText || ''], { type: 'text/plain' }), att.name.replace(/\.[^.]+$/, '') + '.txt');
+            }, !hasText));
+
+            pill.appendChild(actions);
+
+            const del = mk('trash', 'Delete this attachment', () => deleteAttachmentChip(att.id));
+            del.className = 'att-delete';
+            pill.appendChild(del);
+
+            return pill;
+        }
+
+        // Chat-scoped, docked above the composer (design doc 11.1's "chat
+        // flow"). Visibility follows #composer-region's single existing
+        // display toggle - never a second toggle keyed to activeSurface.
+        function renderAttachmentBar() {
+            attachmentBar.innerHTML = '';
+            const chat = activeChat();
+            if (!chat || !chat.attachments.length) { attachmentBar.hidden = true; return; }
+            attachmentBar.hidden = false;
+            for (const att of chat.attachments) attachmentBar.appendChild(buildAttachmentPill(att));
         }
 
         // Lazily load a second, independent SmolVLM instance for the daisy chain,
@@ -3806,84 +4125,126 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return daisyLoading;
         }
 
-        // Runs when an image is pasted/attached while a non-vision model is
-        // active. If SmolVLM was never downloaded before, this now downloads
-        // it automatically instead of asking the user to switch models first -
-        // the progress bar makes the ~360 MB download visible rather than
-        // silent. Only the final description ever reaches the visible UI (the
-        // textarea); nothing intermediate is shown as a "result".
-        async function runDaisyChain(blob) {
-            if (busy) { setStatus('Finish or stop the current response before adding an image.', true); return; }
-            const alreadyCached = isCached(DAISY_VISION_ID);
+        // Unified vision Q&A (design doc 11.4). Every question re-runs
+        // inference against the attachment's STORED blob rather than reusing
+        // a cached caption - this is what lets a follow-up question "just
+        // work" without a re-upload, and what makes the old handleVisionSend
+        // (dedicated vision mode) and runDaisyChain (captioning while a text
+        // model is active) become one operation, differing only in which
+        // model answers: the selected visionModel when mode === 'vision',
+        // else the lazily-loaded daisy SmolVLM. Always answers as a real chat
+        // turn - unlike the old daisy-chain, it never splices text into the
+        // composer for the user to send again. attachment.derivedText is set
+        // to this answer afterward, but ONLY for the chip's Copy/Download
+        // Text actions - never reused to answer a later question.
+        async function answerImageAttachment(attachment, rawText) {
+            const chat = activeChat();
+            if (busy || !chat) return;
+            const question = rawText || 'Describe this image.';
+            const useVisionModel = mode === 'vision' && !!visionModel;
             busy = true;
             chatLockWaitCtl = new AbortController(); // this turn's unit of work for EngineLock
             setControls(false);
-            setStatus(alreadyCached
-                ? '🖼️ Reading image (image reader stays loaded alongside your current model - uses extra memory)...'
-                : '🖼️ First image pasted - downloading the image-reading model (~360 MB) once, then reading your image...');
-            try {
+            stopBtn.hidden = true; // vision generation is not interruptible yet
+
+            const userTs = Date.now();
+            appendMessage('user', question + ' 🖼️', userTs);
+            const botDiv = appendMessage('bot', '');
+            const start = performance.now();
+            const timerId = setInterval(() => {
+                if (chatEngineWaitLabel) botDiv.setText(`Waiting - ${chatEngineWaitLabel} is using the model...`);
+                else botDiv.setText(`Reading image... ${((performance.now() - start) / 1000).toFixed(1)}s`);
+            }, 100);
+
+            let alreadyCached = true;
+            if (!useVisionModel) {
+                alreadyCached = isCached(DAISY_VISION_ID);
+                setStatus(alreadyCached
+                    ? 'Reading image (image reader stays loaded alongside your current model - uses extra memory)...'
+                    : 'First image this session - downloading the image-reading model (~360 MB) once, then reading your image...');
                 if (!alreadyCached) showProgress(`Downloading ${friendlyVisionName(DAISY_VISION_ID)} to your browser...`);
-                const { processor, model } = await ensureDaisyModel(alreadyCached ? null : onModelProgress);
-                if (!alreadyCached) { finishProgress(); hideProgress(); }
+            }
 
-                // Short, direct prompts work far better with a small vision model
-                // than multi-clause instructions - prompt complexity, not the
-                // model itself, was the main cause of the earlier gibberish output.
-                // If the user already typed something, that becomes the actual
-                // question sent to SmolVLM instead of a generic description ask.
-                const userText = input.value.trim();
-                let question = userText ? userText.slice(0, 200) : 'Describe this image.';
+            try {
+                const blobBuf = await AttachmentStore.getBlob(attachment.id);
+                if (!blobBuf) throw new Error('Attachment could not be read from storage.');
+                const blob = new Blob([blobBuf], { type: attachment.mimeType || 'image/png' });
 
-                // Steer the caption prompt by the user's intent (if any typed
-                // text). code-shaped prompts should ask for a transcription,
-                // data-shaped prompts should ask for numbers/labels/axes, etc.
-                // No chat/sticky context for a one-off caption call, so
+                // Steer the question by intent, same heuristics either engine
+                // used before unification - and, like both of them, ONLY when
+                // the user actually typed something. Running the router on
+                // the synthetic "Describe this image." default buys nothing
+                // (nothing to steer) and costs a cold router-model load the
+                // first time it's called in a session, with no progress bar -
+                // that cost should never be paid for a question nobody asked.
+                // No chat/sticky context for a one-off vision turn, so
                 // routeIntent is called with chat=null.
-                if (userText) {
-                    const route = await routeIntent(userText, null);
+                let steeredQuestion = question;
+                if (rawText) {
+                    const route = await routeIntent(rawText, null);
                     const intent = route && !route.floor ? route.intent : null;
-                    if (intent === 'code') {
-                        question = 'Transcribe any code visible in this image, exactly as shown.';
+                    if (useVisionModel) {
+                        const suffix = intent ? ROUTER_ENHANCEMENTS[intent] : null;
+                        if (suffix) steeredQuestion = question + '\n\n' + suffix;
+                    } else if (intent === 'code') {
+                        steeredQuestion = 'Transcribe any code visible in this image, exactly as shown.';
                     } else if (intent === 'data') {
-                        question = 'List the numeric values, labels, and axes shown in this image.';
+                        steeredQuestion = 'List the numeric values, labels, and axes shown in this image.';
                     } else if (intent === 'factual' || intent === 'kb-question') {
-                        question = 'Describe this image briefly, focusing on what would help answer: ' + userText.slice(0, 160);
+                        steeredQuestion = 'Describe this image briefly, focusing on what would help answer: ' + question.slice(0, 160);
                     } else if (intent === 'summarize') {
-                        question = 'Summarize the content visible in this image in one or two sentences.';
+                        steeredQuestion = 'Summarize the content visible in this image in one or two sentences.';
                     }
-                    // greeting/creative/calculation/unknown fall through to the user's own text
                 }
 
-            // Wait-state UI (item 12): a one-shot snapshot check right before
-            // the lock-guarded call, since this path has no other status tick.
-            const waitSnapshot = EngineLock.snapshot();
-            if (waitSnapshot.held && waitSnapshot.holderLabel !== 'chat') {
-                setStatus(`Waiting - ${waitSnapshot.holderLabel} is using the model...`);
-            }
-            const description = await visionInferWithFallback(
-                    () => ({ processor: daisyProcessor, model: daisyModel }),
-                    daisyFamily, blob, question, null, true
-            );
+                let result;
+                if (useVisionModel) {
+                    result = await visionInferWithFallback(
+                        () => ({ processor: visionProcessor, model: visionModel }),
+                        visionFamily, blob, steeredQuestion,
+                        (partial) => { botDiv.setText(partial); chatBox.scrollTop = chatBox.scrollHeight; },
+                        false
+                    );
+                } else {
+                    const waitSnapshot = EngineLock.snapshot();
+                    if (waitSnapshot.held && waitSnapshot.holderLabel !== 'chat') {
+                        setStatus(`Waiting - ${waitSnapshot.holderLabel} is using the model...`);
+                    }
+                    await ensureDaisyModel(alreadyCached ? null : onModelProgress);
+                    if (!alreadyCached) { finishProgress(); hideProgress(); }
+                    result = await visionInferWithFallback(
+                        () => ({ processor: daisyProcessor, model: daisyModel }),
+                        daisyFamily, blob, steeredQuestion, null, true
+                    );
+                }
 
-                input.value = `[Image content, read by the image model: ${description}]\n\n` + input.value;
-                setStatus('Image described in the prompt box below - edit if needed, then Send.');
-                input.focus();
-            } catch (e) {
+                botDiv.setText(result || '(No answer produced.)');
+                chat.messages.push({ role: 'user', content: question + ' [image attached: ' + attachment.name + ']', ts: userTs });
+                chat.messages.push({ role: 'assistant', content: result, ts: Date.now() });
+                attachment.derivedText = result;
+                chat.updated = Date.now();
+                saveStore();
+                renderAttachmentBar();
+                if (result) appendMeta(((performance.now() - start) / 1000).toFixed(1), result);
+            } catch (err) {
+                console.error(err);
                 hideProgress();
-                setStatus(`Could not read the image. Running two models at once takes a lot of memory - try closing other tabs, or switch to the image model directly. Details: ${errMsg(e)}`, true);
+                botDiv.setText(`Could not read the image: ${errMsg(err)}`);
             } finally {
+                clearInterval(timerId);
                 busy = false;
                 setControls(true);
+                input.focus();
             }
         }
 
-        function handleImageInput(blob) {
-            if (mode === 'vision') {
-                if (!visionModel) { setStatus(`${friendlyVisionName()} is still loading - try again in a moment.`, true); return; }
-                showImagePreview(blob);
-            } else {
-                runDaisyChain(blob);
+        function handleImageInput(blob, forcedName) {
+            if (busy) { setStatus('Finish or stop the current response before adding an image.', true); return; }
+            if (mode === 'vision' && !visionModel) {
+                setStatus(`${friendlyVisionName()} is still loading - try again in a moment.`, true);
+                return;
             }
+            createAttachment(blob, forcedName);
         }
 
         // ---------- Generation ----------
@@ -4134,7 +4495,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (trimmed.length < 40 && GREETING_RE.test(trimmed)) {
                 return { intent: 'greeting', secondaryIntent: null, hintSkillId: null, qVec: null, floor: false };
             }
-            if (pendingTabularFile) {
+            // Phase 4A Stage 2: a document-kind attachment (tabular or
+            // otherwise) in the active chat raises this the same way
+            // pendingTabularFile used to before attachments were persistent.
+            if (chat && chat.attachments && chat.attachments.some(a => a.kind === 'document')) {
                 return { intent: 'data', secondaryIntent: null, hintSkillId: null, qVec: null, floor: false };
             }
             const calcResult = evalArithmeticIfPresent(trimmed);
@@ -4631,7 +4995,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         function buildGenMessages(chat, partial, overrideSystem, overrideUserSuffix, kbUserPrefix) {
-            const msgs = chat.messages.map(m => ({ ...m }));
+            // 'note' messages (Phase 4A: attachment add/replace/delete audit
+            // trail) are persisted and rendered but are not real conversation
+            // turns - excluded here so they never reach the model as an
+            // unrecognized role.
+            const msgs = chat.messages.filter(m => m.role !== 'note').map(m => ({ ...m }));
             if (overrideSystem) {
                 // Per-turn routed persona - never persisted to chat.messages, so
                 // each turn can be routed independently based on its own intent
@@ -4989,8 +5357,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // Wait-state UI (item 12), chat side: null when chat itself holds (or
         // nobody holds) the lock, else the label of whichever surface does -
-        // read directly by handleSend/handleVisionSend/runDaisyChain's own
-        // status ticks instead of each guessing locally.
+        // read directly by handleSend/answerImageAttachment's own status
+        // ticks instead of each guessing locally.
         let chatEngineWaitLabel = null;
         EngineLock.onEngineBusyChange(({ held, holderLabel }) => {
             chatEngineWaitLabel = (held && holderLabel !== 'chat') ? holderLabel : null;
@@ -5079,80 +5447,48 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return { call, meta };
         }
 
-        // Vision Q&A turn: runs SmolVLM directly on pendingImage. Kept separate
-        // from the text handleSend below since it has no streaming continuation,
-        // no context trimming, and no Qwen3 /no_think handling to worry about.
-        async function handleVisionSend(text) {
-            if (busy) return;
-            const chat = activeChat();
-            if (!chat || !visionModel) return;
-            if (!pendingImage) {
-                if (text) setStatus('Attach or paste an image first, then ask your question.', true);
-                return;
-            }
-
-            busy = true;
-            chatLockWaitCtl = new AbortController(); // this turn's unit of work for EngineLock
-            const question = text || 'Describe this image.';
-            const blob = pendingImage.blob;
-            clearImagePreview();
-            appendMessage('user', question + ' 🖼️');
-            input.value = '';
-            setControls(false); // model dropdown lock now follows EngineLock, not this call
-            stopBtn.hidden = true; // vision generation is not interruptible yet
-
-            const botDiv = appendMessage('bot', '');
-            const start = performance.now();
-            const timerId = setInterval(() => {
-                if (chatEngineWaitLabel) botDiv.setText(`Waiting - ${chatEngineWaitLabel} is using the model...`);
-                else botDiv.setText(`Reading image... ${((performance.now() - start) / 1000).toFixed(1)}s`);
-            }, 100);
-
-            try {
-                // Vision routing: classify the typed question so we can steer
-                // SmolVLM with an intent-tailored suffix. No chat context for
-                // a one-off vision turn, so routeIntent is called with chat=null.
-                let steeredQuestion = question;
-                if (text) {
-                    const route = await routeIntent(text, null);
-                    const intent = route && !route.floor ? route.intent : null;
-                    const suffix = intent ? ROUTER_ENHANCEMENTS[intent] : null;
-                    if (suffix) steeredQuestion = question + '\n\n' + suffix;
-                }
-
-                const result = await visionInferWithFallback(
-                    () => ({ processor: visionProcessor, model: visionModel }),
-                    visionFamily, blob, steeredQuestion,
-                    (partial) => {
-                        botDiv.setText(partial);
-                        chatBox.scrollTop = chatBox.scrollHeight;
-                    },
-                    false
-                );
-                botDiv.setText(result || '(No answer produced.)');
-                chat.messages.push({ role: 'user', content: question + ' [image attached]' });
-                chat.messages.push({ role: 'assistant', content: result });
-                chat.updated = Date.now();
-                saveStore();
-                if (result) appendMeta(((performance.now() - start) / 1000).toFixed(1), result);
-            } catch (err) {
-                console.error(err);
-                botDiv.setText(`⚠️ Could not read the image: ${errMsg(err)}`);
-            } finally {
-                clearInterval(timerId);
-                busy = false;
-                setControls(true);
-                input.focus();
-            }
-        }
-
         async function handleSend() {
             const text = input.value.trim();
-            // Vision bails out here, before any router/KB logic below - this
-            // is what keeps handleVisionSend isolated from kbState. See the
-            // GUARDRAIL note above kbState's declaration.
-            if (mode === 'vision') { await handleVisionSend(text); return; }
             const chat = activeChat();
+            // Phase 4A Stage 2: an image attachment with no answer yet
+            // intercepts the very next explicit Send, in ANY mode - this is
+            // what lets "attach, then type a real question, then Send" work
+            // without switching to vision mode, WITHOUT ever auto-firing a
+            // synthetic question the instant an image is attached (that was
+            // a real complaint - the user's actual intent may have nothing
+            // to do with "describe this image"). Requires real typed text,
+            // unlike the vision-mode branch below, so an accidental empty
+            // Enter can never kick off a generation nobody asked for.
+            // Superseded by Stage 4's real attachment-question router intent,
+            // which will handle follow-ups and multiple attachments properly.
+            if (chat && text && !busy) {
+                const unanswered = chat.attachments.filter(a => a.kind === 'image' && !a.derivedText);
+                const pending = unanswered[unanswered.length - 1];
+                if (pending) {
+                    input.value = '';
+                    await answerImageAttachment(pending, text);
+                    return;
+                }
+            }
+            // Vision bails out here, before any router/KB logic below - this
+            // is what keeps answerImageAttachment isolated from kbState. See
+            // the GUARDRAIL note above kbState's declaration. Ask-once fix
+            // (design 11.4): the image attachment persists across turns, so
+            // this reads the most recent one instead of a one-shot pending
+            // global - the same image can be asked a second question with no
+            // re-upload.
+            if (mode === 'vision') {
+                if (busy) return;
+                const imageAttachments = chat ? chat.attachments.filter(a => a.kind === 'image') : [];
+                const latest = imageAttachments[imageAttachments.length - 1];
+                if (!latest) {
+                    if (text) setStatus('Attach or paste an image first, then ask your question.', true);
+                    return;
+                }
+                input.value = '';
+                await answerImageAttachment(latest, text);
+                return;
+            }
             if (!text || busy || !chat) return;
             if (mode === 'local' && !generator) return;
             if (mode === 'webllm' && !webllmEngine) return;
@@ -5171,13 +5507,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const isMyTurn = () => !cancelledForNewChat && chat.id === store.activeId;
 
             stopMic(); // a live mic session must not re-insert the old transcript after send
-            appendMessage('user', text);
+            const sendTs = Date.now();
+            appendMessage('user', text, sendTs);
             input.value = '';
             chat.draft = ''; // sent, so nothing to preserve as a per-chat draft
             setControls(false); // model dropdown lock now follows EngineLock, not this call
             stopBtn.hidden = false;
 
-            chat.messages.push({ role: 'user', content: text });
+            chat.messages.push({ role: 'user', content: text, ts: sendTs });
             if (trimHistory(chat.messages)) {
                 appendMessage('system', 'This conversation was getting long, so the oldest messages were removed so the model can still keep up.');
             }
@@ -5241,16 +5578,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 const routedSuffix = intent ? ROUTER_ENHANCEMENTS[intent] : null;
                 const routedCap = intent ? ROUTER_MAX_TOKENS[intent] : null;
 
-                // One-shot tabular-file dispatch: Tier 0 already forced
-                // intent='data' whenever a file is pending, so this fires
-                // exactly when a file was attached. Consumed and cleared here
-                // regardless of what else happens this turn, mirroring
-                // pendingImage's one-shot vision behavior.
+                // Document-attachment dispatch (Phase 4A Stage 2): Tier 0
+                // already forced intent='data' whenever the chat has a
+                // document-kind attachment, so this fires every turn a
+                // document is attached - not one-shot like the old
+                // pendingTabularFile, since the attachment is persistent now.
+                // Always passed whole (never chunked) here; real retrieval
+                // over longer documents is Stage 4.
                 let tabularBlock = null;
-                if (pendingTabularFile) {
-                    const f = pendingTabularFile;
-                    tabularBlock = `Column profile for "${f.name}" (${f.rowCount} rows):\n${f.profileText}`;
-                    clearPendingTabularFile();
+                if (chat && chat.attachments && chat.attachments.length) {
+                    const docs = chat.attachments.filter(a => a.kind === 'document' && a.derivedText);
+                    if (docs.length) {
+                        tabularBlock = docs.map(a => `Contents of "${a.name}":\n${a.derivedText}`).join('\n\n');
+                    }
                 }
 
                 // Calculation dispatch: Tier 0 already computed the result for
@@ -5294,7 +5634,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         const msg = 'No matching KB articles found.';
                         if (isMyTurn()) {
                             botDiv.setText(msg);
-                            chat.messages.push({ role: 'assistant', content: msg });
+                            chat.messages.push({ role: 'assistant', content: msg, ts: Date.now() });
                             chat.updated = Date.now();
                             saveStore();
                             appendSources(kbClosest.slice(0, 3));
@@ -5381,7 +5721,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 const visible = stripThink(raw).trim();
                 if (visible) {
                     if (isMyTurn()) botDiv.setText(visible);
-                    chat.messages.push({ role: 'assistant', content: visible });
+                    chat.messages.push({ role: 'assistant', content: visible, ts: Date.now() });
                     chat.updated = Date.now();
                     saveStore();
                     if (isMyTurn()) {
@@ -6952,44 +7292,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return lines.join('\n');
         }
 
-        async function handleFile(file) {
-            if (file.type && file.type.startsWith('image/')) {
-                handleImageInput(file);
-                return;
-            }
-            if (file.size > 8 * 1024 * 1024) {
-                setStatus('File too large (max 8 MB). Export a smaller sample first.', true);
-                return;
-            }
-            let parsed;
-            try {
-                setStatus(`Parsing ${file.name} locally...`);
-                parsed = await parseTabularFileRaw(file);
-            } catch (e) {
-                if (/Unsupported format/.test(errMsg(e))) {
-                    setStatus('Unsupported format. For R (.rds) or pandas (.pkl) files, export to CSV first.', true);
-                } else {
-                    setStatus(`Could not parse ${file.name}: ${errMsg(e)}`, true);
-                }
-                return;
-            }
-            const rawRows = parsed.rows;
-            if (!rawRows || !rawRows.length) {
-                setStatus('No rows found in the file.', true);
-                return;
-            }
-            // Reuse the skill-agnostic detection layer (do not reimplement
-            // header detection here) - same functions the CSV Combiner uses.
-            const sampled = sampleRowsForLLM(rawRows);
-            const structure = sniffTabularStructure(rawRows, sampled);
-            const built = buildColumnsFromHeader(rawRows, structure.headerRow);
-            const rowCount = Math.max(0, rawRows.length - structure.dataStartRow);
-            const profileText = buildColumnProfileText(built.columns);
-            pendingTabularFile = { name: file.name, rowCount, profileText };
-            showTabularPreview(file.name, rowCount);
-            setStatus(`${file.name} attached: ${rowCount} rows, ${built.columns.length} columns. Ask your question and Send.`);
-            input.focus();
-        }
+        // handleFile/pendingTabularFile retired as of Phase 4A Stage 2 - the
+        // attach button and drop handler now call createAttachmentsFromFileList
+        // directly (see the "Attachment object" section above), which covers
+        // image/document/tabular/video/other uniformly, including the quota
+        // check that replaces this function's old hardcoded 8 MB cap.
 
         // ---------- Skills subsystem (Phase 9a) ----------
 
@@ -7151,11 +7458,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
             skillsDoneBtn.hidden = true;
             skillsResetBtn.hidden = true;
             skillsTitle.textContent = 'Field Kit';
-            // Belt-and-braces (item 22). Clears TRANSIENT in-flight values
-            // only. Never extend this to delete saved attachments (Phase
-            // 4A) - a skill Reset must not destroy user data.
-            clearImagePreview();
-            clearPendingTabularFile();
+            // Belt-and-braces (item 22): this function must never touch chat
+            // attachments (Phase 4A) - a skill Reset must not destroy user
+            // data. There is no transient pending-image/pending-file state
+            // left to clear here either, now that attachments are chat-scoped
+            // and persistent rather than queued composer state.
             // Free the Pyodide worker on hard reset so a subsequent skill run
             // starts clean.
             try { disposePyodideWorker(); } catch (_) {}
@@ -7280,11 +7587,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 skillLockWaitCtl = new AbortController(); // fresh session for EngineLock
                 skillStateProbe = null;
                 skillCompanionChatId = null; // "Send to Chat" starts a fresh companion next time
-                // Belt-and-braces (item 22). Clears TRANSIENT in-flight values
-                // only. Never extend this to delete saved attachments (Phase
-                // 4A) - a skill Reset must not destroy user data.
-                clearImagePreview();
-                clearPendingTabularFile();
+                // Belt-and-braces (item 22): must never touch chat attachments
+                // (Phase 4A) - a skill "Start over" must not destroy user data.
                 skillsBody.innerHTML = '';
                 if (skill.id === 'taxonomy-classify') mountTaxonomySkill(skillsBody);
                 else if (skill.id === 'csv-combine') mountCsvCombineSkill(skillsBody);
@@ -9473,6 +9777,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         const MENU_ITEMS = [
             { label: 'Field Kit', action: () => openSkills() },
             { label: 'Load models from local Ollama server', action: () => detectOllama(true) },
+            { label: 'Clear all chats', action: () => wipeAllChats() },
             { label: 'About Field Station AI', action: () => showWelcome() }
         ];
         document.getElementById('skills-btn').addEventListener('click', openSkills);
@@ -9632,28 +9937,32 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         });
         fileInput.addEventListener('change', () => {
             if (chatInputSuppressed()) { fileInput.value = ''; return; }
-            if (fileInput.files.length) handleFile(fileInput.files[0]);
+            if (fileInput.files.length) createAttachmentsFromFileList(fileInput.files);
             fileInput.value = '';
         });
         // Surface isolation (item 20): no page-level drag/drop handling
         // exists anywhere in the app today, so a browser with no explicit
         // handler navigates the whole tab away to the dropped file by
         // default - a live hazard on both surfaces, independent of Field
-        // Kit. Absorbed unconditionally everywhere; never forwarded to any
-        // ingestion path (skills ingest through their own file inputs;
-        // chat has no drop-to-attach feature). Written as an explicit
-        // branch on activeSurface, with both arms present from the start,
-        // so Phase 4A's chat drop-to-attach changes one arm instead of
-        // restructuring the handler.
+        // Kit. Absorbed unconditionally on the Field Kit arm (skills ingest
+        // through their own file inputs); the chat arm now creates
+        // attachments (Phase 4A Stage 2), one per dropped file, matching the
+        // attach button's multi-file support.
         document.addEventListener('dragover', (e) => { e.preventDefault(); });
         document.addEventListener('drop', (e) => {
             e.preventDefault();
             if (activeSurface === 'fieldkit') {
                 // Field Kit active: absorbed and discarded (skills ingest through their own UI).
-            } else {
-                // Chat active: absorbed and discarded for now. Phase 4A replaces this arm
-                // with attachment creation. Do not add chat drop-to-attach in this step.
+                return;
             }
+            if (chatInputSuppressed()) return;
+            // attachBtn is disabled mid-generation via setControls(), but a
+            // page-level drop listener bypasses that - guard explicitly so a
+            // drop during generation can't interleave an attachment note with
+            // the in-flight response.
+            if (busy) { setStatus('Finish or stop the current response before adding a file.', true); return; }
+            const files = e.dataTransfer && e.dataTransfer.files;
+            if (files && files.length) createAttachmentsFromFileList(files);
         });
 
         // Send via Enter, newline via Shift+Enter
@@ -9675,7 +9984,11 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             draftSaveTimer = setTimeout(() => { draftSaveTimer = null; saveStore(); }, 400);
         });
 
-        // Paste an image directly into the prompt box
+        // Paste an image directly into the prompt box. Clipboard image blobs
+        // often share a generic browser-assigned name (e.g. "image.png"), so
+        // a unique name is generated here rather than trusted from the blob -
+        // otherwise pasting two unrelated screenshots in one chat would
+        // trigger the same-name-replace path and silently delete the first.
         input.addEventListener('paste', (e) => {
             if (chatInputSuppressed()) return;
             const items = e.clipboardData && e.clipboardData.items;
@@ -9685,15 +9998,13 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     const blob = item.getAsFile();
                     if (blob) {
                         e.preventDefault();
-                        handleImageInput(blob);
+                        const ext = (item.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+                        handleImageInput(blob, `pasted-image-${Date.now()}.${ext}`);
                     }
                     break;
                 }
             }
         });
-        imagePreviewRemove.addEventListener('click', clearImagePreview);
-        tabularPreviewRemove.addEventListener('click', clearPendingTabularFile);
-
         (async () => {
             // KB / RAG bootstrap: if ?kb=<url> is present, parse params first so
             // expired KB caches are purged before we do anything else, then
