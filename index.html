@@ -1087,6 +1087,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
         const OLLAMA_URL = 'http://localhost:11434';
 
+        // ---------- Attachment storage constants (Phase 4A Stage 1) ----------
+        const ATTACHMENT_DB_NAME = 'fieldstation_attachments_v1';
+        const ATTACHMENT_DB_VERSION = 1;
+        const ATTACHMENT_DEK_STORAGE_KEY = 'fieldstation_attach_dek_v1';
+        // Checked before accepting a file, before any IndexedDB write is attempted.
+        const ATTACHMENT_SIZE_CAPS = { image: 20 * 1024 * 1024, document: 50 * 1024 * 1024, audio: 200 * 1024 * 1024 };
+
         // ---------- KB / RAG constants ----------
         // Static-RAG mode: activated only when ?kb=<url> is present. The URL
         // points at a prebuilt index.json (see plan). Everything else defaults
@@ -1178,21 +1185,25 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // storage pressure. Called once after the first successful model
         // load. No-op on browsers that don't support the API, and idempotent.
         let persistentStorageRequested = false;
+        let persistentStorageGranted = false; // cached outcome, valid once persistentStorageRequested is true
+        // Returns true if storage is (now, or already was) persisted, false if
+        // denied or unsupported. Callers that care about a denied state (see
+        // the boot sequence) should surface it - the browser may otherwise
+        // silently evict IndexedDB attachment blobs under storage pressure.
         async function requestPersistentStorageOnce() {
-            if (persistentStorageRequested) return;
+            if (persistentStorageRequested) return persistentStorageGranted;
             persistentStorageRequested = true;
             try {
                 if (navigator.storage && typeof navigator.storage.persist === 'function') {
                     // If already persisted, this resolves true without prompting.
                     const alreadyPersisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
-                    if (!alreadyPersisted) {
-                        const ok = await navigator.storage.persist();
-                        console.info('navigator.storage.persist() ->', ok);
-                    }
+                    persistentStorageGranted = alreadyPersisted || await navigator.storage.persist();
+                    console.info('navigator.storage.persist() ->', persistentStorageGranted);
                 }
             } catch (e) {
                 console.warn('persist() failed:', e);
             }
+            return persistentStorageGranted;
         }
 
         // TODO(service-worker): add a Service Worker that (1) serves model
@@ -1707,6 +1718,168 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64.dec(blob.iv) }, key, b64.dec(blob.data));
             return { key, json: new TextDecoder().decode(plain) };
         }
+
+        // ---------- Attachment storage (Phase 4A Stage 1) ----------
+        //
+        // IndexedDB home for chat-attachment blobs (originals) and vectors
+        // (embedded segments, populated starting Stage 4). Every value is
+        // always AES-GCM'd with a random Data Encryption Key (DEK) - with no
+        // PIN set, the DEK itself is stored unwrapped in localStorage, which
+        // is equivalent to unprotected and must never be described in UI copy
+        // as "encrypted"; with a PIN set, the DEK is wrapped (encrypted) by a
+        // key derived from that PIN, reusing the app's existing deriveKey()/
+        // pinKey rather than a second PBKDF2 derivation. Setting, changing
+        // (remove then set again), or removing a PIN only ever re-wraps this
+        // one small key - it never rewrites a stored blob or vector, however
+        // many or however large they are. See design doc section 11.1.
+        //
+        // No caller in the app touches this module yet (Stage 2 wires
+        // creation/paste/attach/drop, Stage 4 wires retrieval) - exposed as
+        // window.AttachmentStore intentionally, both so Stage 1 can be
+        // verified from the devtools console before any UI calls into it, and
+        // as the seam a future storage-management surface would read from.
+        const AttachmentStore = (() => {
+            let db = null;
+            let dekBytes = null;       // raw 32-byte DEK, in memory only, never itself persisted unwrapped when a PIN is active
+            let dekCryptoKey = null;   // CryptoKey imported from dekBytes, cached for the session
+            let readyPromise = null;
+
+            function openDb() {
+                return new Promise((resolve, reject) => {
+                    const req = indexedDB.open(ATTACHMENT_DB_NAME, ATTACHMENT_DB_VERSION);
+                    req.onupgradeneeded = () => {
+                        const idb = req.result;
+                        if (!idb.objectStoreNames.contains('blobs')) idb.createObjectStore('blobs');
+                        if (!idb.objectStoreNames.contains('vectors')) idb.createObjectStore('vectors');
+                    };
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => reject(req.error);
+                });
+            }
+
+            function idbRun(storeName, mode, fn) {
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(storeName, mode);
+                    const store = tx.objectStore(storeName);
+                    const req = fn(store);
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => reject(req.error);
+                });
+            }
+            const idbPut = (storeName, key, value) => idbRun(storeName, 'readwrite', s => s.put(value, key));
+            const idbGet = (storeName, key) => idbRun(storeName, 'readonly', s => s.get(key));
+            const idbDelete = (storeName, key) => idbRun(storeName, 'readwrite', s => s.delete(key));
+            const idbGetAllKeys = (storeName) => idbRun(storeName, 'readonly', s => s.getAllKeys());
+
+            async function persistDekWrapped(key) {
+                const iv = crypto.getRandomValues(new Uint8Array(12));
+                const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, dekBytes);
+                localStorage.setItem(ATTACHMENT_DEK_STORAGE_KEY, JSON.stringify({ wrapped: true, iv: b64.enc(iv), data: b64.enc(data) }));
+            }
+
+            function persistDekPlaintext() {
+                localStorage.setItem(ATTACHMENT_DEK_STORAGE_KEY, JSON.stringify({ wrapped: false, key: b64.enc(dekBytes) }));
+            }
+
+            // Unwraps using a caller-supplied key (the current or outgoing
+            // pinKey) rather than reading the module-level pinKey directly, so
+            // "Remove PIN" can unwrap with the key it just verified before
+            // that key is nulled out.
+            async function unwrapDekIntoMemory(key) {
+                const raw = localStorage.getItem(ATTACHMENT_DEK_STORAGE_KEY);
+                if (!raw) return;
+                const rec = JSON.parse(raw);
+                if (!rec.wrapped) { dekBytes = b64.dec(rec.key); dekCryptoKey = null; return; }
+                const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64.dec(rec.iv) }, key, b64.dec(rec.data));
+                dekBytes = new Uint8Array(plain);
+                dekCryptoKey = null;
+            }
+
+            async function loadOrCreateDek() {
+                const raw = localStorage.getItem(ATTACHMENT_DEK_STORAGE_KEY);
+                if (!raw) {
+                    // First run. If a PIN is already active (this feature shipping
+                    // into a browser profile that already has one), wrap the new
+                    // DEK immediately rather than ever storing it unwrapped.
+                    dekBytes = crypto.getRandomValues(new Uint8Array(32));
+                    if (pinKey) { await persistDekWrapped(pinKey); } else { persistDekPlaintext(); }
+                    return;
+                }
+                const rec = JSON.parse(raw);
+                if (!rec.wrapped) { dekBytes = b64.dec(rec.key); return; }
+                if (pinKey) { await unwrapDekIntoMemory(pinKey); }
+                // else: store is locked (user cancelled the PIN pad at boot) -
+                // dekBytes stays null; isUnlocked() reports false until a PIN
+                // is entered. Nothing on disk is touched in this state.
+            }
+
+            async function init() {
+                db = await openDb();
+                await loadOrCreateDek();
+            }
+            function ready() {
+                if (!readyPromise) readyPromise = init();
+                return readyPromise;
+            }
+
+            async function getDekCryptoKey() {
+                if (!dekBytes) throw new Error('Attachment storage is locked - enter the PIN first.');
+                if (!dekCryptoKey) dekCryptoKey = await crypto.subtle.importKey('raw', dekBytes, 'AES-GCM', false, ['encrypt', 'decrypt']);
+                return dekCryptoKey;
+            }
+
+            async function encryptBytes(bytes) {
+                const key = await getDekCryptoKey();
+                const iv = crypto.getRandomValues(new Uint8Array(12));
+                const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, bytes);
+                return { iv, ciphertext };
+            }
+            async function decryptBytes(rec) {
+                const key = await getDekCryptoKey();
+                return crypto.subtle.decrypt({ name: 'AES-GCM', iv: rec.iv }, key, rec.ciphertext);
+            }
+
+            async function putBlob(id, arrayBuffer) { await idbPut('blobs', id, await encryptBytes(arrayBuffer)); }
+            async function getBlob(id) { const rec = await idbGet('blobs', id); return rec ? decryptBytes(rec) : null; }
+            async function deleteBlob(id) { await idbDelete('blobs', id); }
+
+            async function putVectors(id, arrayBuffer) { await idbPut('vectors', id, await encryptBytes(arrayBuffer)); }
+            async function getVectors(id) { const rec = await idbGet('vectors', id); return rec ? decryptBytes(rec) : null; }
+            async function deleteVectors(id) { await idbDelete('vectors', id); }
+
+            async function deleteAttachment(id) { await Promise.all([deleteBlob(id), deleteVectors(id)]); }
+            async function listStoredIds() { return idbGetAllKeys('blobs'); }
+
+            // Hard per-kind cap first (no async needed to reject an obviously
+            // oversized file), then remaining browser-storage headroom. Never
+            // throws - callers show `message` and refuse the file up front,
+            // rather than hitting a mid-write QuotaExceededError.
+            async function checkQuota(kind, sizeBytes) {
+                const cap = ATTACHMENT_SIZE_CAPS[kind];
+                if (cap && sizeBytes > cap) {
+                    return { ok: false, message: `This ${kind} is larger than the ${Math.round(cap / (1024 * 1024))} MB limit for this app.` };
+                }
+                if (navigator.storage && typeof navigator.storage.estimate === 'function') {
+                    try {
+                        const { usage, quota } = await navigator.storage.estimate();
+                        if (typeof quota === 'number' && (quota - usage) < sizeBytes) {
+                            return { ok: false, message: 'Not enough browser storage space is available for this file.' };
+                        }
+                    } catch { /* estimate() unsupported or failed - fall through and allow the write */ }
+                }
+                return { ok: true };
+            }
+
+            return {
+                ready, checkQuota,
+                putBlob, getBlob, deleteBlob,
+                putVectors, getVectors, deleteVectors,
+                deleteAttachment, listStoredIds,
+                persistDekWrapped, persistDekPlaintext, unwrapDekIntoMemory,
+                isUnlocked: () => dekBytes !== null
+            };
+        })();
+        window.AttachmentStore = AttachmentStore;
 
         // ---------- Hybrid Emoji + Numeric PIN pad (Phase 4) ----------
 
@@ -9253,6 +9426,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 if (pin === null) return;
                 try {
                     await decryptWith(pin, JSON.parse(localStorage.getItem(ENC_KEY)));
+                    await AttachmentStore.ready();
+                    await AttachmentStore.unwrapDekIntoMemory(pinKey);
+                    AttachmentStore.persistDekPlaintext();
                     pinKey = null;
                     pinSalt = null;
                     localStorage.removeItem(ENC_KEY);
@@ -9274,6 +9450,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const saltBytes = crypto.getRandomValues(new Uint8Array(16));
             pinSalt = b64.enc(saltBytes);
             pinKey = await deriveKey(p1, saltBytes);
+            await AttachmentStore.ready();
+            await AttachmentStore.persistDekWrapped(pinKey);
             localStorage.removeItem(STORE_KEY);
             saveStore();
             pinBtn.classList.add('active');
@@ -9286,6 +9464,12 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         const menuBtn = document.getElementById('menu-btn');
         const menuPopup = document.getElementById('menu-popup');
 
+        // TODO(storage-management-ui): a future entry here should let a user
+        // view/delete individually cached models (CACHED_PREFIX/RUNG_PREFIX
+        // localStorage entries), delete chats, and delete/download attachment
+        // files. AttachmentStore (see the "Attachment storage" section above)
+        // is the piece such a surface would read from - deferred out of
+        // Phase 4A; not built in any of its four stages.
         const MENU_ITEMS = [
             { label: 'Field Kit', action: () => openSkills() },
             { label: 'Load models from local Ollama server', action: () => detectOllama(true) },
@@ -9534,6 +9718,18 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             pruneOld();
             if (locked) setStatus('Chats are locked. Reload and enter your PIN to access saved chats. This session will NOT be saved.', true);
             if (pinKey) { pinBtn.classList.add('active'); pinBtn.title = 'PIN protection is on - click to remove'; }
+            // Attachment storage foundation (Phase 4A Stage 1): open the DB and
+            // unwrap the DEK now if a PIN was just entered above, so attachment
+            // storage is ready before Stage 2 wires any UI into it. Also request
+            // persistent storage unconditionally at boot rather than only after
+            // a model load - a user who exclusively drives Ollama would
+            // otherwise never trigger it, leaving attachment blobs eligible for
+            // eviction under storage pressure with no warning.
+            await AttachmentStore.ready();
+            if (pinKey) { await AttachmentStore.unwrapDekIntoMemory(pinKey); }
+            requestPersistentStorageOnce().then(granted => {
+                if (!granted) setStatus('This browser did not grant persistent storage. Large attachments may be evicted if the device runs low on space.', true);
+            });
             if (!store.chats.length) {
                 createChat();
             } else {
