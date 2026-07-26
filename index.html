@@ -1021,7 +1021,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     <footer id="app-footer">© 2026 The Regents of the University of Michigan &nbsp;|&nbsp; <a href="https://depressioncenter.org" target="_blank" rel="noopener noreferrer">Eisenberg Family Depression Center</a></footer>
 
     <script type="module">
-        import { pipeline, TextStreamer, InterruptableStoppingCriteria, AutoProcessor, AutoModelForVision2Seq, Qwen2VLForConditionalGeneration, RawImage, env, LogLevel, ModelRegistry } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
+        import { pipeline, TextStreamer, InterruptableStoppingCriteria, AutoProcessor, AutoModelForVision2Seq, Qwen2VLForConditionalGeneration, RawImage, read_audio, env, LogLevel, ModelRegistry } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
 
         // Run ORT-WASM in a Web Worker so the main thread stays free to paint
         // and dispatch clicks (Stop, New Chat) between token dispatches. Without
@@ -1214,6 +1214,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // to be reasonable as an unprompted download, and its API matches
         // the SmolVLM branch of the vision loader.
         const DAISY_VISION_ID = 'HuggingFaceTB/SmolVLM-500M-Instruct';
+        // Phase 9c: daisy-chain ASR model, auto-loaded once when an audio file
+        // is attached in chat while no explicit transcription has been run
+        // yet. Mirrors DAISY_VISION_ID's role (small, unprompted, always this
+        // exact model regardless of any other selection) but is NOT part of
+        // daisyFamily/daisyModel/daisyProcessor - ASR uses the pipeline()
+        // helper directly (see ensureTranscriber), not the raw
+        // AutoProcessor/AutoModel + custom generate loop vision uses, so it
+        // gets its own parallel state (daisyAudioTranscriber) instead.
+        const DAISY_AUDIO_ID = 'onnx-community/whisper-base';
         function isQwen2VL(id) { return /qwen2-vl/i.test(id); }
         // Per-model "downloaded at least once" flag. Used to pick between the
         // progress bar (first download) vs. a plain "Loading please wait"
@@ -1601,10 +1610,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // a `const` string. When Phase 9c adds audio (whisper) it will need to
         // become an object keyed by modality (e.g. {image:'smolvlm', audio:'whisper'}).
         const SKILL_ZEROSHOT_ID = 'Xenova/bart-large-mnli';
+        // Phase 9c: always the turbo variant for the Transcribe skill (never
+        // the daisy-chain's whisper-base) - see design doc 10.2/10.3.
+        const SKILL_TRANSCRIBE_ID = 'onnx-community/whisper-large-v3-turbo';
         const SKILLS = [
             { id: 'taxonomy-classify', name: 'Sort text into categories', desc: 'Sort documents or spreadsheet rows into categories you choose. Useful for mapping expertise from publication abstracts.', icon: 'tags', engine: 'zeroshot', modelId: SKILL_ZEROSHOT_ID, modelSize: '~400 MB', status: 'ready' },
             { id: 'csv-combine',       name: 'Combine spreadsheets',     desc: 'Merge many CSV or Excel files into one, with help matching up columns that have different names.', icon: 'columns',   engine: 'llm',        heuristicOnly: true, status: 'ready' },
-            { id: 'transcribe',        name: 'Transcribe audio',         desc: 'Turn interview recordings or dictation into text, without sending audio to any cloud service.',   icon: 'mic',       engine: 'asr',        status: 'coming-soon' },
+            { id: 'transcribe',        name: 'Transcribe audio',         desc: 'Turn interview recordings into text with timestamps, without sending audio to any cloud service.',   icon: 'mic',       engine: 'asr',        modelId: SKILL_TRANSCRIBE_ID, modelSize: '~800 MB', status: 'ready' },
             { id: 'summarize',         name: 'Summarize or find themes', desc: 'Shorten long text or pull out the main themes from a document.',                                   icon: 'file-text', engine: 'llm',        status: 'coming-soon' },
             { id: 'emotions',          name: 'Emotions and sentiment',   desc: 'Detect emotions in text (joy, sadness, nervousness, and 25 more) and overall positive/negative tone.', icon: 'heart',   engine: 'classifier', status: 'coming-soon' },
             { id: 'pain-level',        name: 'Estimate pain level',      desc: 'From descriptions of pain, estimate a 1 to 10 rating.',                                              icon: 'gauge',     engine: 'zeroshot',   status: 'coming-soon' },
@@ -1734,6 +1746,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // failure once, so subsequent loads skip WebGPU and go straight to
         // WASM. Not persisted - a page reload lets us try WebGPU again.
         let skillForceWasm = false;
+        // Phase 9c: ASR pipeline instances, keyed by model id (turbo for the
+        // Transcribe skill, DAISY_AUDIO_ID/whisper-base for the daisy-chain -
+        // both can be resident at once, mirroring visionModel/daisyModel).
+        // Mirrors ensureKbEmbedder's single-cached-instance pattern, just
+        // per-id since there are two different Whisper sizes here.
+        const transcriberCache = new Map();      // modelId -> pipeline instance
+        const transcriberLoading = new Map();    // modelId -> in-flight promise
+        const transcriberDevice = new Map();     // modelId -> 'webgpu'|'wasm' actually loaded on
+        let asrForceWasm = false; // session-only WebGPU fallback flag, mirrors skillForceWasm/routerNliForceWasm
         let forceQ4 = false;         // set when the browser cannot handle fp16 tensors
         let userStopped = false;
         let timedOut = false;
@@ -3968,13 +3989,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // ---------- Attachment object (Phase 4A Stage 2, design doc 11.1) ----------
         //
-        // Only chat inputs - paste, attach, drop - create attachments; skills
-        // never do (Field Kit stays ephemeral). kind names HOW A QUESTION GETS
-        // ANSWERED, not what the file is:
+        // Ownership is drawn by DIRECTION, not a blanket "skills never create
+        // attachments" ban: chat inputs (paste, attach, drop) create owned,
+        // persisted, encrypted attachments directly. A skill may also PRODUCE
+        // an attachment as its output (the Transcribe skill's transcript is
+        // the motivating case) - that output is session-only working state in
+        // the ephemeral Field Kit tab until the user downloads or sends it to
+        // a chat, at which point the chat takes ownership. kind names HOW A
+        // QUESTION GETS ANSWERED, not what the file is:
         //   image    - vision-answerable; re-run the model every question (11.4)
         //   document - text-bearing: PDF, txt, md, and tabular (derivedText is
         //              the column profile for tabular, extracted text otherwise)
-        //   audio    - text-bearing after transcription (9c; not built here)
+        //   audio    - text-bearing after transcription (9c; built - see
+        //              runAudioDaisyChain and attachTranscriptToChat)
         //   video    - reserved, inert today (likely post-9c: transcribe the
         //              audio track of a recorded interview/call)
         //   other    - any unclassified file; inert, download-only
@@ -3994,6 +4021,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (mt === 'application/pdf' || /\.pdf$/.test(name)) return 'document';
             if (mt.startsWith('text/') || /\.(txt|md)$/.test(name)) return 'document';
             if (/\.(csv|tsv|xlsx|xls)$/.test(name)) return 'document';
+            // Checked after the video branch so a .webm VIDEO file still
+            // classifies as video - this only catches bare audio mimetypes/extensions.
+            if (mt.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|oga|flac|aac)$/.test(name)) return 'audio';
             return 'other';
         }
 
@@ -4012,6 +4042,22 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (n < 1024) return `${n} B`;
             if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
             return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+        }
+
+        // Phase 9c: document attachment segments are plain chunkText() strings;
+        // audio attachment segments are {text, start, end} objects (Whisper's
+        // own chunks, carrying timestamps for citations - see
+        // formatTimestamp). This lets embedding/retrieval code read either
+        // shape without branching on attachment kind everywhere.
+        function segmentText(seg) { return typeof seg === 'string' ? seg : seg.text; }
+        // Named distinctly from the existing formatTimestamp(ts) (line ~2855,
+        // which formats an epoch-ms Date for message info popovers) - this one
+        // formats a segment offset in SECONDS as MM:SS.
+        function formatSegmentTime(seconds) {
+            const s = Math.max(0, Math.floor(seconds || 0));
+            const m = Math.floor(s / 60);
+            const r = s % 60;
+            return m + ':' + String(r).padStart(2, '0');
         }
 
         // Extraction reuses the existing PDF/tabular pipelines rather than
@@ -4094,6 +4140,38 @@ with this program. If not, see https://www.gnu.org/licenses/.
             saveStore();
         }
 
+        // Shared embed-and-store step for attachment segments (document
+        // chunks or audio/Whisper chunks - segmentText() normalizes either
+        // shape to plain text for the embedder). Used by createAttachment's
+        // eager document embedding, the audio daisy-chain, and the Transcribe
+        // skill, so all three embed exactly the same way under the engine
+        // lock. Returns true on success; caller decides the fallback
+        // behavior (segments: null - "pass whole text" - on failure).
+        async function embedAttachmentSegments(id, segments) {
+            if (!segments || !segments.length) return false;
+            try {
+                const em = await ensureKbEmbedder();
+                // chatLockWaitCtl starts null and is otherwise only set by
+                // generation call sites (handleSend, answerImageAttachment) -
+                // embedding can be the very first action in a session, so this
+                // must set its own wait-abort controller rather than assume
+                // one already exists.
+                if (!chatLockWaitCtl) chatLockWaitCtl = new AbortController();
+                await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+                let out;
+                try {
+                    out = await em(segments.map(segmentText), { pooling: 'cls', normalize: true }); // passages: no KB_QUERY_INSTRUCTION prefix
+                } finally {
+                    EngineLock.release();
+                }
+                await AttachmentStore.putVectors(id, out.data.buffer);
+                return true;
+            } catch (e) {
+                console.error('Attachment embedding failed, falling back to whole-text:', e);
+                return false;
+            }
+        }
+
         async function createAttachment(file, forcedName) {
             const chat = activeChat();
             if (!chat) return null;
@@ -4142,29 +4220,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // embed degrades to Stage 2's whole-text behavior rather than
             // losing the attachment's content entirely.
             if (kind === 'document' && derivedText && derivedText.length >= ATTACHMENT_WHOLE_TEXT_CHAR_LIMIT) {
-                try {
-                    const chunks = chunkText(derivedText);
-                    if (chunks.length) {
-                        const em = await ensureKbEmbedder();
-                        // chatLockWaitCtl starts null and is otherwise only set
-                        // by generation call sites (handleSend, answerImageAttachment) -
-                        // attaching a document can be the very first action in a
-                        // session, so this must set its own wait-abort controller
-                        // rather than assume one already exists.
-                        chatLockWaitCtl = new AbortController();
-                        await EngineLock.acquire('chat', chatLockWaitCtl.signal);
-                        let out;
-                        try {
-                            out = await em(chunks, { pooling: 'cls', normalize: true }); // passages: no KB_QUERY_INSTRUCTION prefix
-                        } finally {
-                            EngineLock.release();
-                        }
-                        await AttachmentStore.putVectors(id, out.data.buffer);
-                        attachment.segments = chunks;
-                    }
-                } catch (e) {
-                    console.error('Attachment embedding failed, falling back to whole-text:', e);
-                }
+                const chunks = chunkText(derivedText);
+                if (await embedAttachmentSegments(id, chunks)) attachment.segments = chunks;
             }
 
             appendAttachmentNote(chat, replacing
@@ -4181,12 +4238,83 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // routeIntent's Tier 0 the same way pendingTabularFile used to).
             if (kind === 'image') {
                 setStatus(`${name} attached. Type your question and press Send.`);
+            } else if (kind === 'audio') {
+                setStatus(`${name} attached. Starting a quick automatic transcription...`);
+                runAudioDaisyChain(attachment, chat); // fire-and-forget - see function comment
             } else {
                 setStatus(derivedText
                     ? `${name} attached.`
                     : `${name} attached, but its contents could not be extracted - it is stored and downloadable only.`);
             }
             return attachment;
+        }
+
+        // Transient (never persisted) set of attachment ids currently being
+        // auto-transcribed by the daisy-chain, so buildAttachmentPill can show
+        // a "Transcribing..." state instead of the normal actions.
+        const audioTranscribingIds = new Set();
+
+        // Audio daisy-chain (design doc 11.1/9c): whisper-base auto-loads once
+        // and transcribes immediately on attach, unlike the vision daisy-chain
+        // which answers lazily per question - audio is text-bearing (kind
+        // 'audio', not 'image'), and derivedText must exist for retrieval to
+        // work at all, so a "quick and available now" transcript beats
+        // waiting for the user to separately run the Transcribe skill. That
+        // skill can later overwrite this in place with a higher-quality
+        // (turbo) transcript on the same attachment. Fire-and-forget: must
+        // never block createAttachment, since a real interview file can take
+        // a while even on the small daisy model.
+        async function runAudioDaisyChain(attachment, chat) {
+            audioTranscribingIds.add(attachment.id);
+            renderAttachmentBar();
+            try {
+                const buf = await AttachmentStore.getBlob(attachment.id);
+                if (!buf) throw new Error('Could not read this recording from storage.');
+                // ensureDaisyAudioModel/ensureTranscriber shows its own
+                // download/compile progress bar internally (same mechanism as
+                // ensureKbEmbedder) - nothing to set up here.
+                await ensureDaisyAudioModel();
+                const audioData = await decodeAudioForWhisper(buf, attachment.mimeType);
+                if (!chatLockWaitCtl) chatLockWaitCtl = new AbortController();
+                const result = await tryTranscribe(
+                    DAISY_AUDIO_ID, audioData,
+                    { chunk_length_s: 30, stride_length_s: 5, return_timestamps: true },
+                    'chat', chatLockWaitCtl.signal
+                );
+                const derivedText = (result.text || '').trim();
+                const segments = (result.chunks || []).map(c => ({
+                    text: (c.text || '').trim(),
+                    start: c.timestamp ? c.timestamp[0] : null,
+                    end: c.timestamp ? c.timestamp[1] : null
+                }));
+                attachment.derivedText = derivedText;
+                attachment.segments = null;
+                if (derivedText.length >= ATTACHMENT_WHOLE_TEXT_CHAR_LIMIT && segments.length) {
+                    if (await embedAttachmentSegments(attachment.id, segments)) attachment.segments = segments;
+                }
+                checkAttachmentForPHI(chat, attachment);
+                saveStore();
+                setStatus(derivedText
+                    ? `${attachment.name} transcribed automatically. Ask a question about it, or run the Transcribe tool in Field Kit for a higher-quality pass.`
+                    : `${attachment.name} attached, but no speech was detected in it.`);
+            } catch (e) {
+                console.error('Audio daisy-chain transcription failed:', e);
+                setStatus(`${attachment.name} attached, but automatic transcription could not run right now. Use the Transcribe tool in Field Kit, or download the original.`, true);
+            } finally {
+                audioTranscribingIds.delete(attachment.id);
+                renderAttachmentBar();
+            }
+        }
+
+        // Lazily load a second Whisper instance for the daisy-chain, so it
+        // never competes with the Transcribe skill's turbo instance. Loaded
+        // once per session, then reused - mirrors ensureDaisyModel (vision).
+        // Progress is always routed through the global onModelProgress/
+        // showProgress mechanism (see ensureTranscriber), same as
+        // ensureKbEmbedder/ensureSkillZeroShot - there is no per-caller
+        // progress callback to thread through here.
+        async function ensureDaisyAudioModel() {
+            return ensureTranscriber(DAISY_AUDIO_ID);
         }
 
         async function createAttachmentsFromFileList(files) {
@@ -4233,6 +4361,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 note.className = 'att-unreadable';
                 note.textContent = 'stored only - cannot be read';
                 pill.appendChild(note);
+            } else if (att.kind === 'audio' && audioTranscribingIds.has(att.id)) {
+                const note = document.createElement('span');
+                note.className = 'att-unreadable';
+                note.textContent = 'transcribing...';
+                pill.appendChild(note);
             }
 
             const hasText = !!att.derivedText;
@@ -4258,11 +4391,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 await navigator.clipboard.writeText(att.derivedText || '');
             }, !hasText));
 
-            actions.appendChild(mk('download', 'Download original file', async () => {
-                const buf = await AttachmentStore.getBlob(att.id);
-                if (!buf) { setStatus('Could not read this attachment from storage.', true); return; }
-                downloadBlob(new Blob([buf], { type: att.mimeType || 'application/octet-stream' }), att.name);
-            }));
+            // Skill-produced attachments (e.g. the Transcribe skill's output)
+            // have no original file - the "original" IS the extracted text,
+            // so a separate "Download original" button would just be a
+            // second copy of "Download extracted text" and is left out
+            // entirely rather than shown pointing at nothing real.
+            if (!att.noOriginal) {
+                actions.appendChild(mk('download', 'Download original file', async () => {
+                    const buf = await AttachmentStore.getBlob(att.id);
+                    if (!buf) { setStatus('Could not read this attachment from storage.', true); return; }
+                    downloadBlob(new Blob([buf], { type: att.mimeType || 'application/octet-stream' }), att.name);
+                }));
+            }
 
             actions.appendChild(mk('fileText', 'Download extracted text', () => {
                 downloadBlob(new Blob([att.derivedText || ''], { type: 'text/plain' }), att.name.replace(/\.[^.]+$/, '') + '.txt');
@@ -4699,7 +4839,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 const { qVec: v, scores } = await scoreTier1(trimmed);
                 qVec = v;
                 const sticky = chat ? routerStickyByChat.get(chat.id) : null;
-                const hasAttachment = chat && chat.attachments && chat.attachments.some(a => a.kind === 'document');
+                const hasAttachment = chat && chat.attachments && chat.attachments.some(a => a.kind === 'document' || a.kind === 'audio');
                 for (const id of Object.keys(scores)) {
                     let s = scores[id];
                     if (sticky && id === sticky) s += ROUTER_STICKY_BIAS;
@@ -4971,6 +5111,112 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return kbState.embedderLoading;
         }
 
+        // ---------- Phase 9c: Whisper transcription ----------
+        //
+        // Shared by the Transcribe skill (always SKILL_TRANSCRIBE_ID, the
+        // turbo model) and the audio daisy-chain (always DAISY_AUDIO_ID,
+        // whisper-base). Cached per model id and kept resident for the rest
+        // of the page session once loaded - mirrors ensureKbEmbedder/
+        // ensureSkillZeroShot, neither of which disposes after a single run,
+        // only on a WASM-fallback reload. A researcher transcribing several
+        // interviews in one sitting should not re-pay the download/compile
+        // cost per file.
+        function ensureTranscriber(modelId) {
+            if (transcriberCache.has(modelId)) return Promise.resolve(transcriberCache.get(modelId));
+            if (transcriberLoading.has(modelId)) return transcriberLoading.get(modelId);
+            const loadPromise = (async () => {
+                const auto = (!forceQ4 && typeof Float16Array !== 'undefined') ? 'fp16' : 'q8';
+                let ladder = asrForceWasm
+                    ? [{ device: 'wasm', dtype: 'q8' }, { device: 'wasm', dtype: 'fp32' }]
+                    : [
+                        { device: 'webgpu', dtype: auto },
+                        { device: 'webgpu', dtype: 'q8' },
+                        { device: 'wasm', dtype: 'q8' },
+                        { device: 'wasm', dtype: 'fp32' }
+                    ];
+                ladder = reorderLadderBySavedRung(ladder, loadModelRung(modelId));
+                const cached = isCached(modelId);
+                let lastErr = 'unknown error';
+                for (const step of ladder) {
+                    try {
+                        const cb = makeCacheAwareProgress(cached, `Downloading the transcription model (${modelId === SKILL_TRANSCRIBE_ID ? '~800 MB' : '~150 MB'}) to your browser...`);
+                        const asr = await pipeline('automatic-speech-recognition', modelId, {
+                            dtype: step.dtype,
+                            device: step.device,
+                            progress_callback: cb
+                        });
+                        transcriberCache.set(modelId, asr);
+                        transcriberDevice.set(modelId, step.device);
+                        markCached(modelId);
+                        saveModelRung(modelId, step.device, step.dtype);
+                        requestPersistentStorageOnce();
+                        finishProgress();
+                        hideProgress();
+                        return asr;
+                    } catch (e) {
+                        lastErr = errMsg(e);
+                        console.error('Transcriber load failed [' + step.dtype + '/' + step.device + ']:', e);
+                        await new Promise(r => setTimeout(r, 50));
+                    }
+                }
+                hideProgress();
+                throw new Error(lastErr);
+            })().catch(e => {
+                transcriberLoading.delete(modelId);
+                throw e;
+            }).then(asr => { transcriberLoading.delete(modelId); return asr; });
+            transcriberLoading.set(modelId, loadPromise);
+            return loadPromise;
+        }
+
+        // Decodes an arbitrary audio file (mp3/wav/m4a/webm/etc) into the
+        // mono 16 kHz Float32Array Whisper expects, via transformers.js's own
+        // read_audio() - it only accepts a string|URL, so a blob: object URL
+        // is created and revoked around the call rather than handing it raw
+        // bytes. Browser-only (uses AudioContext), which matches this app's
+        // browser-only execution model throughout.
+        async function decodeAudioForWhisper(bufOrBlob, mimeType) {
+            const blob = bufOrBlob instanceof Blob ? bufOrBlob : new Blob([bufOrBlob], { type: mimeType || 'audio/mpeg' });
+            const url = URL.createObjectURL(blob);
+            try {
+                return await read_audio(url, 16000);
+            } finally {
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        // Retryable ASR call, mirroring tryClassify's acquire/run/release
+        // shape (see the taxonomy skill). Deliberately broader than
+        // isWebGpuInt64Failure's narrow SmolVLM-specific check: Whisper's
+        // actual WebGPU failure signature on this runtime is unverified, so
+        // ANY failure while running on 'webgpu' triggers the WASM reload and
+        // one retry, not just the known GatherND/int64 error string.
+        async function tryTranscribe(modelId, audioData, opts, ownerLabel, waitSignal) {
+            let asr = await ensureTranscriber(modelId);
+            try {
+                await EngineLock.acquire(ownerLabel, waitSignal);
+                try {
+                    return await asr(audioData, opts);
+                } finally {
+                    EngineLock.release();
+                }
+            } catch (e) {
+                if (e.lockCancelled) throw e;
+                if (transcriberDevice.get(modelId) !== 'webgpu') throw e;
+                console.warn('Transcriber WebGPU inference failed; reloading on WASM for this session.');
+                asrForceWasm = true;
+                transcriberCache.delete(modelId);
+                transcriberDevice.delete(modelId);
+                asr = await ensureTranscriber(modelId);
+                await EngineLock.acquire(ownerLabel, waitSignal);
+                try {
+                    return await asr(audioData, opts);
+                } finally {
+                    EngineLock.release();
+                }
+            }
+        }
+
         // Brute-force top-k over pre-normalized vectors. noThreshold=true is
         // used only for the "closest URLs" list in the lockdown-empty case.
         // Always embeds its own query vector (rather than reusing router Tier
@@ -5038,7 +5284,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // attachments are searched as a union" (design 11.3). Hits carry the
         // attachment name in place of a KB URL for the citation.
         async function retrieveAttachments(query, chat, k) {
-            const chunked = (chat.attachments || []).filter(a => a.kind === 'document' && a.segments && a.segments.length);
+            const chunked = (chat.attachments || []).filter(a => (a.kind === 'document' || a.kind === 'audio') && a.segments && a.segments.length);
             if (!chunked.length) return [];
             const em = await ensureKbEmbedder();
             await EngineLock.acquire('chat', chatLockWaitCtl.signal);
@@ -5065,7 +5311,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             const hits = heap.slice().sort((a, b) => b.s - a.s);
             const filtered = hits.filter(h => h.s >= KB_SCORE_MIN);
-            return filtered.map(h => ({ t: h.att.name, x: h.att.segments[h.i], u: h.att.name, s: h.s, attachmentId: h.att.id }));
+            return filtered.map(h => {
+                const seg = h.att.segments[h.i];
+                return {
+                    t: h.att.name, x: segmentText(seg), u: h.att.name, s: h.s, attachmentId: h.att.id,
+                    start: (seg && typeof seg === 'object') ? seg.start : null
+                };
+            });
         }
 
         // Same visual row as appendSources, but plain name badges rather than
@@ -5080,11 +5332,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
             row.appendChild(label);
             const seen = new Set();
             for (const h of hits) {
-                if (!h || !h.t || seen.has(h.t)) continue;
-                seen.add(h.t);
+                if (!h || !h.t || seen.has(h.t + '@' + h.start)) continue;
+                seen.add(h.t + '@' + h.start);
                 const span = document.createElement('span');
                 span.className = 'attachment-source-badge';
-                span.textContent = h.t;
+                span.textContent = (h.start != null) ? `${h.t} [${formatSegmentTime(h.start)}]` : h.t;
                 row.appendChild(span);
             }
             chatBox.appendChild(row);
@@ -5896,7 +6148,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 let attachmentUsed = false;
                 const attachmentIntent = intent === 'attachment-question' || intent === 'data';
                 if (attachmentIntent && chat && chat.attachments && chat.attachments.length) {
-                    const docs = chat.attachments.filter(a => a.kind === 'document' && a.derivedText);
+                    const docs = chat.attachments.filter(a => (a.kind === 'document' || a.kind === 'audio') && a.derivedText);
                     const wholeDocs = docs.filter(a => !a.segments || !a.segments.length);
                     const chunkedDocs = docs.filter(a => a.segments && a.segments.length);
                     const wholeBlock = wholeDocs.length
@@ -6340,7 +6592,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     continue;
                 }
                 try {
-                    if (raw) {
+                    if (/^(mp3|wav|m4a|ogg|oga|flac|aac)$/.test(ext)) {
+                        // Audio is kept as raw bytes, never parsed into text
+                        // here - the Transcribe skill decodes it itself via
+                        // decodeAudioForWhisper. This is the skill's own file
+                        // picker per design doc 11.1 ("a skill may produce an
+                        // attachment as its output" - Transcribe ingests audio
+                        // through ingestFiles rather than requiring the file
+                        // to already be a chat attachment).
+                        const rec = { name: file.name, kind: 'audio-raw', mimeType: file.type || '', bytes: await file.arrayBuffer() };
+                        out.push(rec);
+                    } else if (raw) {
                         if (ext === 'txt' || ext === 'pdf') {
                             onErr(file, new Error('This tool only accepts spreadsheets (.csv, .tsv, .xlsx, .xls).'));
                             continue;
@@ -6427,16 +6689,58 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // happens to be active. Reset to null whenever a skill session ends
         // (Done, Reset, Field Kit tab close).
         let skillCompanionChatId = null;
-        function chatBridge(text, instruction) {
-            const combined = instruction ? (instruction + '\n\n' + text) : text;
+        function resolveCompanionChat() {
             let chat = skillCompanionChatId && store.chats.find(c => c.id === skillCompanionChatId);
             if (!chat) { chat = createChat(); skillCompanionChatId = chat.id; }
+            return chat;
+        }
+        function chatBridge(text, instruction) {
+            const combined = (instruction ? (text ? instruction + '\n\n' + text : instruction) : text).trim();
+            const chat = resolveCompanionChat();
             chat.draft = combined;
             activeSurface = 'chat';
             setActive(chat.id);
             input.value = combined;
             saveStore();
             input.focus();
+        }
+
+        // Ownership-transfer step for a skill-produced attachment (design doc
+        // 11.1: "a skill may produce an attachment as its output"). Unlike
+        // createAttachment(file), this takes ALREADY-transcribed text and
+        // timestamped segments directly, so it never re-runs text extraction
+        // or discards the Whisper segment/timestamp shape. There is no
+        // original audio blob to keep - the skill's input file was never
+        // itself persisted - so the stored blob IS the transcript text.
+        // attachment.noOriginal tells buildAttachmentPill to leave out the
+        // "Download original" button rather than point it at a second copy
+        // of the same text "Download extracted text" already offers.
+        async function attachTranscriptToChat(chat, transcript) {
+            await AttachmentStore.ready();
+            if (!AttachmentStore.isUnlocked()) {
+                setStatus('Attachments are locked. Reload and enter your PIN to save this transcript.', true);
+                return null;
+            }
+            const bytes = new TextEncoder().encode(transcript.text || '').buffer;
+            const check = await AttachmentStore.checkQuota('audio', bytes.byteLength);
+            if (!check.ok) { setStatus(check.message, true); return null; }
+
+            const id = crypto.randomUUID();
+            const addedAt = Date.now();
+            const name = (transcript.name || 'transcript').replace(/\.[^.]+$/, '') + ' (transcript).txt';
+            await AttachmentStore.putBlob(id, bytes);
+            const attachment = { id, kind: 'audio', name, mimeType: 'text/plain', sizeBytes: bytes.byteLength, addedAt, derivedText: transcript.text || '', segments: null, phiFlagged: false, noOriginal: true };
+            chat.attachments.push(attachment);
+            recordAttachmentIndex(id, chat.id, addedAt);
+
+            if ((transcript.text || '').length >= ATTACHMENT_WHOLE_TEXT_CHAR_LIMIT && transcript.segments && transcript.segments.length) {
+                if (await embedAttachmentSegments(id, transcript.segments)) attachment.segments = transcript.segments;
+            }
+
+            appendAttachmentNote(chat, `Added ${name} (${formatBytes(bytes.byteLength)})`);
+            checkAttachmentForPHI(chat, attachment);
+            saveStore();
+            return attachment;
         }
 
         // ---------- Phase 9b shared helpers: capability, redaction, Pyodide ----------
@@ -7884,7 +8188,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
         // Skills that expose an in-header "Start over" button. All ready
         // skills should be here so the button isn't taxonomy-only.
-        const SKILL_HAS_RESET = new Set(['taxonomy-classify', 'csv-combine']);
+        const SKILL_HAS_RESET = new Set(['taxonomy-classify', 'csv-combine', 'transcribe']);
         function enterSkill(skill) {
             // Bump token to invalidate any prior in-flight work
             skillLoadToken++;
@@ -7899,6 +8203,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 mountTaxonomySkill(skillsBody);
             } else if (skill.id === 'csv-combine') {
                 mountCsvCombineSkill(skillsBody);
+            } else if (skill.id === 'transcribe') {
+                mountTranscribeSkill(skillsBody);
             } else {
                 const p = document.createElement('p');
                 p.className = 'skill-hint';
@@ -7933,6 +8239,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 skillsBody.innerHTML = '';
                 if (skill.id === 'taxonomy-classify') mountTaxonomySkill(skillsBody);
                 else if (skill.id === 'csv-combine') mountCsvCombineSkill(skillsBody);
+                else if (skill.id === 'transcribe') mountTranscribeSkill(skillsBody);
             }
         });
 
@@ -8536,6 +8843,234 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 lastResultsSummary = { count: perDoc.length };
                 finishRun();
                 renderResults(inputMode, labels, perDoc, resultsEl, bulkFileName);
+            });
+        }
+
+        // ---------- Phase 9c: Transcribe skill ----------
+        //
+        // Per design doc 11.1 ("chats own attachments; a skill may produce
+        // one as output"), this skill takes its own audio file directly
+        // through ingestFiles - no chat attachment needs to exist first. The
+        // resulting transcript is session-only working state in this
+        // ephemeral tab (skillStateProbe below covers the "leave and lose
+        // it" warning) until Download or Send-to-chat acts on it; sending to
+        // chat is what creates an owned attachment (attachTranscriptToChat,
+        // near chatBridge).
+        function mountTranscribeSkill(container) {
+            let running = false;
+            let pickedFile = null; // { name, mimeType, bytes }
+            let lastTranscript = null; // { name, mimeType, text, segments }
+            container.innerHTML = '';
+
+            skillStateProbe = {
+                id: 'transcribe',
+                fn: () => running || !!lastTranscript
+            };
+
+            const sectionA = document.createElement('div');
+            sectionA.className = 'skill-section';
+            sectionA.innerHTML = `
+                <h3>Pick a recording</h3>
+                <p class="skill-hint">Attach one audio file (.mp3, .wav, .m4a, .ogg, .oga, .flac, .aac) to transcribe. This does not touch any chat until you choose to save the result below.</p>
+                <div class="skill-row">
+                    <button class="skill-btn" id="trans-pick-btn">Choose audio file</button>
+                    <input type="file" id="trans-pick-input" accept=".mp3,.wav,.m4a,.ogg,.oga,.flac,.aac" hidden>
+                </div>
+                <div id="trans-pick-chip" style="margin-top:8px;"></div>
+            `;
+            container.appendChild(sectionA);
+            const pickBtn = sectionA.querySelector('#trans-pick-btn');
+            const pickInput = sectionA.querySelector('#trans-pick-input');
+            const pickChip = sectionA.querySelector('#trans-pick-chip');
+
+            function renderPickChip() {
+                pickChip.innerHTML = '';
+                if (!pickedFile) return;
+                const chip = document.createElement('span');
+                chip.className = 'skill-chip';
+                const label = document.createElement('span');
+                label.textContent = pickedFile.name + '  (' + formatBytes(pickedFile.bytes.byteLength) + ')';
+                chip.appendChild(label);
+                const x = document.createElement('button');
+                x.type = 'button';
+                x.textContent = '×';
+                x.title = 'Remove';
+                x.addEventListener('click', () => { pickedFile = null; renderPickChip(); });
+                chip.appendChild(x);
+                pickChip.appendChild(chip);
+            }
+
+            pickBtn.addEventListener('click', () => pickInput.click());
+            pickInput.addEventListener('change', async () => {
+                if (!pickInput.files.length) return;
+                const errs = [];
+                const recs = await ingestFiles(pickInput.files, {
+                    accept: ['mp3', 'wav', 'm4a', 'ogg', 'oga', 'flac', 'aac'],
+                    onFileError: (f, e) => errs.push(f.name + ': ' + errMsg(e))
+                });
+                pickInput.value = '';
+                const rec = recs.find(r => r.kind === 'audio-raw');
+                if (rec) pickedFile = { name: rec.name, mimeType: rec.mimeType, bytes: rec.bytes };
+                else if (errs.length) { skillLog(statusEl, errs[0], true); }
+                renderPickChip();
+            });
+
+            const sectionB = document.createElement('div');
+            sectionB.className = 'skill-section';
+            sectionB.innerHTML = `
+                <h3>Transcribe</h3>
+                <div class="skill-row">
+                    <button class="skill-btn primary" id="trans-run">Transcribe now</button>
+                    <button class="skill-btn" id="trans-cancel" hidden>Stop</button>
+                </div>
+                <p class="skill-hint" style="margin-top:6px;">Uses the high-accuracy transcription model (one-time download, about 800 MB). Longer recordings take longer - a one-hour interview can take several minutes depending on your computer.</p>
+                <div class="skill-progress" id="trans-progress" hidden>
+                    <div class="skill-progress-msg" id="trans-progress-msg"></div>
+                    <div class="skill-progress-track"><div class="skill-progress-fill" id="trans-progress-fill"></div></div>
+                </div>
+                <div class="skill-status" id="trans-status"></div>
+                <div id="trans-transcript"></div>
+                <div class="skill-row" id="trans-bridge" hidden style="margin-top:10px;">
+                    <button class="skill-btn" id="trans-dl">Download .txt</button>
+                    <button class="skill-btn" id="trans-summarize">Summarize in chat</button>
+                    <button class="skill-btn" id="trans-themes">Extract themes in chat</button>
+                </div>
+            `;
+            container.appendChild(sectionB);
+
+            const runBtn = sectionB.querySelector('#trans-run');
+            const cancelBtn = sectionB.querySelector('#trans-cancel');
+            const statusEl = sectionB.querySelector('#trans-status');
+            const transcriptEl = sectionB.querySelector('#trans-transcript');
+            const progWrap = sectionB.querySelector('#trans-progress');
+            const progMsg = sectionB.querySelector('#trans-progress-msg');
+            const progFill = sectionB.querySelector('#trans-progress-fill');
+            const bridgeRow = sectionB.querySelector('#trans-bridge');
+            const dlBtn = sectionB.querySelector('#trans-dl');
+            const summarizeBtn = sectionB.querySelector('#trans-summarize');
+            const themesBtn = sectionB.querySelector('#trans-themes');
+
+            const localProgressListener = (state) => {
+                if (!state.visible) { progWrap.hidden = true; return; }
+                progWrap.hidden = false;
+                progMsg.textContent = state.message + ' ' + state.pct + '%';
+                progFill.style.width = state.pct + '%';
+            };
+
+            function renderTranscript() {
+                transcriptEl.innerHTML = '';
+                bridgeRow.hidden = !lastTranscript;
+                if (!lastTranscript) return;
+                if (!lastTranscript.segments || !lastTranscript.segments.length) {
+                    const p = document.createElement('p');
+                    p.className = 'skill-hint';
+                    p.textContent = lastTranscript.text || '(No speech detected in this recording.)';
+                    transcriptEl.appendChild(p);
+                    return;
+                }
+                const list = document.createElement('div');
+                for (const s of lastTranscript.segments) {
+                    const row = document.createElement('div');
+                    row.style.marginBottom = '4px';
+                    const ts = document.createElement('span');
+                    ts.style.cssText = 'color:var(--muted);font-family:monospace;margin-right:6px;';
+                    ts.textContent = `[${formatSegmentTime(s.start)}-${formatSegmentTime(s.end)}]`;
+                    row.appendChild(ts);
+                    row.appendChild(document.createTextNode(s.text));
+                    list.appendChild(row);
+                }
+                transcriptEl.appendChild(list);
+            }
+
+            function finishRun() {
+                running = false;
+                skillBatchRunning = false;
+                runBtn.disabled = false;
+                cancelBtn.hidden = true;
+                progressListeners.delete(localProgressListener);
+                progWrap.hidden = true;
+                renderTabs();
+            }
+
+            cancelBtn.addEventListener('click', () => {
+                skillLoadToken++;
+                skillLockWaitCtl.abort();
+                skillLog(statusEl, 'Stopping... if transcription has already started, it will finish in the background and the result will be discarded (this model cannot be interrupted mid-run yet).');
+            });
+
+            runBtn.addEventListener('click', async () => {
+                if (!pickedFile) { skillLog(statusEl, 'Choose an audio file above first.', true); return; }
+                if (busy) { skillLog(statusEl, 'The chat is still working on a reply. Wait for it to finish and try again.', true); return; }
+
+                transcriptEl.innerHTML = '';
+                bridgeRow.hidden = true;
+                lastTranscript = null;
+                running = true;
+                skillBatchRunning = true;
+                runBtn.disabled = true;
+                cancelBtn.hidden = false;
+                progressListeners.add(localProgressListener);
+                renderTabs();
+                const myToken = skillLoadToken;
+                const ownerLabel = findSkill(skillsCurrentId)?.name || 'Field Kit';
+                const file = pickedFile;
+
+                try {
+                    skillLog(statusEl, 'Getting the transcriber ready (first run downloads about 800 MB)...');
+                    skillLog(statusEl, 'Decoding audio...');
+                    const audioData = await decodeAudioForWhisper(file.bytes, file.mimeType);
+                    if (myToken !== skillLoadToken) { skillLog(statusEl, 'Stopped.'); finishRun(); return; }
+
+                    skillLog(statusEl, 'Transcribing... this can take several minutes for a long recording.');
+                    const result = await tryTranscribe(
+                        SKILL_TRANSCRIBE_ID, audioData,
+                        { chunk_length_s: 30, stride_length_s: 5, return_timestamps: true },
+                        ownerLabel, skillLockWaitCtl.signal
+                    );
+                    if (myToken !== skillLoadToken) { skillLog(statusEl, 'Stopped.'); finishRun(); return; }
+
+                    const derivedText = (result.text || '').trim();
+                    const segments = (result.chunks || []).map(c => ({
+                        text: (c.text || '').trim(),
+                        start: c.timestamp ? c.timestamp[0] : null,
+                        end: c.timestamp ? c.timestamp[1] : null
+                    }));
+
+                    lastTranscript = { name: file.name, mimeType: file.mimeType, text: derivedText, segments };
+                    skillLog(statusEl, derivedText ? 'Done. Transcript is below. Download it or send it to a chat to keep it - closing this tab without doing so will discard it.' : 'Done, but no speech was detected in this recording.');
+                    renderTranscript();
+                } catch (e) {
+                    if (e.lockCancelled) skillLog(statusEl, 'Stopped.');
+                    else {
+                        skillLog(statusEl, 'Could not transcribe this recording. Details: ' + errMsg(e), true);
+                        console.error('Transcription failed:', e);
+                    }
+                } finally {
+                    finishRun();
+                }
+            });
+
+            dlBtn.addEventListener('click', () => {
+                if (!lastTranscript) return;
+                downloadBlob(new Blob([lastTranscript.text || ''], { type: 'text/plain' }), lastTranscript.name.replace(/\.[^.]+$/, '') + '.txt');
+            });
+            summarizeBtn.addEventListener('click', async () => {
+                if (!lastTranscript) return;
+                const chat = resolveCompanionChat();
+                const saved = await attachTranscriptToChat(chat, lastTranscript);
+                if (!saved) return; // attachTranscriptToChat already set a status message; keep lastTranscript so nothing is lost
+                chatBridge('', 'Summarize this interview transcript in a few sentences. (A model with at least 3 billion parameters will summarize this noticeably better than a very small one.)');
+                lastTranscript = null;
+                renderTranscript();
+            });
+            themesBtn.addEventListener('click', async () => {
+                if (!lastTranscript) return;
+                const chat = resolveCompanionChat();
+                const saved = await attachTranscriptToChat(chat, lastTranscript);
+                if (!saved) return; // attachTranscriptToChat already set a status message; keep lastTranscript so nothing is lost
+                chatBridge('', 'Read this interview transcript and list the main themes discussed, with one short supporting quote for each. (A model with at least 3 billion parameters will do noticeably better than a very small one.)');
+                lastTranscript = null;
+                renderTranscript();
             });
         }
 
@@ -10179,7 +10714,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         // SmolVLM-500M even when the selected vision option is Qwen2-VL) and
         // drop cache entries for anything else.
         function knownModelIds() {
-            const ids = new Set([ROUTER_NLI_ID, DAISY_VISION_ID, KB_EMBED_ID]);
+            const ids = new Set([ROUTER_NLI_ID, DAISY_VISION_ID, DAISY_AUDIO_ID, KB_EMBED_ID]);
             for (const s of SKILLS) if (s.modelId) ids.add(s.modelId);
             for (const opt of modelSelect.querySelectorAll('option')) {
                 let v = opt.value;
