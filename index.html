@@ -1613,20 +1613,77 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Phase 9c: always the turbo variant for the Transcribe skill (never
         // the daisy-chain's whisper-base) - see design doc 10.2/10.3.
         const SKILL_TRANSCRIBE_ID = 'onnx-community/whisper-large-v3-turbo';
+        // Phase 9d: verified directly against the repo on Hugging Face at
+        // implementation time. The design doc's guessed id
+        // ('SamLowe/roberta-base-go_emotions') does not exist - it moved to
+        // this one. Only fp32 (onnx/model.onnx) and int8-quantized
+        // (onnx/model_quantized.onnx) files exist for this repo; there is no
+        // fp16/q4 variant, unlike SKILL_ZEROSHOT_ID/KB_EMBED_ID.
+        const SKILL_EMOTIONS_ID = 'SamLowe/roberta-base-go_emotions-onnx';
+        // Phase 9e: verified directly against the repo on Hugging Face.
+        const SKILL_NER_ID = 'Xenova/bert-base-NER';
+        // The 28 go_emotions labels in the model's id2label order (index
+        // matters for nothing here - this is the display/lookup list, not a
+        // positional decode - but verified verbatim against the repo's
+        // config.json so no label is mistyped).
+        const EMOTIONS_LABELS = [
+            'admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring', 'confusion',
+            'curiosity', 'desire', 'disappointment', 'disapproval', 'disgust', 'embarrassment',
+            'excitement', 'fear', 'gratitude', 'grief', 'joy', 'love', 'nervousness', 'optimism',
+            'pride', 'realization', 'relief', 'remorse', 'sadness', 'surprise', 'neutral'
+        ];
+        // Default curated view for mental-health research: the emotions most
+        // relevant to distress/affect screening, so the default table isn't
+        // 28 rows deep. Easy to change - just this array.
+        const EMOTIONS_CURATED = [
+            'sadness', 'fear', 'anger', 'nervousness', 'disappointment',
+            'grief', 'remorse', 'disapproval', 'annoyance', 'joy'
+        ];
+        // Sentiment rollup grouping - sourced from the original GoEmotions
+        // dataset's own published grouping (google-research/google-research,
+        // goemotions/data/sentiment_dict.json), not guessed. That source
+        // splits into positive/negative/ambiguous, with 'neutral' standing
+        // alone as its own 28th label. The UI here asks for a 3-way
+        // pos/neg/neutral rollup, so 'ambiguous' is folded into the neutral
+        // bucket for that view only - the full 28-label view is unaffected.
+        const EMOTIONS_SENTIMENT_GROUPS = {
+            positive: ['amusement', 'excitement', 'joy', 'love', 'desire', 'optimism', 'caring', 'pride', 'admiration', 'gratitude', 'relief', 'approval'],
+            negative: ['fear', 'nervousness', 'remorse', 'embarrassment', 'disappointment', 'sadness', 'grief', 'disgust', 'anger', 'annoyance', 'disapproval'],
+            ambiguous: ['realization', 'surprise', 'curiosity', 'confusion']
+        };
+        // Descriptive NRS (Numeric Rating Scale) anchor phrases for the Pain
+        // 1-10 skill's zero-shot hypotheses. Plain config array - easy to
+        // reword without touching any logic.
+        const PAIN_ANCHORS = [
+            { level: 1, phrase: 'no pain at all' },
+            { level: 2, phrase: 'very mild pain, barely noticeable' },
+            { level: 3, phrase: 'mild pain that is noticeable but not distracting' },
+            { level: 4, phrase: 'moderate pain that is distracting' },
+            { level: 5, phrase: 'moderate pain that interferes with some daily activities' },
+            { level: 6, phrase: 'moderately severe pain that interferes with concentration' },
+            { level: 7, phrase: 'severe pain that dominates the senses and limits daily activities' },
+            { level: 8, phrase: 'very severe pain that makes normal activities very difficult' },
+            { level: 9, phrase: 'excruciating pain, almost unbearable' },
+            { level: 10, phrase: 'the worst pain imaginable' }
+        ];
+        // Plain-English entity type names for the Extract Entities skill,
+        // keyed on dslim/bert-base-NER's standard CoNLL-2003 scheme.
+        const NER_TYPE_LABELS = { PER: 'Person', ORG: 'Organization', LOC: 'Place', MISC: 'Other' };
         const SKILLS = [
             { id: 'taxonomy-classify', name: 'Sort text into categories', desc: 'Sort documents or spreadsheet rows into categories you choose. Useful for mapping expertise from publication abstracts.', icon: 'tags', engine: 'zeroshot', modelId: SKILL_ZEROSHOT_ID, modelSize: '~400 MB', status: 'ready' },
             { id: 'csv-combine',       name: 'Combine spreadsheets',     desc: 'Merge many CSV or Excel files into one, with help matching up columns that have different names.', icon: 'columns',   engine: 'llm',        heuristicOnly: true, status: 'ready' },
             { id: 'transcribe',        name: 'Transcribe audio',         desc: 'Turn interview recordings into text with timestamps, without sending audio to any cloud service.',   icon: 'mic',       engine: 'asr',        modelId: SKILL_TRANSCRIBE_ID, modelSize: '~800 MB', status: 'ready' },
-            { id: 'summarize',         name: 'Summarize or find themes', desc: 'Shorten long text or pull out the main themes from a document.',                                   icon: 'file-text', engine: 'llm',        status: 'coming-soon' },
-            { id: 'emotions',          name: 'Emotions and sentiment',   desc: 'Detect emotions in text (joy, sadness, nervousness, and 25 more) and overall positive/negative tone.', icon: 'heart',   engine: 'classifier', status: 'coming-soon' },
-            { id: 'pain-level',        name: 'Estimate pain level',      desc: 'From descriptions of pain, estimate a 1 to 10 rating.',                                              icon: 'gauge',     engine: 'zeroshot',   status: 'coming-soon' },
-            { id: 'buckets',           name: 'Score against any labels', desc: 'Give text a score for any set of labels you type in.',                                                icon: 'grid',      engine: 'zeroshot',   status: 'coming-soon' },
-            { id: 'ner',               name: 'Find names and places',    desc: 'Pull out people, organizations, and places mentioned in text.',                                       icon: 'user',      engine: 'classifier', status: 'coming-soon' },
-            { id: 'dedup',             name: 'Find similar or duplicates', desc: 'Group text that says roughly the same thing, or find near-duplicates.',                             icon: 'copy',      engine: 'embed',      status: 'coming-soon' }
+            { id: 'summarize',         name: 'Summarize or find themes', desc: 'Shorten long text or pull out the main themes from a document.',                                   icon: 'file-text', engine: 'llm',        status: 'ready' },
+            { id: 'emotions',          name: 'Emotions and sentiment',   desc: 'Detect emotions in text (joy, sadness, nervousness, and 25 more) and overall positive/negative tone.', icon: 'heart',   engine: 'classifier', modelId: SKILL_EMOTIONS_ID, modelSize: '~125 MB', status: 'ready' },
+            { id: 'pain-level',        name: 'Estimate pain level',      desc: 'From descriptions of pain, estimate a 1 to 10 rating.',                                              icon: 'gauge',     engine: 'zeroshot',   modelId: SKILL_ZEROSHOT_ID, status: 'ready' },
+            { id: 'buckets',           name: 'Score against any labels', desc: 'Give text a score for any set of labels you type in.',                                                icon: 'grid',      engine: 'zeroshot',   modelId: SKILL_ZEROSHOT_ID, status: 'ready' },
+            { id: 'ner',               name: 'Find names and places',    desc: 'Pull out people, organizations, and places mentioned in text.',                                       icon: 'user',      engine: 'classifier', modelId: SKILL_NER_ID, modelSize: '~180 MB', status: 'ready' },
+            { id: 'dedup',             name: 'Find similar or duplicates', desc: 'Group text that says roughly the same thing, or find near-duplicates.',                             icon: 'copy',      engine: 'embed',      modelId: KB_EMBED_ID, status: 'ready' }
         ];
         function findSkill(id) { for (const s of SKILLS) if (s.id === id) return s; return null; }
 
         const TAXONOMIES_KEY = 'fieldstation_taxonomies_v1';
+        const BUCKETS_KEY = 'fieldstation_buckets_v1';
 
         // Context window sizes (tokens) per model; unknown models fall back to 8192.
         // TODO(review): CPU_FALLBACK_TJS_ID (HuggingFaceTB/SmolLM2-360M-Instruct)
@@ -1711,6 +1768,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Skills subsystem state
         let skillZeroShot = null;
         let skillZeroShotLoading = null;
+        // Phase 9d/9e: Emotions and NER each get their own pipeline instance
+        // (different models, different tasks) - mirrors skillZeroShot's
+        // single-cached-instance/single-in-flight-promise shape per model.
+        let skillEmotions = null;
+        let skillEmotionsLoading = null;
+        let skillNer = null;
+        let skillNerLoading = null;
         let skillLoadToken = 0;      // bump to invalidate a running skill load or batch
         let skillBatchRunning = false; // true while a skill batch is actively processing
         // Field Kit tab model. store.activeId keeps meaning "which chat" and
@@ -1746,6 +1810,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // failure once, so subsequent loads skip WebGPU and go straight to
         // WASM. Not persisted - a page reload lets us try WebGPU again.
         let skillForceWasm = false;
+        // Session-only WebGPU fallback flags for the two Phase 9d/9e models
+        // that get their own pipeline instance (mirrors skillForceWasm above,
+        // one flag per model since each can fail independently on a given GPU).
+        let skillEmotionsForceWasm = false;
+        let skillNerForceWasm = false;
         // Phase 9c: ASR pipeline instances, keyed by model id (turbo for the
         // Transcribe skill, DAISY_AUDIO_ID/whisper-base for the daisy-chain -
         // both can be resident at once, mirroring visionModel/daisyModel).
@@ -8188,7 +8257,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
         // Skills that expose an in-header "Start over" button. All ready
         // skills should be here so the button isn't taxonomy-only.
-        const SKILL_HAS_RESET = new Set(['taxonomy-classify', 'csv-combine', 'transcribe']);
+        const SKILL_HAS_RESET = new Set(['taxonomy-classify', 'csv-combine', 'transcribe', 'emotions', 'pain-level', 'buckets', 'ner', 'dedup', 'summarize']);
         function enterSkill(skill) {
             // Bump token to invalidate any prior in-flight work
             skillLoadToken++;
@@ -8205,6 +8274,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 mountCsvCombineSkill(skillsBody);
             } else if (skill.id === 'transcribe') {
                 mountTranscribeSkill(skillsBody);
+            } else if (skill.id === 'emotions') {
+                mountEmotionsSkill(skillsBody);
+            } else if (skill.id === 'pain-level') {
+                mountPainLevelSkill(skillsBody);
+            } else if (skill.id === 'buckets') {
+                mountBucketsSkill(skillsBody);
+            } else if (skill.id === 'ner') {
+                mountNerSkill(skillsBody);
+            } else if (skill.id === 'dedup') {
+                mountDedupSkill(skillsBody);
+            } else if (skill.id === 'summarize') {
+                mountSummarizeSkill(skillsBody);
             } else {
                 const p = document.createElement('p');
                 p.className = 'skill-hint';
@@ -8240,6 +8321,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (skill.id === 'taxonomy-classify') mountTaxonomySkill(skillsBody);
                 else if (skill.id === 'csv-combine') mountCsvCombineSkill(skillsBody);
                 else if (skill.id === 'transcribe') mountTranscribeSkill(skillsBody);
+                else if (skill.id === 'emotions') mountEmotionsSkill(skillsBody);
+                else if (skill.id === 'pain-level') mountPainLevelSkill(skillsBody);
+                else if (skill.id === 'buckets') mountBucketsSkill(skillsBody);
+                else if (skill.id === 'ner') mountNerSkill(skillsBody);
+                else if (skill.id === 'dedup') mountDedupSkill(skillsBody);
+                else if (skill.id === 'summarize') mountSummarizeSkill(skillsBody);
             }
         });
 
@@ -9054,24 +9141,47 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 if (!lastTranscript) return;
                 downloadBlob(new Blob([lastTranscript.text || ''], { type: 'text/plain' }), lastTranscript.name.replace(/\.[^.]+$/, '') + '.txt');
             });
-            summarizeBtn.addEventListener('click', async () => {
+            // Phase 9e: these used to just chatBridge() a raw instruction and
+            // let the ordinary chat turn handle it - which either inlined the
+            // WHOLE transcript in one prompt (no chunking) or, for long
+            // transcripts, only pulled the top-4 RAG-retrieved chunks
+            // (neither is real summarization). Now: attach first (so the
+            // transcript becomes a real attachment), then run the actual
+            // chunked map-reduce summarizer against the attachment's
+            // derivedText - reading it rather than re-deriving anything, per
+            // design doc 10.3/11 - and land the COMPUTED result in the chat
+            // draft instead of a bare instruction.
+            async function summarizeOrThemes(mode) {
                 if (!lastTranscript) return;
+                if (isCpuOnly()) { skillLog(statusEl, llmGateMessage(), true); return; }
+                if (busy) { skillLog(statusEl, 'The chat is still working on a reply. Wait for it to finish and try again.', true); return; }
                 const chat = resolveCompanionChat();
                 const saved = await attachTranscriptToChat(chat, lastTranscript);
                 if (!saved) return; // attachTranscriptToChat already set a status message; keep lastTranscript so nothing is lost
-                chatBridge('', 'Summarize this interview transcript in a few sentences. (A model with at least 3 billion parameters will summarize this noticeably better than a very small one.)');
-                lastTranscript = null;
-                renderTranscript();
-            });
-            themesBtn.addEventListener('click', async () => {
-                if (!lastTranscript) return;
-                const chat = resolveCompanionChat();
-                const saved = await attachTranscriptToChat(chat, lastTranscript);
-                if (!saved) return; // attachTranscriptToChat already set a status message; keep lastTranscript so nothing is lost
-                chatBridge('', 'Read this interview transcript and list the main themes discussed, with one short supporting quote for each. (A model with at least 3 billion parameters will do noticeably better than a very small one.)');
-                lastTranscript = null;
-                renderTranscript();
-            });
+                const myToken = skillLoadToken;
+                summarizeBtn.disabled = true;
+                themesBtn.disabled = true;
+                skillLog(statusEl, 'Working through the transcript in chunks (this can take a moment for a long recording)...');
+                try {
+                    const result = await summarizeChunked(saved.derivedText, mode, myToken, (done, total) => {
+                        if (myToken === skillLoadToken) skillLog(statusEl, 'Working through part ' + done + ' of ' + total + '...');
+                    });
+                    if (myToken !== skillLoadToken) return;
+                    const bigger = 'A model with at least 3 billion parameters will do noticeably better than a very small one.';
+                    const heading = mode === 'themes' ? 'Here are the main themes from this interview transcript:' : 'Here is a summary of this interview transcript:';
+                    chatBridge('', heading + '\n\n' + result + '\n\n(' + bigger + ')');
+                    lastTranscript = null;
+                    renderTranscript();
+                } catch (e) {
+                    skillLog(statusEl, 'Could not summarize this transcript. Details: ' + errMsg(e), true);
+                    console.error('Transcript summarize/themes failed:', e);
+                } finally {
+                    summarizeBtn.disabled = false;
+                    themesBtn.disabled = false;
+                }
+            }
+            summarizeBtn.addEventListener('click', () => summarizeOrThemes('summary'));
+            themesBtn.addEventListener('click', () => summarizeOrThemes('themes'));
         }
 
         // ---------- Phase 9b: CSV Combiner (js -> llm -> js pipeline) ----------
@@ -10563,6 +10673,1803 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             });
             dl.appendChild(btnChat);
             container.appendChild(dl);
+        }
+
+        // ---------- Phase 9d: Emotions model loader ----------
+        // Mirrors ensureSkillZeroShot's shape (cached pipeline, single
+        // in-flight promise, dtype/device ladder, cancel via skillLoadToken).
+        // Only fp32 (onnx/model.onnx) and int8-quantized ("q8",
+        // onnx/model_quantized.onnx) files exist for this repo - no q4/fp16
+        // variant - so the ladder is shorter than the zero-shot engine's.
+        async function disposeSkillEmotions() {
+            const pl = skillEmotions;
+            skillEmotions = null;
+            skillEmotionsLoading = null;
+            if (pl && typeof pl.dispose === 'function') {
+                try { await pl.dispose(); } catch {}
+            }
+        }
+        function ensureSkillEmotions(onLog) {
+            if (skillEmotions) return Promise.resolve(skillEmotions);
+            if (skillEmotionsLoading) return skillEmotionsLoading;
+            const myToken = skillLoadToken;
+            anyLoadInProgress = true;
+            skillEmotionsLoading = (async () => {
+                let ladder = skillEmotionsForceWasm ? [
+                    { device: 'wasm', dtype: 'q8' },
+                    { device: 'wasm', dtype: 'fp32' }
+                ] : [
+                    { device: 'webgpu', dtype: 'q8' },
+                    { device: 'webgpu', dtype: 'fp32' },
+                    { device: 'wasm', dtype: 'q8' },
+                    { device: 'wasm', dtype: 'fp32' }
+                ];
+                ladder = reorderLadderBySavedRung(ladder, loadModelRung(SKILL_EMOTIONS_ID));
+                const stale = () => myToken !== skillLoadToken;
+                const cached = isCached(SKILL_EMOTIONS_ID);
+                let lastErr = 'unknown error';
+                for (const step of ladder) {
+                    if (stale()) { hideProgress(); return null; }
+                    try {
+                        if (onLog) onLog('Getting the feelings detector ready...');
+                        const cb = makeCacheAwareProgress(cached, 'Downloading the feelings detector to your browser...');
+                        const pl = await pipeline('text-classification', SKILL_EMOTIONS_ID, {
+                            dtype: step.dtype,
+                            device: step.device,
+                            progress_callback: cb
+                        });
+                        if (stale()) { hideProgress(); return null; }
+                        skillEmotions = pl;
+                        markCached(SKILL_EMOTIONS_ID);
+                        saveModelRung(SKILL_EMOTIONS_ID, step.device, step.dtype);
+                        requestPersistentStorageOnce();
+                        finishProgress();
+                        hideProgress();
+                        return pl;
+                    } catch (e) {
+                        lastErr = errMsg(e);
+                        console.warn('Emotions classifier load failed [' + step.dtype + '/' + step.device + ']:', e);
+                        await new Promise(r => setTimeout(r, 50));
+                    }
+                }
+                hideProgress();
+                throw new Error(lastErr);
+            })().catch(e => {
+                skillEmotionsLoading = null;
+                throw e;
+            }).finally(() => {
+                anyLoadInProgress = false;
+            });
+            return skillEmotionsLoading;
+        }
+
+        // Map go_emotions' raw per-label output (array of {label, score}) to
+        // a plain label->score object, and compute the 3-way sentiment
+        // rollup (see EMOTIONS_SENTIMENT_GROUPS above for the source/caveat).
+        function emotionsScoreByLabel(raw) {
+            const scoreByLabel = {};
+            for (const r of raw) scoreByLabel[r.label] = r.score;
+            return scoreByLabel;
+        }
+        function emotionsSentimentRollup(scoreByLabel) {
+            const sum = (labels) => labels.reduce((s, l) => s + (scoreByLabel[l] || 0), 0);
+            const positive = sum(EMOTIONS_SENTIMENT_GROUPS.positive);
+            const negative = sum(EMOTIONS_SENTIMENT_GROUPS.negative);
+            const neutral = sum(EMOTIONS_SENTIMENT_GROUPS.ambiguous) + (scoreByLabel.neutral || 0);
+            const total = positive + negative + neutral || 1;
+            return { positive: positive / total, negative: negative / total, neutral: neutral / total };
+        }
+
+        // ---------- Phase 9d/9e: shared "files vs spreadsheet" input tabs ----------
+        // Shared by Emotions, Pain, Buckets, and Extract Entities - all four
+        // need the identical "one document at a time" vs "a spreadsheet of
+        // many rows" input shape. Unlike the taxonomy skill's own copy
+        // (which additionally handles multi-row-preamble header detection
+        // via forensics/renderHeaderRowAdjuster), this uses the simpler
+        // header-assuming parseTabularFile path (ingestFiles without
+        // raw:true) since these tools work on one text column, not
+        // arbitrary messy exports - a deliberate simplification for these
+        // four smaller tools, not a bug.
+        function mountClassifierInputTabs(idPrefix) {
+            let inputMode = 'files';
+            let ingestedDocs = []; // [{name, text, warning?}]
+            let bulkRows = null, bulkHeaders = [], bulkFileName = '';
+
+            const section = document.createElement('div');
+            section.className = 'skill-section';
+            section.innerHTML = `
+                <h3>What to check</h3>
+                <div class="skill-tabs">
+                    <button class="skill-tab active" data-mode="files">One document at a time</button>
+                    <button class="skill-tab" data-mode="bulk">A spreadsheet of many rows</button>
+                </div>
+                <div id="${idPrefix}-files-pane">
+                    <p class="skill-hint">Upload plain-text or PDF documents. Each document is checked separately.</p>
+                    <button class="skill-btn" id="${idPrefix}-files-btn">Choose files...</button>
+                    <input type="file" id="${idPrefix}-files-input" multiple accept=".txt,.pdf" hidden>
+                    <div class="skill-row" id="${idPrefix}-files-chips"></div>
+                    <div id="${idPrefix}-pdf-banner"></div>
+                </div>
+                <div id="${idPrefix}-bulk-pane" hidden>
+                    <p class="skill-hint">Upload a spreadsheet (CSV or Excel). The first row must be column headers.</p>
+                    <button class="skill-btn" id="${idPrefix}-bulk-btn">Choose a spreadsheet...</button>
+                    <input type="file" id="${idPrefix}-bulk-input" accept="text/csv,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,.tsv,.xlsx,.xls" hidden>
+                    <div id="${idPrefix}-bulk-file" class="skill-hint" style="margin-top:6px;"></div>
+                    <div class="skill-row" id="${idPrefix}-bulk-cols" hidden>
+                        <label style="font-size:0.78rem;color:var(--muted);">Which column has the row's ID (optional)?
+                            <select class="skill-select" id="${idPrefix}-bulk-id" style="margin-left:4px;"></select>
+                        </label>
+                        <label style="font-size:0.78rem;color:var(--muted);">Which column has the text to check?
+                            <select class="skill-select" id="${idPrefix}-bulk-text" style="margin-left:4px;"></select>
+                        </label>
+                    </div>
+                    <div id="${idPrefix}-bulk-preview"></div>
+                </div>
+            `;
+
+            const filesPane = section.querySelector('#' + idPrefix + '-files-pane');
+            const bulkPane = section.querySelector('#' + idPrefix + '-bulk-pane');
+            const filesBtn = section.querySelector('#' + idPrefix + '-files-btn');
+            const filesInput = section.querySelector('#' + idPrefix + '-files-input');
+            const filesChips = section.querySelector('#' + idPrefix + '-files-chips');
+            const pdfBanner = section.querySelector('#' + idPrefix + '-pdf-banner');
+            const bulkBtn = section.querySelector('#' + idPrefix + '-bulk-btn');
+            const bulkInput = section.querySelector('#' + idPrefix + '-bulk-input');
+            const bulkFileLabel = section.querySelector('#' + idPrefix + '-bulk-file');
+            const bulkColsRow = section.querySelector('#' + idPrefix + '-bulk-cols');
+            const bulkIdSel = section.querySelector('#' + idPrefix + '-bulk-id');
+            const bulkTextSel = section.querySelector('#' + idPrefix + '-bulk-text');
+            const bulkPreview = section.querySelector('#' + idPrefix + '-bulk-preview');
+
+            section.querySelectorAll('.skill-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    section.querySelectorAll('.skill-tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    inputMode = tab.dataset.mode;
+                    filesPane.hidden = inputMode !== 'files';
+                    bulkPane.hidden = inputMode !== 'bulk';
+                });
+            });
+
+            function renderChips() {
+                filesChips.innerHTML = '';
+                if (!ingestedDocs.length) {
+                    const hint = document.createElement('span');
+                    hint.className = 'skill-hint';
+                    hint.textContent = 'No files chosen yet.';
+                    filesChips.appendChild(hint);
+                    return;
+                }
+                ingestedDocs.forEach((d, i) => {
+                    const chip = document.createElement('span');
+                    chip.className = 'skill-chip';
+                    if (d.warning) chip.style.borderColor = 'var(--danger)';
+                    const label = document.createElement('span');
+                    const words = (d.text.match(/\S+/g) || []).length;
+                    label.textContent = d.name + '  (' + words.toLocaleString() + ' word' + (words === 1 ? '' : 's') + ')';
+                    chip.appendChild(label);
+                    if (d.warning) {
+                        const warn = document.createElement('span');
+                        warn.textContent = ' - ' + d.warning;
+                        warn.style.color = 'var(--danger)';
+                        warn.style.fontSize = '0.72rem';
+                        chip.appendChild(warn);
+                    }
+                    const x = document.createElement('button');
+                    x.type = 'button';
+                    x.textContent = '×';
+                    x.title = 'Remove';
+                    x.addEventListener('click', () => { ingestedDocs.splice(i, 1); renderChips(); });
+                    chip.appendChild(x);
+                    filesChips.appendChild(chip);
+                });
+            }
+            renderChips();
+
+            filesBtn.addEventListener('click', () => filesInput.click());
+            filesInput.addEventListener('change', async () => {
+                if (!filesInput.files.length) return;
+                const errs = [];
+                const docs = await ingestFiles(filesInput.files, {
+                    accept: ['txt', 'pdf'],
+                    onFileError: (f, e) => errs.push(f.name + ': ' + errMsg(e))
+                });
+                for (const d of docs) {
+                    if (d.kind !== 'text') continue;
+                    ingestedDocs.push({ name: d.name, text: d.text || '', warning: d.warning || null });
+                }
+                filesInput.value = '';
+                pdfBanner.innerHTML = '';
+                const pdfMissing = errs.some(m => /PDF_UNAVAILABLE/.test(m));
+                if (pdfMissing) {
+                    pdfBanner.innerHTML = '<div class="skill-banner">Could not read PDF files right now. Plain text (.txt) files still work.</div>';
+                } else if (errs.length) {
+                    pdfBanner.innerHTML = '<div class="skill-banner error">' + errs.map(e => e.replace(/</g, '&lt;')).join('<br>') + '</div>';
+                }
+                renderChips();
+            });
+
+            const ID_HINT_RE = /^(mrn|participant|subject|record|pt[_\s]?id|uniqname|email|name|id)$/i;
+            const TEXT_HINT_RE = /abstract|text|body|description|content|response/i;
+
+            bulkBtn.addEventListener('click', () => bulkInput.click());
+            bulkInput.addEventListener('change', async () => {
+                if (!bulkInput.files.length) return;
+                const file = bulkInput.files[0];
+                bulkInput.value = '';
+                try {
+                    const [ingested] = await ingestFiles([file], { accept: ['csv', 'tsv', 'xlsx', 'xls'] });
+                    if (!ingested || ingested.kind !== 'table' || !ingested.rows.length) throw new Error('Could not read this file, or it has no rows.');
+                    bulkRows = ingested.rows;
+                    bulkHeaders = ingested.headers;
+                    bulkFileName = ingested.name;
+                    bulkFileLabel.textContent = bulkFileName + '  (' + bulkRows.length + ' row' + (bulkRows.length === 1 ? '' : 's') + ', ' + bulkHeaders.length + ' column' + (bulkHeaders.length === 1 ? '' : 's') + ')';
+                    const idGuess = bulkHeaders.find(h => ID_HINT_RE.test(h)) || bulkHeaders[0];
+                    const textGuess = bulkHeaders.find(h => TEXT_HINT_RE.test(h)) || bulkHeaders[Math.min(1, bulkHeaders.length - 1)];
+                    bulkIdSel.innerHTML = bulkHeaders.map(h => '<option value="' + h.replace(/"/g, '&quot;') + '">' + h + '</option>').join('');
+                    bulkTextSel.innerHTML = bulkIdSel.innerHTML;
+                    bulkIdSel.value = idGuess;
+                    bulkTextSel.value = textGuess;
+                    bulkColsRow.hidden = false;
+                    const renderPreview = () => {
+                        const idCol = bulkIdSel.value, textCol = bulkTextSel.value;
+                        const rows3 = bulkRows.slice(0, 3);
+                        bulkPreview.innerHTML = '<table class="skill-table"><thead><tr><th>' + idCol + '</th><th>' + textCol + '</th></tr></thead><tbody>' +
+                            rows3.map(r => {
+                                const id = String(r[idCol] !== undefined ? r[idCol] : '');
+                                const t = String(r[textCol] !== undefined ? r[textCol] : '');
+                                const tShort = t.length > 120 ? t.slice(0, 120) + '...' : t;
+                                return '<tr><td>' + id.replace(/</g, '&lt;') + '</td><td>' + tShort.replace(/</g, '&lt;') + '</td></tr>';
+                            }).join('') + '</tbody></table>';
+                    };
+                    bulkIdSel.onchange = renderPreview;
+                    bulkTextSel.onchange = renderPreview;
+                    renderPreview();
+                } catch (e) {
+                    bulkRows = null; bulkHeaders = []; bulkFileName = '';
+                    bulkFileLabel.textContent = '';
+                    bulkColsRow.hidden = true;
+                    bulkPreview.innerHTML = '<div class="skill-banner error">Could not read this spreadsheet. Try saving it as a CSV with headers in the first row. Details: ' + errMsg(e).replace(/</g, '&lt;') + '</div>';
+                }
+            });
+
+            return {
+                section,
+                getMode: () => inputMode,
+                hasInput: () => inputMode === 'files' ? ingestedDocs.length > 0 : !!(bulkRows && bulkRows.length),
+                getDocs: () => {
+                    if (inputMode === 'files') {
+                        return ingestedDocs.map(d => ({ id: d.name, text: d.text, warning: d.warning || null }));
+                    }
+                    const idCol = bulkIdSel.value, textCol = bulkTextSel.value;
+                    return bulkRows.map((r, i) => ({
+                        id: String(r[idCol] !== undefined && r[idCol] !== null ? r[idCol] : ('row-' + (i + 1))),
+                        text: String(r[textCol] !== undefined && r[textCol] !== null ? r[textCol] : ''),
+                        row: r
+                    })).filter(d => d.text.trim());
+                },
+                getBulkFileName: () => bulkFileName
+            };
+        }
+
+        // Shared batch-runner for the classifier-family skills (Emotions,
+        // Pain, Buckets, Extract Entities): drives progress + Stop wired to
+        // the standard skill progress bus and skillLoadToken, calling
+        // classifyOne(text) per item and collecting results/errors.
+        async function runClassifierBatch(opts) {
+            const { docs, statusEl, progWrap, progMsg, progFill, runBtn, cancelBtn, classifyOne, onDone } = opts;
+            const localProgressListener = (state) => {
+                if (!state.visible) { progWrap.hidden = true; return; }
+                progWrap.hidden = false;
+                progMsg.textContent = state.message + ' ' + state.pct + '%';
+                progFill.style.width = state.pct + '%';
+            };
+            function finishRun() {
+                skillBatchRunning = false;
+                runBtn.disabled = false;
+                cancelBtn.hidden = true;
+                progressListeners.delete(localProgressListener);
+                progWrap.hidden = true;
+                renderTabs();
+            }
+            skillBatchRunning = true;
+            runBtn.disabled = true;
+            cancelBtn.hidden = false;
+            progressListeners.add(localProgressListener);
+            renderTabs();
+            const myToken = skillLoadToken;
+            cancelBtn.onclick = () => {
+                skillLoadToken++;
+                skillLockWaitCtl.abort();
+                ModelGateway.interrupt();
+                skillLog(statusEl, 'Stopped.');
+                finishRun();
+            };
+            const perDoc = [];
+            for (let i = 0; i < docs.length; i++) {
+                if (myToken !== skillLoadToken) { skillLog(statusEl, 'Stopped.'); return; }
+                const doc = docs[i];
+                skillLog(statusEl, 'Checking item ' + (i + 1) + ' of ' + docs.length + '...');
+                if (!doc.text || !doc.text.trim()) {
+                    perDoc.push({ id: doc.id, row: doc.row, error: doc.warning || 'This item has no readable text.' });
+                    continue;
+                }
+                try {
+                    const result = await classifyOne(doc.text);
+                    perDoc.push({ id: doc.id, row: doc.row, result });
+                } catch (e) {
+                    console.warn('Batch item failed:', e);
+                    perDoc.push({ id: doc.id, row: doc.row, error: errMsg(e) });
+                }
+            }
+            if (myToken !== skillLoadToken) { skillLog(statusEl, 'Stopped.'); return; }
+            finishRun();
+            onDone(perDoc);
+        }
+
+        // ---------- Phase 9d: Emotions skill ----------
+        function mountEmotionsSkill(container) {
+            let runningBatch = false, lastResultsSummary = null, lastPerDoc = null;
+            container.innerHTML = '';
+
+            const inputTabs = mountClassifierInputTabs('emo');
+            skillStateProbe = {
+                id: 'emotions',
+                fn: () => runningBatch || inputTabs.hasInput() || !!lastResultsSummary
+            };
+            container.appendChild(inputTabs.section);
+
+            const sectionC = document.createElement('div');
+            sectionC.className = 'skill-section';
+            sectionC.innerHTML = `
+                <h3>Find feelings</h3>
+                <div class="skill-row">
+                    <label style="font-size:0.82rem;color:var(--ink);display:inline-flex;gap:6px;align-items:center;">
+                        <input type="checkbox" id="emo-show-all">
+                        Show all 28 feelings (default shows the 10 most relevant to mental-health research)
+                    </label>
+                </div>
+                <div class="skill-row" style="margin-top:6px;">
+                    <button class="skill-btn primary" id="emo-run">Find feelings now</button>
+                    <button class="skill-btn" id="emo-cancel" hidden>Stop</button>
+                </div>
+                <div class="skill-progress" id="emo-progress" hidden>
+                    <div class="skill-progress-msg" id="emo-progress-msg"></div>
+                    <div class="skill-progress-track"><div class="skill-progress-fill" id="emo-progress-fill"></div></div>
+                </div>
+                <div class="skill-status" id="emo-status"></div>
+                <div id="emo-results"></div>
+            `;
+            container.appendChild(sectionC);
+
+            const runBtn = sectionC.querySelector('#emo-run');
+            const cancelBtn = sectionC.querySelector('#emo-cancel');
+            const statusEl = sectionC.querySelector('#emo-status');
+            const resultsEl = sectionC.querySelector('#emo-results');
+            const progWrap = sectionC.querySelector('#emo-progress');
+            const progMsg = sectionC.querySelector('#emo-progress-msg');
+            const progFill = sectionC.querySelector('#emo-progress-fill');
+            const showAllChk = sectionC.querySelector('#emo-show-all');
+
+            showAllChk.addEventListener('change', () => {
+                if (lastPerDoc) renderEmotionsResults(inputTabs.getMode(), lastPerDoc, resultsEl, inputTabs.getBulkFileName(), showAllChk.checked);
+            });
+
+            runBtn.addEventListener('click', async () => {
+                if (!inputTabs.hasInput()) { skillLog(statusEl, 'Choose at least one file or a spreadsheet above.', true); return; }
+                const docs = inputTabs.getDocs();
+                if (!docs.length) { skillLog(statusEl, 'No readable text found in your input.', true); return; }
+                if (anyLoadInProgress && !skillEmotionsLoading) { skillLog(statusEl, 'Something else is downloading in the background. Give it a moment and try again.', true); return; }
+                if (busy) { skillLog(statusEl, 'The chat is still working on a reply. Wait for it to finish and try again.', true); return; }
+
+                resultsEl.innerHTML = '';
+                lastResultsSummary = null;
+                runningBatch = true;
+
+                let classifier;
+                try {
+                    skillLog(statusEl, 'Getting the feelings detector ready (first run downloads ~125 MB)...');
+                    classifier = await ensureSkillEmotions(msg => skillLog(statusEl, msg));
+                    if (!classifier) { skillLog(statusEl, 'The feelings detector is not available right now.', true); runningBatch = false; return; }
+                } catch (e) {
+                    skillLog(statusEl, 'Could not start the feelings detector. Details: ' + errMsg(e), true);
+                    runningBatch = false;
+                    return;
+                }
+
+                // Mirrors tryClassify (taxonomy skill): WebGPU int64/GatherND
+                // failure -> reload on WASM once, retry.
+                const ownerLabel = findSkill(skillsCurrentId)?.name || 'Field Kit';
+                async function emotionsClassify(text) {
+                    try {
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        try { return await classifier(text, { top_k: null }); }
+                        finally { EngineLock.release(); }
+                    } catch (e) {
+                        if (e.lockCancelled) throw e;
+                        if (!isWebGpuInt64Failure(e)) throw e;
+                        console.warn('Emotions classifier WebGPU int64 failure; reloading on WASM for this session.');
+                        skillLog(statusEl, 'Your browser could not run the feelings detector on the GPU. Switching to a slower CPU version and retrying...');
+                        skillEmotionsForceWasm = true;
+                        await disposeSkillEmotions();
+                        classifier = await ensureSkillEmotions(msg => skillLog(statusEl, msg));
+                        if (!classifier) throw new Error('Could not reload the feelings detector.');
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        try { return await classifier(text, { top_k: null }); }
+                        finally { EngineLock.release(); }
+                    }
+                }
+
+                await runClassifierBatch({
+                    docs, statusEl, progWrap, progMsg, progFill, runBtn, cancelBtn,
+                    classifyOne: async (text) => emotionsScoreByLabel(await emotionsClassify(truncateForBart(text))),
+                    onDone: (perDoc) => {
+                        runningBatch = false;
+                        const okCount = perDoc.filter(d => d.result).length;
+                        skillLog(statusEl, okCount === perDoc.length
+                            ? 'Done. Checked ' + perDoc.length + ' item' + (perDoc.length === 1 ? '' : 's') + '.'
+                            : 'Done. Checked ' + okCount + ' of ' + perDoc.length + '. Some items could not be read - see below.');
+                        lastResultsSummary = { count: perDoc.length };
+                        lastPerDoc = perDoc;
+                        renderEmotionsResults(inputTabs.getMode(), perDoc, resultsEl, inputTabs.getBulkFileName(), showAllChk.checked);
+                    }
+                });
+            });
+        }
+
+        function renderEmotionsResults(mode, perDoc, container, bulkName, showAll) {
+            container.innerHTML = '';
+            const pool = showAll ? EMOTIONS_LABELS : EMOTIONS_CURATED;
+            const errored = perDoc.filter(d => d.error);
+            if (errored.length) {
+                const wrap = document.createElement('div');
+                wrap.className = 'skill-section';
+                wrap.innerHTML = '<h3>Items that could not be checked</h3>';
+                const tbl = document.createElement('table');
+                tbl.className = 'skill-table';
+                tbl.innerHTML = '<thead><tr><th>Item</th><th>Reason</th></tr></thead>';
+                const tb = document.createElement('tbody');
+                for (const d of errored) {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td><td style="color:var(--danger);">' + String(d.error).replace(/</g, '&lt;') + '</td>';
+                    tb.appendChild(tr);
+                }
+                tbl.appendChild(tb);
+                wrap.appendChild(tbl);
+                container.appendChild(wrap);
+            }
+            const ok = perDoc.filter(d => d.result);
+            if (!ok.length) return;
+
+            const tbl = document.createElement('table');
+            tbl.className = 'skill-table';
+            tbl.innerHTML = '<thead><tr><th>Item</th><th>Top feeling</th><th class="num">Score</th><th>Second</th><th class="num">Score</th><th>Third</th><th class="num">Score</th></tr></thead>';
+            const tb = document.createElement('tbody');
+            for (const d of ok) {
+                const pooled = {};
+                for (const l of pool) if (d.result[l] !== undefined) pooled[l] = d.result[l];
+                const t = topN(pooled, 3);
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td>' +
+                    [0, 1, 2].map(i => t[i] ? ('<td>' + t[i].label.replace(/</g, '&lt;') + '</td><td class="num">' + fmtPct(t[i].score) + '</td>') : '<td></td><td></td>').join('');
+                tb.appendChild(tr);
+            }
+            tbl.appendChild(tb);
+            const wrap = document.createElement('div');
+            wrap.className = 'skill-section';
+            wrap.innerHTML = '<h3>Feelings found in this text</h3><p class="skill-hint">' +
+                (showAll ? 'Showing all 28 feelings the model can detect.' : 'Showing the 10 feelings most relevant to mental-health research. Check "Show all 28 feelings" above to see every feeling.') +
+                '</p>';
+            wrap.appendChild(tbl);
+            container.appendChild(wrap);
+
+            // Sentiment rollup (aggregate across all items)
+            const rollupAgg = { positive: 0, negative: 0, neutral: 0 };
+            for (const d of ok) {
+                const r = emotionsSentimentRollup(d.result);
+                rollupAgg.positive += r.positive; rollupAgg.negative += r.negative; rollupAgg.neutral += r.neutral;
+            }
+            const n = ok.length;
+            const rollupWrap = document.createElement('div');
+            rollupWrap.className = 'skill-section';
+            rollupWrap.innerHTML = '<h3>Overall tone</h3><p class="skill-hint">Average positive / negative / neutral tone across all items.</p>';
+            for (const pair of [['Positive', rollupAgg.positive / n], ['Negative', rollupAgg.negative / n], ['Neutral / mixed', rollupAgg.neutral / n]]) {
+                const label = pair[0], val = pair[1];
+                const bar = document.createElement('div');
+                bar.className = 'skill-bar';
+                const fill = document.createElement('div');
+                fill.className = 'skill-bar-fill';
+                fill.style.width = Math.max(0, Math.min(100, val * 100)) + '%';
+                const lbl = document.createElement('div');
+                lbl.className = 'skill-bar-label';
+                lbl.innerHTML = '<span>' + label + '</span><span>' + fmtPct(val) + '%</span>';
+                bar.appendChild(fill); bar.appendChild(lbl);
+                rollupWrap.appendChild(bar);
+            }
+            container.appendChild(rollupWrap);
+
+            const dl = document.createElement('div');
+            dl.className = 'skill-row';
+            if (mode === 'bulk') {
+                const btn = document.createElement('button');
+                btn.className = 'skill-btn';
+                btn.textContent = 'Download every row with results added';
+                btn.addEventListener('click', () => {
+                    const orig = (ok[0] && ok[0].row) ? Object.keys(ok[0].row) : [];
+                    const headers = orig.concat(['top_1_feeling', 'top_1_score', 'top_2_feeling', 'top_2_score', 'top_3_feeling', 'top_3_score', 'sentiment_positive', 'sentiment_negative', 'sentiment_neutral']);
+                    function* gen() {
+                        for (const d of perDoc) {
+                            const out = {};
+                            for (const h of orig) out[h] = d.row ? d.row[h] : '';
+                            if (d.result) {
+                                const pooled = {};
+                                for (const l of pool) if (d.result[l] !== undefined) pooled[l] = d.result[l];
+                                const t = topN(pooled, 3);
+                                out.top_1_feeling = t[0] ? t[0].label : ''; out.top_1_score = t[0] ? Math.round(t[0].score * 10000) / 10000 : '';
+                                out.top_2_feeling = t[1] ? t[1].label : ''; out.top_2_score = t[1] ? Math.round(t[1].score * 10000) / 10000 : '';
+                                out.top_3_feeling = t[2] ? t[2].label : ''; out.top_3_score = t[2] ? Math.round(t[2].score * 10000) / 10000 : '';
+                                const r = emotionsSentimentRollup(d.result);
+                                out.sentiment_positive = Math.round(r.positive * 10000) / 10000;
+                                out.sentiment_negative = Math.round(r.negative * 10000) / 10000;
+                                out.sentiment_neutral = Math.round(r.neutral * 10000) / 10000;
+                            } else {
+                                out.top_1_feeling = out.top_1_score = out.top_2_feeling = out.top_2_score = out.top_3_feeling = out.top_3_score = '';
+                                out.sentiment_positive = out.sentiment_negative = out.sentiment_neutral = '';
+                            }
+                            yield out;
+                        }
+                    }
+                    const base = (bulkName || 'bulk').replace(/\.[^.]+$/, '');
+                    downloadBlob(writeCsvStreaming(gen, headers), base + '_emotions.csv');
+                });
+                dl.appendChild(btn);
+            } else {
+                const btn = document.createElement('button');
+                btn.className = 'skill-btn';
+                btn.textContent = 'Download results as CSV';
+                btn.addEventListener('click', () => {
+                    const rows = ok.map(d => {
+                        const r = emotionsSentimentRollup(d.result);
+                        const row = { item: d.id, sentiment_positive: round2(r.positive), sentiment_negative: round2(r.negative), sentiment_neutral: round2(r.neutral) };
+                        for (const l of pool) row[l] = d.result[l] !== undefined ? round2(d.result[l]) : '';
+                        return row;
+                    });
+                    downloadBlob(writeCsv(rows), 'emotions_results.csv');
+                });
+                dl.appendChild(btn);
+            }
+            const btnChat = document.createElement('button');
+            btnChat.className = 'skill-btn';
+            btnChat.textContent = 'Send to Chat';
+            btnChat.addEventListener('click', () => {
+                const lines = ['I checked ' + ok.length + ' item(s) for emotions/sentiment.'];
+                for (const d of ok) {
+                    const t = topN(d.result, 3);
+                    lines.push('- ' + d.id + ': ' + t.map(x => x.label + ' (' + fmtPct(x.score) + '%)').join(', '));
+                }
+                lines.push('', 'What patterns do you see?');
+                chatBridge(lines.join('\n'));
+            });
+            dl.appendChild(btnChat);
+            container.appendChild(dl);
+        }
+
+        // ---------- Phase 9d: Pain 1-10 skill ----------
+        function painArgmax(byLevel) {
+            let bestLevel = null, bestScore = -1;
+            for (const a of PAIN_ANCHORS) {
+                const s = byLevel[a.level] || 0;
+                if (s > bestScore) { bestScore = s; bestLevel = a.level; }
+            }
+            return { level: bestLevel, score: bestScore };
+        }
+        function mountPainLevelSkill(container) {
+            let runningBatch = false, lastResultsSummary = null;
+            container.innerHTML = '';
+
+            const inputTabs = mountClassifierInputTabs('pain');
+            skillStateProbe = { id: 'pain-level', fn: () => runningBatch || inputTabs.hasInput() || !!lastResultsSummary };
+            container.appendChild(inputTabs.section);
+
+            const sectionC = document.createElement('div');
+            sectionC.className = 'skill-section';
+            sectionC.innerHTML = `
+                <h3>Estimate pain level</h3>
+                <p class="skill-hint">Very long documents are shortened to the first ~4000 characters so the categorizer can handle them.</p>
+                <div class="skill-row">
+                    <button class="skill-btn primary" id="pain-run">Estimate now</button>
+                    <button class="skill-btn" id="pain-cancel" hidden>Stop</button>
+                </div>
+                <div class="skill-progress" id="pain-progress" hidden>
+                    <div class="skill-progress-msg" id="pain-progress-msg"></div>
+                    <div class="skill-progress-track"><div class="skill-progress-fill" id="pain-progress-fill"></div></div>
+                </div>
+                <div class="skill-status" id="pain-status"></div>
+                <div id="pain-results"></div>
+            `;
+            container.appendChild(sectionC);
+            const runBtn = sectionC.querySelector('#pain-run');
+            const cancelBtn = sectionC.querySelector('#pain-cancel');
+            const statusEl = sectionC.querySelector('#pain-status');
+            const resultsEl = sectionC.querySelector('#pain-results');
+            const progWrap = sectionC.querySelector('#pain-progress');
+            const progMsg = sectionC.querySelector('#pain-progress-msg');
+            const progFill = sectionC.querySelector('#pain-progress-fill');
+
+            const hypotheses = PAIN_ANCHORS.map(a => a.phrase);
+
+            runBtn.addEventListener('click', async () => {
+                if (!inputTabs.hasInput()) { skillLog(statusEl, 'Choose at least one file or a spreadsheet above.', true); return; }
+                const docs = inputTabs.getDocs();
+                if (!docs.length) { skillLog(statusEl, 'No readable text found in your input.', true); return; }
+                if (anyLoadInProgress && !skillZeroShotLoading) { skillLog(statusEl, 'Something else is downloading in the background. Give it a moment and try again.', true); return; }
+                if (busy) { skillLog(statusEl, 'The chat is still working on a reply. Wait for it to finish and try again.', true); return; }
+
+                resultsEl.innerHTML = '';
+                lastResultsSummary = null;
+                runningBatch = true;
+
+                let classifier;
+                try {
+                    skillLog(statusEl, 'Getting the categorizer ready...');
+                    classifier = await ensureSkillZeroShot(msg => skillLog(statusEl, msg));
+                    if (!classifier) { skillLog(statusEl, 'The categorizer is not available right now.', true); runningBatch = false; return; }
+                } catch (e) {
+                    skillLog(statusEl, 'Could not start the categorizer. Details: ' + errMsg(e), true);
+                    runningBatch = false;
+                    return;
+                }
+
+                const ownerLabel = findSkill(skillsCurrentId)?.name || 'Field Kit';
+                async function painClassify(text) {
+                    try {
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        try { return await classifier(text, hypotheses, { multi_label: false }); }
+                        finally { EngineLock.release(); }
+                    } catch (e) {
+                        if (e.lockCancelled) throw e;
+                        if (!isWebGpuInt64Failure(e)) throw e;
+                        skillLog(statusEl, 'Your browser could not run the categorizer on the GPU. Switching to a slower CPU version and retrying...');
+                        skillForceWasm = true;
+                        await disposeSkillZeroShot();
+                        classifier = await ensureSkillZeroShot(msg => skillLog(statusEl, msg));
+                        if (!classifier) throw new Error('Could not reload the categorizer.');
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        try { return await classifier(text, hypotheses, { multi_label: false }); }
+                        finally { EngineLock.release(); }
+                    }
+                }
+
+                await runClassifierBatch({
+                    docs, statusEl, progWrap, progMsg, progFill, runBtn, cancelBtn,
+                    classifyOne: async (text) => {
+                        const res = await painClassify(truncateForBart(text));
+                        const scoreByPhrase = mapScoresBack(res, hypotheses, hypotheses);
+                        const byLevel = {};
+                        for (const a of PAIN_ANCHORS) byLevel[a.level] = scoreByPhrase[a.phrase] || 0;
+                        return byLevel;
+                    },
+                    onDone: (perDoc) => {
+                        runningBatch = false;
+                        const okCount = perDoc.filter(d => d.result).length;
+                        skillLog(statusEl, okCount === perDoc.length
+                            ? 'Done. Estimated ' + perDoc.length + ' item' + (perDoc.length === 1 ? '' : 's') + '.'
+                            : 'Done. Estimated ' + okCount + ' of ' + perDoc.length + '. Some items could not be read - see below.');
+                        lastResultsSummary = { count: perDoc.length };
+                        renderPainResults(inputTabs.getMode(), perDoc, resultsEl, inputTabs.getBulkFileName());
+                    }
+                });
+            });
+        }
+
+        function renderPainResults(mode, perDoc, container, bulkName) {
+            container.innerHTML = '';
+            const errored = perDoc.filter(d => d.error);
+            if (errored.length) {
+                const wrap = document.createElement('div');
+                wrap.className = 'skill-section';
+                wrap.innerHTML = '<h3>Items that could not be estimated</h3>';
+                const tbl = document.createElement('table');
+                tbl.className = 'skill-table';
+                tbl.innerHTML = '<thead><tr><th>Item</th><th>Reason</th></tr></thead>';
+                const tb = document.createElement('tbody');
+                for (const d of errored) {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td><td style="color:var(--danger);">' + String(d.error).replace(/</g, '&lt;') + '</td>';
+                    tb.appendChild(tr);
+                }
+                tbl.appendChild(tb);
+                wrap.appendChild(tbl);
+                container.appendChild(wrap);
+            }
+            const ok = perDoc.filter(d => d.result);
+            if (!ok.length) return;
+
+            const tbl = document.createElement('table');
+            tbl.className = 'skill-table';
+            tbl.innerHTML = '<thead><tr><th>Item</th><th class="num">Estimated pain (1-10)</th><th class="num">Confidence</th></tr></thead>';
+            const tb = document.createElement('tbody');
+            for (const d of ok) {
+                const best = painArgmax(d.result);
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td><td class="num">' + best.level + '</td><td class="num">' + fmtPct(best.score) + '%</td>';
+                tb.appendChild(tr);
+            }
+            tbl.appendChild(tb);
+            const wrap = document.createElement('div');
+            wrap.className = 'skill-section';
+            wrap.innerHTML = '<h3>Results</h3><p class="skill-hint">The pain level whose description best matched each item, based on zero-shot comparison against 10 pain-severity descriptions.</p>';
+            wrap.appendChild(tbl);
+            container.appendChild(wrap);
+
+            const dl = document.createElement('div');
+            dl.className = 'skill-row';
+            if (mode === 'bulk') {
+                const btn = document.createElement('button');
+                btn.className = 'skill-btn';
+                btn.textContent = 'Download every row with results added';
+                btn.addEventListener('click', () => {
+                    const orig = (ok[0] && ok[0].row) ? Object.keys(ok[0].row) : [];
+                    const headers = orig.concat(['pain_level_1_to_10', 'pain_level_confidence']);
+                    function* gen() {
+                        for (const d of perDoc) {
+                            const out = {};
+                            for (const h of orig) out[h] = d.row ? d.row[h] : '';
+                            if (d.result) {
+                                const best = painArgmax(d.result);
+                                out.pain_level_1_to_10 = best.level;
+                                out.pain_level_confidence = Math.round(best.score * 10000) / 10000;
+                            } else { out.pain_level_1_to_10 = ''; out.pain_level_confidence = ''; }
+                            yield out;
+                        }
+                    }
+                    const base = (bulkName || 'bulk').replace(/\.[^.]+$/, '');
+                    downloadBlob(writeCsvStreaming(gen, headers), base + '_pain.csv');
+                });
+                dl.appendChild(btn);
+            } else {
+                const btn = document.createElement('button');
+                btn.className = 'skill-btn';
+                btn.textContent = 'Download results as CSV';
+                btn.addEventListener('click', () => {
+                    const rows = ok.map(d => { const best = painArgmax(d.result); return { item: d.id, pain_level_1_to_10: best.level, confidence: round2(best.score) }; });
+                    downloadBlob(writeCsv(rows), 'pain_results.csv');
+                });
+                dl.appendChild(btn);
+            }
+            const btnChat = document.createElement('button');
+            btnChat.className = 'skill-btn';
+            btnChat.textContent = 'Send to Chat';
+            btnChat.addEventListener('click', () => {
+                const lines = ['I estimated pain levels (1-10) for ' + ok.length + ' item(s).'];
+                for (const d of ok) { const best = painArgmax(d.result); lines.push('- ' + d.id + ': ' + best.level + '/10'); }
+                lines.push('', 'What patterns do you see?');
+                chatBridge(lines.join('\n'));
+            });
+            dl.appendChild(btnChat);
+            container.appendChild(dl);
+        }
+
+        // ---------- Phase 9d: Custom buckets skill ----------
+        // Saved-list storage, mirroring readTaxonomies/writeTaxonomies/
+        // saveTaxonomy/deleteTaxonomy exactly, against its own key so
+        // buckets' saved lists never mix with taxonomy-classify's.
+        function readBuckets() {
+            try {
+                const raw = localStorage.getItem(BUCKETS_KEY);
+                if (!raw) return {};
+                const j = JSON.parse(raw);
+                return (j && typeof j === 'object') ? j : {};
+            } catch { return {}; }
+        }
+        function writeBuckets(map) {
+            try { localStorage.setItem(BUCKETS_KEY, JSON.stringify(map)); } catch {}
+        }
+        function saveBucketList(name, text) {
+            const map = readBuckets();
+            map[name] = text;
+            writeBuckets(map);
+        }
+        function deleteBucketList(name) {
+            const map = readBuckets();
+            delete map[name];
+            writeBuckets(map);
+        }
+
+        function mountBucketsSkill(container) {
+            let runningBatch = false, lastResultsSummary = null;
+            container.innerHTML = '';
+
+            const sectionA = document.createElement('div');
+            sectionA.className = 'skill-section';
+            sectionA.innerHTML = `
+                <h3>Your labels</h3>
+                <p class="skill-hint">Type one label per line. You can add a short description after a colon to help scoring be more accurate. Every label gets its own score - there is no single "winner."</p>
+                <textarea class="skill-textarea" id="buck-textarea" placeholder="Suicidal ideation: expressions of wanting to die or not wanting to live
+Social support: mentions of friends, family, or community helping
+Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
+                <div class="skill-row">
+                    <input class="skill-input" id="buck-name" type="text" placeholder="Give this list a name" style="max-width:180px;">
+                    <button class="skill-btn" id="buck-save">Save this list</button>
+                    <select class="skill-select" id="buck-load-select" style="max-width:200px;"><option value="">Load a saved list...</option></select>
+                    <button class="skill-btn" id="buck-load">Load</button>
+                    <button class="skill-btn" id="buck-delete">Delete</button>
+                </div>
+            `;
+            container.appendChild(sectionA);
+            const textarea = sectionA.querySelector('#buck-textarea');
+            const nameInput = sectionA.querySelector('#buck-name');
+            const saveBtn = sectionA.querySelector('#buck-save');
+            const loadSelect = sectionA.querySelector('#buck-load-select');
+            const loadBtn = sectionA.querySelector('#buck-load');
+            const deleteBtn = sectionA.querySelector('#buck-delete');
+
+            function refreshSelect() {
+                const map = readBuckets();
+                const names = Object.keys(map).sort();
+                loadSelect.innerHTML = '<option value="">Load a saved list...</option>' +
+                    names.map(n => '<option value="' + n.replace(/"/g, '&quot;') + '">' + n + '</option>').join('');
+            }
+            refreshSelect();
+            saveBtn.addEventListener('click', () => {
+                const name = nameInput.value.trim();
+                if (!name) { nameInput.focus(); return; }
+                saveBucketList(name, textarea.value);
+                refreshSelect();
+                loadSelect.value = name;
+            });
+            loadBtn.addEventListener('click', () => {
+                const name = loadSelect.value;
+                if (!name) return;
+                const map = readBuckets();
+                if (map[name] !== undefined) { textarea.value = map[name]; nameInput.value = name; }
+            });
+            deleteBtn.addEventListener('click', () => {
+                const name = loadSelect.value;
+                if (!name) return;
+                deleteBucketList(name);
+                refreshSelect();
+            });
+
+            const inputTabs = mountClassifierInputTabs('buck');
+            skillStateProbe = { id: 'buckets', fn: () => runningBatch || inputTabs.hasInput() || !!lastResultsSummary || textarea.value.trim().length > 0 };
+            container.appendChild(inputTabs.section);
+
+            const sectionC = document.createElement('div');
+            sectionC.className = 'skill-section';
+            sectionC.innerHTML = `
+                <h3>Score against your labels</h3>
+                <p class="skill-hint">Very long documents are shortened to the first ~4000 characters so the categorizer can handle them.</p>
+                <div class="skill-row">
+                    <button class="skill-btn primary" id="buck-run">Score now</button>
+                    <button class="skill-btn" id="buck-cancel" hidden>Stop</button>
+                </div>
+                <div class="skill-progress" id="buck-progress" hidden>
+                    <div class="skill-progress-msg" id="buck-progress-msg"></div>
+                    <div class="skill-progress-track"><div class="skill-progress-fill" id="buck-progress-fill"></div></div>
+                </div>
+                <div class="skill-status" id="buck-status"></div>
+                <div id="buck-results"></div>
+            `;
+            container.appendChild(sectionC);
+            const runBtn = sectionC.querySelector('#buck-run');
+            const cancelBtn = sectionC.querySelector('#buck-cancel');
+            const statusEl = sectionC.querySelector('#buck-status');
+            const resultsEl = sectionC.querySelector('#buck-results');
+            const progWrap = sectionC.querySelector('#buck-progress');
+            const progMsg = sectionC.querySelector('#buck-progress-msg');
+            const progFill = sectionC.querySelector('#buck-progress-fill');
+
+            runBtn.addEventListener('click', async () => {
+                const { labels, hypotheses } = parseTaxonomyText(textarea.value);
+                if (labels.length < 1) { skillLog(statusEl, 'Add at least one label above.', true); return; }
+                if (!inputTabs.hasInput()) { skillLog(statusEl, 'Choose at least one file or a spreadsheet above.', true); return; }
+                const docs = inputTabs.getDocs();
+                if (!docs.length) { skillLog(statusEl, 'No readable text found in your input.', true); return; }
+                if (anyLoadInProgress && !skillZeroShotLoading) { skillLog(statusEl, 'Something else is downloading in the background. Give it a moment and try again.', true); return; }
+                if (busy) { skillLog(statusEl, 'The chat is still working on a reply. Wait for it to finish and try again.', true); return; }
+
+                resultsEl.innerHTML = '';
+                lastResultsSummary = null;
+                runningBatch = true;
+
+                let classifier;
+                try {
+                    skillLog(statusEl, 'Getting the categorizer ready...');
+                    classifier = await ensureSkillZeroShot(msg => skillLog(statusEl, msg));
+                    if (!classifier) { skillLog(statusEl, 'The categorizer is not available right now.', true); runningBatch = false; return; }
+                } catch (e) {
+                    skillLog(statusEl, 'Could not start the categorizer. Details: ' + errMsg(e), true);
+                    runningBatch = false;
+                    return;
+                }
+
+                const ownerLabel = findSkill(skillsCurrentId)?.name || 'Field Kit';
+                async function bucketsClassify(text) {
+                    try {
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        try { return await classifier(text, hypotheses, { multi_label: true }); }
+                        finally { EngineLock.release(); }
+                    } catch (e) {
+                        if (e.lockCancelled) throw e;
+                        if (!isWebGpuInt64Failure(e)) throw e;
+                        skillLog(statusEl, 'Your browser could not run the categorizer on the GPU. Switching to a slower CPU version and retrying...');
+                        skillForceWasm = true;
+                        await disposeSkillZeroShot();
+                        classifier = await ensureSkillZeroShot(msg => skillLog(statusEl, msg));
+                        if (!classifier) throw new Error('Could not reload the categorizer.');
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        try { return await classifier(text, hypotheses, { multi_label: true }); }
+                        finally { EngineLock.release(); }
+                    }
+                }
+
+                await runClassifierBatch({
+                    docs, statusEl, progWrap, progMsg, progFill, runBtn, cancelBtn,
+                    classifyOne: async (text) => mapScoresBack(await bucketsClassify(truncateForBart(text)), hypotheses, labels),
+                    onDone: (perDoc) => {
+                        runningBatch = false;
+                        const okCount = perDoc.filter(d => d.result).length;
+                        skillLog(statusEl, okCount === perDoc.length
+                            ? 'Done. Scored ' + perDoc.length + ' item' + (perDoc.length === 1 ? '' : 's') + '.'
+                            : 'Done. Scored ' + okCount + ' of ' + perDoc.length + '. Some items could not be read - see below.');
+                        lastResultsSummary = { count: perDoc.length };
+                        renderBucketsResults(inputTabs.getMode(), labels, perDoc, resultsEl, inputTabs.getBulkFileName());
+                    }
+                });
+            });
+        }
+
+        function renderBucketsResults(mode, labels, perDoc, container, bulkName) {
+            container.innerHTML = '';
+            const errored = perDoc.filter(d => d.error);
+            if (errored.length) {
+                const wrap = document.createElement('div');
+                wrap.className = 'skill-section';
+                wrap.innerHTML = '<h3>Items that could not be scored</h3>';
+                const tbl = document.createElement('table');
+                tbl.className = 'skill-table';
+                tbl.innerHTML = '<thead><tr><th>Item</th><th>Reason</th></tr></thead>';
+                const tb = document.createElement('tbody');
+                for (const d of errored) {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td><td style="color:var(--danger);">' + String(d.error).replace(/</g, '&lt;') + '</td>';
+                    tb.appendChild(tr);
+                }
+                tbl.appendChild(tb);
+                wrap.appendChild(tbl);
+                container.appendChild(wrap);
+            }
+            const ok = perDoc.filter(d => d.result);
+            if (!ok.length) return;
+
+            const tbl = document.createElement('table');
+            tbl.className = 'skill-table';
+            tbl.innerHTML = '<thead><tr><th>Item</th>' + labels.map(l => '<th class="num">' + l.replace(/</g, '&lt;') + '</th>').join('') + '</tr></thead>';
+            const tb = document.createElement('tbody');
+            for (const d of ok) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td>' +
+                    labels.map(l => '<td class="num">' + (d.result[l] !== undefined ? fmtPct(d.result[l]) : '') + '</td>').join('');
+                tb.appendChild(tr);
+            }
+            tbl.appendChild(tb);
+            const wrap = document.createElement('div');
+            wrap.className = 'skill-section';
+            wrap.innerHTML = '<h3>Scores for every label</h3><p class="skill-hint">Each item gets an independent score (0-100%) for every label - a high score on one label does not lower another.</p>';
+            wrap.appendChild(tbl);
+            container.appendChild(wrap);
+
+            const dl = document.createElement('div');
+            dl.className = 'skill-row';
+            if (mode === 'bulk') {
+                const btn = document.createElement('button');
+                btn.className = 'skill-btn';
+                btn.textContent = 'Download every row with results added';
+                btn.addEventListener('click', () => {
+                    const orig = (ok[0] && ok[0].row) ? Object.keys(ok[0].row) : [];
+                    const headers = orig.concat(labels.map(l => 'score_' + l));
+                    function* gen() {
+                        for (const d of perDoc) {
+                            const out = {};
+                            for (const h of orig) out[h] = d.row ? d.row[h] : '';
+                            for (const l of labels) out['score_' + l] = (d.result && d.result[l] !== undefined) ? Math.round(d.result[l] * 10000) / 10000 : '';
+                            yield out;
+                        }
+                    }
+                    const base = (bulkName || 'bulk').replace(/\.[^.]+$/, '');
+                    downloadBlob(writeCsvStreaming(gen, headers), base + '_scored.csv');
+                });
+                dl.appendChild(btn);
+            } else {
+                const btn = document.createElement('button');
+                btn.className = 'skill-btn';
+                btn.textContent = 'Download results as CSV';
+                btn.addEventListener('click', () => {
+                    const rows = ok.map(d => { const row = { item: d.id }; for (const l of labels) row[l] = d.result[l] !== undefined ? round2(d.result[l]) : ''; return row; });
+                    downloadBlob(writeCsv(rows), 'buckets_results.csv');
+                });
+                dl.appendChild(btn);
+            }
+            const btnChat = document.createElement('button');
+            btnChat.className = 'skill-btn';
+            btnChat.textContent = 'Send to Chat';
+            btnChat.addEventListener('click', () => {
+                const lines = ['I scored ' + ok.length + ' item(s) against these labels: ' + labels.join(', ') + '.'];
+                for (const d of ok) { lines.push('- ' + d.id + ': ' + labels.map(l => l + ' (' + fmtPct(d.result[l] || 0) + '%)').join(', ')); }
+                lines.push('', 'What patterns do you see?');
+                chatBridge(lines.join('\n'));
+            });
+            dl.appendChild(btnChat);
+            container.appendChild(dl);
+        }
+
+        // ---------- Phase 9e: Extract Entities model loader ----------
+        // Mirrors ensureSkillZeroShot/ensureSkillEmotions' shape.
+        async function disposeSkillNer() {
+            const pl = skillNer;
+            skillNer = null;
+            skillNerLoading = null;
+            if (pl && typeof pl.dispose === 'function') {
+                try { await pl.dispose(); } catch {}
+            }
+        }
+        function ensureSkillNer(onLog) {
+            if (skillNer) return Promise.resolve(skillNer);
+            if (skillNerLoading) return skillNerLoading;
+            const myToken = skillLoadToken;
+            anyLoadInProgress = true;
+            skillNerLoading = (async () => {
+                let ladder = skillNerForceWasm ? [
+                    { device: 'wasm', dtype: 'q8' },
+                    { device: 'wasm', dtype: 'fp32' }
+                ] : [
+                    { device: 'webgpu', dtype: 'q8' },
+                    { device: 'webgpu', dtype: 'fp32' },
+                    { device: 'wasm', dtype: 'q8' },
+                    { device: 'wasm', dtype: 'fp32' }
+                ];
+                ladder = reorderLadderBySavedRung(ladder, loadModelRung(SKILL_NER_ID));
+                const stale = () => myToken !== skillLoadToken;
+                const cached = isCached(SKILL_NER_ID);
+                let lastErr = 'unknown error';
+                for (const step of ladder) {
+                    if (stale()) { hideProgress(); return null; }
+                    try {
+                        if (onLog) onLog('Getting the name finder ready...');
+                        const cb = makeCacheAwareProgress(cached, 'Downloading the name finder to your browser...');
+                        const pl = await pipeline('token-classification', SKILL_NER_ID, {
+                            dtype: step.dtype,
+                            device: step.device,
+                            progress_callback: cb
+                        });
+                        if (stale()) { hideProgress(); return null; }
+                        skillNer = pl;
+                        markCached(SKILL_NER_ID);
+                        saveModelRung(SKILL_NER_ID, step.device, step.dtype);
+                        requestPersistentStorageOnce();
+                        finishProgress();
+                        hideProgress();
+                        return pl;
+                    } catch (e) {
+                        lastErr = errMsg(e);
+                        console.warn('NER model load failed [' + step.dtype + '/' + step.device + ']:', e);
+                        await new Promise(r => setTimeout(r, 50));
+                    }
+                }
+                hideProgress();
+                throw new Error(lastErr);
+            })().catch(e => {
+                skillNerLoading = null;
+                throw e;
+            }).finally(() => {
+                anyLoadInProgress = false;
+            });
+            return skillNerLoading;
+        }
+
+        function mountNerSkill(container) {
+            let runningBatch = false, lastResultsSummary = null;
+            container.innerHTML = '';
+
+            const inputTabs = mountClassifierInputTabs('ner');
+            skillStateProbe = { id: 'ner', fn: () => runningBatch || inputTabs.hasInput() || !!lastResultsSummary };
+            container.appendChild(inputTabs.section);
+
+            const sectionC = document.createElement('div');
+            sectionC.className = 'skill-section';
+            sectionC.innerHTML = `
+                <h3>Find names and places</h3>
+                <p class="skill-hint">Finds people, organizations, and places mentioned in text. Long documents are automatically split into chunks and the results combined.</p>
+                <div class="skill-row">
+                    <button class="skill-btn primary" id="ner-run">Find now</button>
+                    <button class="skill-btn" id="ner-cancel" hidden>Stop</button>
+                </div>
+                <div class="skill-progress" id="ner-progress" hidden>
+                    <div class="skill-progress-msg" id="ner-progress-msg"></div>
+                    <div class="skill-progress-track"><div class="skill-progress-fill" id="ner-progress-fill"></div></div>
+                </div>
+                <div class="skill-status" id="ner-status"></div>
+                <div id="ner-results"></div>
+            `;
+            container.appendChild(sectionC);
+            const runBtn = sectionC.querySelector('#ner-run');
+            const cancelBtn = sectionC.querySelector('#ner-cancel');
+            const statusEl = sectionC.querySelector('#ner-status');
+            const resultsEl = sectionC.querySelector('#ner-results');
+            const progWrap = sectionC.querySelector('#ner-progress');
+            const progMsg = sectionC.querySelector('#ner-progress-msg');
+            const progFill = sectionC.querySelector('#ner-progress-fill');
+
+            runBtn.addEventListener('click', async () => {
+                if (!inputTabs.hasInput()) { skillLog(statusEl, 'Choose at least one file or a spreadsheet above.', true); return; }
+                const docs = inputTabs.getDocs();
+                if (!docs.length) { skillLog(statusEl, 'No readable text found in your input.', true); return; }
+                if (anyLoadInProgress && !skillNerLoading) { skillLog(statusEl, 'Something else is downloading in the background. Give it a moment and try again.', true); return; }
+                if (busy) { skillLog(statusEl, 'The chat is still working on a reply. Wait for it to finish and try again.', true); return; }
+
+                resultsEl.innerHTML = '';
+                lastResultsSummary = null;
+                runningBatch = true;
+
+                let classifier;
+                try {
+                    skillLog(statusEl, 'Getting the name finder ready (first run downloads ~180 MB)...');
+                    classifier = await ensureSkillNer(msg => skillLog(statusEl, msg));
+                    if (!classifier) { skillLog(statusEl, 'The name finder is not available right now.', true); runningBatch = false; return; }
+                } catch (e) {
+                    skillLog(statusEl, 'Could not start the name finder. Details: ' + errMsg(e), true);
+                    runningBatch = false;
+                    return;
+                }
+
+                const ownerLabel = findSkill(skillsCurrentId)?.name || 'Field Kit';
+                async function nerClassify(text) {
+                    try {
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        try { return await classifier(text, { aggregation_strategy: 'simple' }); }
+                        finally { EngineLock.release(); }
+                    } catch (e) {
+                        if (e.lockCancelled) throw e;
+                        if (!isWebGpuInt64Failure(e)) throw e;
+                        skillLog(statusEl, 'Your browser could not run the name finder on the GPU. Switching to a slower CPU version and retrying...');
+                        skillNerForceWasm = true;
+                        await disposeSkillNer();
+                        classifier = await ensureSkillNer(msg => skillLog(statusEl, msg));
+                        if (!classifier) throw new Error('Could not reload the name finder.');
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        try { return await classifier(text, { aggregation_strategy: 'simple' }); }
+                        finally { EngineLock.release(); }
+                    }
+                }
+
+                // One item's NER, chunked for long text (reuses chunkText)
+                // and merged/counted across chunks.
+                async function nerOne(text) {
+                    const chunks = text.length > 1500 ? chunkText(text) : [text];
+                    const found = [];
+                    for (const chunk of chunks) {
+                        const ents = await nerClassify(chunk);
+                        for (const e of ents) {
+                            const type = (e.entity_group || e.entity || '').replace(/^[BI]-/, '');
+                            if (!NER_TYPE_LABELS[type]) continue;
+                            found.push({ text: (e.word || '').trim(), type });
+                        }
+                    }
+                    const counts = new Map();
+                    for (const f of found) {
+                        if (!f.text) continue;
+                        const key = f.type + '::' + f.text.toLowerCase();
+                        if (!counts.has(key)) counts.set(key, { text: f.text, type: f.type, count: 0 });
+                        counts.get(key).count++;
+                    }
+                    return Array.from(counts.values());
+                }
+
+                await runClassifierBatch({
+                    docs, statusEl, progWrap, progMsg, progFill, runBtn, cancelBtn,
+                    classifyOne: (text) => nerOne(text),
+                    onDone: (perDoc) => {
+                        runningBatch = false;
+                        const okCount = perDoc.filter(d => d.result).length;
+                        skillLog(statusEl, okCount === perDoc.length
+                            ? 'Done. Checked ' + perDoc.length + ' item' + (perDoc.length === 1 ? '' : 's') + '.'
+                            : 'Done. Checked ' + okCount + ' of ' + perDoc.length + '. Some items could not be read - see below.');
+                        lastResultsSummary = { count: perDoc.length };
+                        renderNerResults(inputTabs.getMode(), perDoc, resultsEl, inputTabs.getBulkFileName());
+                    }
+                });
+            });
+        }
+
+        function renderNerResults(mode, perDoc, container, bulkName) {
+            container.innerHTML = '';
+            const errored = perDoc.filter(d => d.error);
+            if (errored.length) {
+                const wrap = document.createElement('div');
+                wrap.className = 'skill-section';
+                wrap.innerHTML = '<h3>Items that could not be checked</h3>';
+                const tbl = document.createElement('table');
+                tbl.className = 'skill-table';
+                tbl.innerHTML = '<thead><tr><th>Item</th><th>Reason</th></tr></thead>';
+                const tb = document.createElement('tbody');
+                for (const d of errored) {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td><td style="color:var(--danger);">' + String(d.error).replace(/</g, '&lt;') + '</td>';
+                    tb.appendChild(tr);
+                }
+                tbl.appendChild(tb);
+                wrap.appendChild(tbl);
+                container.appendChild(wrap);
+            }
+            const ok = perDoc.filter(d => d.result);
+            if (!ok.length) return;
+
+            const agg = new Map();
+            for (const d of ok) {
+                for (const e of d.result) {
+                    const key = e.type + '::' + e.text.toLowerCase();
+                    if (!agg.has(key)) agg.set(key, { text: e.text, type: e.type, count: 0 });
+                    agg.get(key).count += e.count;
+                }
+            }
+            const rows = Array.from(agg.values()).sort((a, b) => b.count - a.count);
+            const tbl = document.createElement('table');
+            tbl.className = 'skill-table';
+            tbl.innerHTML = '<thead><tr><th>Name or place</th><th>Type</th><th class="num">Times mentioned</th></tr></thead>';
+            const tb = document.createElement('tbody');
+            for (const r of rows) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td>' + r.text.replace(/</g, '&lt;') + '</td><td>' + (NER_TYPE_LABELS[r.type] || r.type) + '</td><td class="num">' + r.count + '</td>';
+                tb.appendChild(tr);
+            }
+            tbl.appendChild(tb);
+            const wrap = document.createElement('div');
+            wrap.className = 'skill-section';
+            wrap.innerHTML = '<h3>Names and places found</h3><p class="skill-hint">Combined across all items. "Times mentioned" counts every occurrence.</p>';
+            wrap.appendChild(tbl);
+            container.appendChild(wrap);
+
+            const dl = document.createElement('div');
+            dl.className = 'skill-row';
+            if (mode === 'bulk') {
+                const btn = document.createElement('button');
+                btn.className = 'skill-btn';
+                btn.textContent = 'Download every row with results added';
+                btn.addEventListener('click', () => {
+                    const orig = (ok[0] && ok[0].row) ? Object.keys(ok[0].row) : [];
+                    const headers = orig.concat(['entities_person', 'entities_organization', 'entities_place', 'entities_other']);
+                    function* gen() {
+                        for (const d of perDoc) {
+                            const out = {};
+                            for (const h of orig) out[h] = d.row ? d.row[h] : '';
+                            const byType = { PER: [], ORG: [], LOC: [], MISC: [] };
+                            if (d.result) for (const e of d.result) if (byType[e.type]) byType[e.type].push(e.text);
+                            out.entities_person = byType.PER.join('; ');
+                            out.entities_organization = byType.ORG.join('; ');
+                            out.entities_place = byType.LOC.join('; ');
+                            out.entities_other = byType.MISC.join('; ');
+                            yield out;
+                        }
+                    }
+                    const base = (bulkName || 'bulk').replace(/\.[^.]+$/, '');
+                    downloadBlob(writeCsvStreaming(gen, headers), base + '_entities.csv');
+                });
+                dl.appendChild(btn);
+            } else {
+                const btn = document.createElement('button');
+                btn.className = 'skill-btn';
+                btn.textContent = 'Download results as CSV';
+                btn.addEventListener('click', () => downloadBlob(writeCsv(rows.map(r => ({ text: r.text, type: NER_TYPE_LABELS[r.type] || r.type, count: r.count }))), 'entities_results.csv'));
+                dl.appendChild(btn);
+            }
+            const btnChat = document.createElement('button');
+            btnChat.className = 'skill-btn';
+            btnChat.textContent = 'Send to Chat';
+            btnChat.addEventListener('click', () => {
+                const lines = ['I found these names and places:'];
+                for (const r of rows.slice(0, 30)) lines.push('- ' + r.text + ' (' + (NER_TYPE_LABELS[r.type] || r.type) + '): mentioned ' + r.count + ' time(s)');
+                lines.push('', 'What patterns do you see?');
+                chatBridge(lines.join('\n'));
+            });
+            dl.appendChild(btnChat);
+            container.appendChild(dl);
+        }
+
+        // ---------- Phase 9e: Find Similar / Dedup skill ----------
+        // TODO(dedup-cosine-consolidation): this duplicates the dot-product-
+        // of-normalized-vectors loop that already appears 3 other places in
+        // this file - scoreTier1, retrieveKb, retrieveAttachments - all of
+        // them assuming flat Float32Arrays with `dims`-stride row offsets,
+        // same as here. Deliberately NOT refactoring those 3 existing call
+        // sites in this pass (they are proven, in-scope-critical retrieval/
+        // router code, and touching them wasn't part of this session's ask)
+        // - but if a future pass consolidates, this is the helper to point
+        // scoreTier1/retrieveKb/retrieveAttachments at instead of their own
+        // inline copies.
+        function cosineSim(vecA, offA, vecB, offB, dims) {
+            let dot = 0;
+            for (let d = 0; d < dims; d++) dot += vecA[offA + d] * vecB[offB + d];
+            return dot;
+        }
+
+        function mountDedupSkill(container) {
+            let inputMode = 'bulk'; // 'bulk' | 'paste'
+            let bulkRows = null, bulkHeaders = [], bulkFileName = '';
+            let runningBatch = false, lastResultsSummary = null;
+            let pasteArea = null; // forward-declared for the state probe below
+            container.innerHTML = '';
+
+            skillStateProbe = {
+                id: 'dedup',
+                fn: () => runningBatch || (bulkRows && bulkRows.length > 0) || (pasteArea && pasteArea.value.trim().length > 0) || !!lastResultsSummary
+            };
+
+            const sectionA = document.createElement('div');
+            sectionA.className = 'skill-section';
+            sectionA.innerHTML = `
+                <h3>What to compare</h3>
+                <div class="skill-tabs">
+                    <button class="skill-tab active" data-mode="bulk">A spreadsheet column</button>
+                    <button class="skill-tab" data-mode="paste">A pasted list</button>
+                </div>
+                <div id="dd-bulk-pane">
+                    <p class="skill-hint">Upload a spreadsheet (CSV or Excel). The first row must be column headers.</p>
+                    <button class="skill-btn" id="dd-bulk-btn">Choose a spreadsheet...</button>
+                    <input type="file" id="dd-bulk-input" accept="text/csv,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,.tsv,.xlsx,.xls" hidden>
+                    <div id="dd-bulk-file" class="skill-hint" style="margin-top:6px;"></div>
+                    <div class="skill-row" id="dd-bulk-cols" hidden>
+                        <label style="font-size:0.78rem;color:var(--muted);">Which column has the text to compare?
+                            <select class="skill-select" id="dd-bulk-text" style="margin-left:4px;"></select>
+                        </label>
+                    </div>
+                </div>
+                <div id="dd-paste-pane" hidden>
+                    <p class="skill-hint">Paste one item per line.</p>
+                    <textarea class="skill-textarea" id="dd-paste-textarea" placeholder="I can't sleep at night.
+Trouble sleeping most nights.
+Feeling anxious about work."></textarea>
+                </div>
+            `;
+            container.appendChild(sectionA);
+
+            const bulkPane = sectionA.querySelector('#dd-bulk-pane');
+            const pastePane = sectionA.querySelector('#dd-paste-pane');
+            const bulkBtn = sectionA.querySelector('#dd-bulk-btn');
+            const bulkInput = sectionA.querySelector('#dd-bulk-input');
+            const bulkFileLabel = sectionA.querySelector('#dd-bulk-file');
+            const bulkColsRow = sectionA.querySelector('#dd-bulk-cols');
+            const bulkTextSel = sectionA.querySelector('#dd-bulk-text');
+            pasteArea = sectionA.querySelector('#dd-paste-textarea');
+
+            sectionA.querySelectorAll('.skill-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    sectionA.querySelectorAll('.skill-tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    inputMode = tab.dataset.mode;
+                    bulkPane.hidden = inputMode !== 'bulk';
+                    pastePane.hidden = inputMode !== 'paste';
+                });
+            });
+
+            bulkBtn.addEventListener('click', () => bulkInput.click());
+            bulkInput.addEventListener('change', async () => {
+                if (!bulkInput.files.length) return;
+                const file = bulkInput.files[0];
+                bulkInput.value = '';
+                try {
+                    const [ingested] = await ingestFiles([file], { accept: ['csv', 'tsv', 'xlsx', 'xls'] });
+                    if (!ingested || ingested.kind !== 'table' || !ingested.rows.length) throw new Error('Could not read this file, or it has no rows.');
+                    bulkRows = ingested.rows;
+                    bulkHeaders = ingested.headers;
+                    bulkFileName = ingested.name;
+                    bulkFileLabel.textContent = bulkFileName + '  (' + bulkRows.length + ' row' + (bulkRows.length === 1 ? '' : 's') + ')';
+                    bulkTextSel.innerHTML = bulkHeaders.map(h => '<option value="' + h.replace(/"/g, '&quot;') + '">' + h + '</option>').join('');
+                    bulkColsRow.hidden = false;
+                } catch (e) {
+                    bulkRows = null; bulkHeaders = []; bulkFileName = '';
+                    bulkFileLabel.textContent = '';
+                    bulkColsRow.hidden = true;
+                    skillLog(statusEl, 'Could not read this spreadsheet. Details: ' + errMsg(e), true);
+                }
+            });
+
+            const sectionC = document.createElement('div');
+            sectionC.className = 'skill-section';
+            sectionC.innerHTML = `
+                <h3>Find similar or duplicate text</h3>
+                <div class="skill-row">
+                    <label style="font-size:0.82rem;color:var(--ink);display:flex;gap:10px;align-items:center;">
+                        How similar counts as a duplicate?
+                        <input type="range" id="dd-threshold" min="0.75" max="0.99" step="0.01" value="0.90" style="flex:1;max-width:240px;">
+                        <span id="dd-threshold-val">0.90</span>
+                    </label>
+                </div>
+                <div class="skill-row" style="margin-top:6px;">
+                    <button class="skill-btn primary" id="dd-run">Compare now</button>
+                    <button class="skill-btn" id="dd-cancel" hidden>Stop</button>
+                </div>
+                <div class="skill-progress" id="dd-progress" hidden>
+                    <div class="skill-progress-msg" id="dd-progress-msg"></div>
+                    <div class="skill-progress-track"><div class="skill-progress-fill" id="dd-progress-fill"></div></div>
+                </div>
+                <div class="skill-status" id="dd-status"></div>
+                <div id="dd-results"></div>
+            `;
+            container.appendChild(sectionC);
+            const runBtn = sectionC.querySelector('#dd-run');
+            const cancelBtn = sectionC.querySelector('#dd-cancel');
+            const statusEl = sectionC.querySelector('#dd-status');
+            const resultsEl = sectionC.querySelector('#dd-results');
+            const progWrap = sectionC.querySelector('#dd-progress');
+            const progMsg = sectionC.querySelector('#dd-progress-msg');
+            const progFill = sectionC.querySelector('#dd-progress-fill');
+            const thresholdInput = sectionC.querySelector('#dd-threshold');
+            const thresholdVal = sectionC.querySelector('#dd-threshold-val');
+            let lastVecs = null, lastItems = null; // kept so moving the slider re-clusters without re-embedding
+
+            thresholdInput.addEventListener('input', () => {
+                thresholdVal.textContent = thresholdInput.value;
+                if (lastVecs) renderDedupResults(lastItems, lastVecs, parseFloat(thresholdInput.value), resultsEl, inputMode, bulkFileName);
+            });
+
+            function finishRun() {
+                runningBatch = false;
+                skillBatchRunning = false;
+                runBtn.disabled = false;
+                cancelBtn.hidden = true;
+                progressListeners.delete(localProgressListener);
+                progWrap.hidden = true;
+                renderTabs();
+            }
+            const localProgressListener = (state) => {
+                if (!state.visible) { progWrap.hidden = true; return; }
+                progWrap.hidden = false;
+                progMsg.textContent = state.message + ' ' + state.pct + '%';
+                progFill.style.width = state.pct + '%';
+            };
+            cancelBtn.addEventListener('click', () => {
+                skillLoadToken++;
+                skillLockWaitCtl.abort();
+                skillLog(statusEl, 'Stopped.');
+                finishRun();
+            });
+
+            runBtn.addEventListener('click', async () => {
+                let items; // Array<{id, text, row?}>
+                if (inputMode === 'bulk') {
+                    if (!bulkRows || !bulkRows.length) { skillLog(statusEl, 'Choose a spreadsheet above first.', true); return; }
+                    const textCol = bulkTextSel.value;
+                    items = bulkRows.map((r, i) => ({ id: 'row-' + (i + 1), text: String(r[textCol] !== undefined && r[textCol] !== null ? r[textCol] : ''), row: r })).filter(d => d.text.trim());
+                } else {
+                    const lines = pasteArea.value.split('\n').map(l => l.trim()).filter(Boolean);
+                    items = lines.map((l, i) => ({ id: 'row-' + (i + 1), text: l }));
+                }
+                if (items.length < 2) { skillLog(statusEl, 'Need at least two items to compare.', true); return; }
+                if (anyLoadInProgress) { skillLog(statusEl, 'Something else is downloading in the background. Give it a moment and try again.', true); return; }
+                if (busy) { skillLog(statusEl, 'The chat is still working on a reply. Wait for it to finish and try again.', true); return; }
+
+                resultsEl.innerHTML = '';
+                lastResultsSummary = null;
+                lastVecs = null; lastItems = null;
+                runningBatch = true;
+                skillBatchRunning = true;
+                runBtn.disabled = true;
+                cancelBtn.hidden = false;
+                progressListeners.add(localProgressListener);
+                renderTabs();
+                const myToken = skillLoadToken;
+                const ownerLabel = findSkill(skillsCurrentId)?.name || 'Field Kit';
+
+                let em;
+                try {
+                    skillLog(statusEl, 'Getting the comparer ready...');
+                    em = await ensureKbEmbedder(); // reused singleton - never a second load
+                } catch (e) {
+                    skillLog(statusEl, 'Could not start the comparer. Details: ' + errMsg(e), true);
+                    finishRun();
+                    return;
+                }
+                if (myToken !== skillLoadToken) { skillLog(statusEl, 'Stopped.'); finishRun(); return; }
+
+                // Embed in fixed-size chunks so progress/Stop stay responsive
+                // and the engine lock is acquired/released per chunk rather
+                // than held for the whole pass. Symmetric comparison - NO
+                // KB_QUERY_INSTRUCTION prefix on any item (see design doc
+                // 10.2's bge-small rule): every row is encoded exactly the
+                // same way, since this is row-vs-row, not query-vs-passage.
+                const CHUNK = 64;
+                const dims = KB_DIMS;
+                const vecs = new Float32Array(items.length * dims);
+                for (let start = 0; start < items.length; start += CHUNK) {
+                    if (myToken !== skillLoadToken) { skillLog(statusEl, 'Stopped.'); finishRun(); return; }
+                    const slice = items.slice(start, start + CHUNK).map(it => it.text);
+                    skillLog(statusEl, 'Comparing item ' + Math.min(start + CHUNK, items.length) + ' of ' + items.length + '...');
+                    try {
+                        await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
+                        let out;
+                        try {
+                            out = await em(slice, { pooling: 'cls', normalize: true });
+                        } finally {
+                            EngineLock.release();
+                        }
+                        vecs.set(out.data, start * dims);
+                    } catch (e) {
+                        if (e.lockCancelled) { skillLog(statusEl, 'Stopped.'); finishRun(); return; }
+                        skillLog(statusEl, 'Could not compare these items. Details: ' + errMsg(e), true);
+                        finishRun();
+                        return;
+                    }
+                }
+                if (myToken !== skillLoadToken) { skillLog(statusEl, 'Stopped.'); finishRun(); return; }
+
+                lastVecs = vecs; lastItems = items;
+                lastResultsSummary = { count: items.length };
+                skillLog(statusEl, 'Done. Compared ' + items.length + ' items. Adjust the slider above to change what counts as a duplicate.');
+                finishRun();
+                renderDedupResults(items, vecs, parseFloat(thresholdInput.value), resultsEl, inputMode, bulkFileName);
+            });
+        }
+
+        function renderDedupResults(items, vecs, threshold, container, mode, bulkFileName) {
+            container.innerHTML = '';
+            const dims = KB_DIMS;
+            const n = items.length;
+            const pairs = [];
+            for (let i = 0; i < n; i++) {
+                for (let j = i + 1; j < n; j++) {
+                    const score = cosineSim(vecs, i * dims, vecs, j * dims, dims);
+                    if (score >= threshold) pairs.push({ i, j, score });
+                }
+            }
+            pairs.sort((a, b) => b.score - a.score);
+
+            // Greedy single-linkage clustering: union-find over items
+            // connected by any pair at/above the threshold.
+            const parent = Array.from({ length: n }, (_, i) => i);
+            function find(x) { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+            function union(a, b) { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; }
+            for (const p of pairs) union(p.i, p.j);
+            const clusterMembers = new Map();
+            for (let i = 0; i < n; i++) {
+                const r = find(i);
+                if (!clusterMembers.has(r)) clusterMembers.set(r, []);
+                clusterMembers.get(r).push(i);
+            }
+            let nextClusterId = 1;
+            const clusterIdByItem = new Array(n).fill('');
+            for (const members of clusterMembers.values()) {
+                if (members.length < 2) continue; // singleton - no cluster id
+                const cid = nextClusterId++;
+                for (const m of members) clusterIdByItem[m] = String(cid);
+            }
+
+            if (!pairs.length) {
+                const p = document.createElement('p');
+                p.className = 'skill-hint';
+                p.textContent = 'No pairs scored at or above ' + threshold.toFixed(2) + '. Try lowering the slider above.';
+                container.appendChild(p);
+                return;
+            }
+
+            const wrap = document.createElement('div');
+            wrap.className = 'skill-section';
+            wrap.innerHTML = '<h3>Similar pairs</h3><p class="skill-hint">' + pairs.length + ' pair(s) scored at or above ' + threshold.toFixed(2) + '. Grouped into ' + (nextClusterId - 1) + ' cluster(s) of near-duplicates.</p>';
+            const tbl = document.createElement('table');
+            tbl.className = 'skill-table';
+            tbl.innerHTML = '<thead><tr><th>Item A</th><th>Item B</th><th class="num">Similarity</th></tr></thead>';
+            const tb = document.createElement('tbody');
+            for (const p of pairs.slice(0, 200)) {
+                const tr = document.createElement('tr');
+                const ta = items[p.i].text.length > 100 ? items[p.i].text.slice(0, 100) + '...' : items[p.i].text;
+                const tbTxt = items[p.j].text.length > 100 ? items[p.j].text.slice(0, 100) + '...' : items[p.j].text;
+                tr.innerHTML = '<td>' + ta.replace(/</g, '&lt;') + '</td><td>' + tbTxt.replace(/</g, '&lt;') + '</td><td class="num">' + fmtPct(p.score) + '%</td>';
+                tb.appendChild(tr);
+            }
+            tbl.appendChild(tb);
+            wrap.appendChild(tbl);
+            container.appendChild(wrap);
+
+            const dl = document.createElement('div');
+            dl.className = 'skill-row';
+            const btn = document.createElement('button');
+            btn.className = 'skill-btn';
+            btn.textContent = 'Download results as CSV';
+            btn.addEventListener('click', () => {
+                if (mode === 'bulk' && items[0] && items[0].row) {
+                    const orig = Object.keys(items[0].row);
+                    const headers = orig.concat(['dedup_cluster_id']);
+                    function* gen() {
+                        for (let i = 0; i < items.length; i++) {
+                            const out = {};
+                            for (const h of orig) out[h] = items[i].row[h];
+                            out.dedup_cluster_id = clusterIdByItem[i];
+                            yield out;
+                        }
+                    }
+                    const base = (bulkFileName || 'bulk').replace(/\.[^.]+$/, '');
+                    downloadBlob(writeCsvStreaming(gen, headers), base + '_dedup.csv');
+                } else {
+                    const rows = items.map((it, i) => ({ row_index: i + 1, text: it.text, dedup_cluster_id: clusterIdByItem[i] }));
+                    downloadBlob(writeCsv(rows), 'dedup_results.csv');
+                }
+            });
+            dl.appendChild(btn);
+            container.appendChild(dl);
+        }
+
+        // ---------- Phase 9e: Summarize / Themes ----------
+        // Map-reduce summarizer used by both the standalone Summarize/Themes
+        // skill and the Transcribe skill's "Summarize in chat"/"Extract
+        // themes in chat" buttons. Chunks long text with the existing
+        // chunkText() helper (never sends a whole document in one prompt),
+        // maps each chunk through the active chat model via
+        // oneShotWithToken (which already acquires/releases the engine lock
+        // per call, and is already Ollama-aware via ModelGateway), then
+        // reduces the per-chunk outputs into one final answer. mode:
+        // 'summary' | 'themes'. onProgress(doneCount, totalCount) is optional.
+        async function summarizeChunked(text, mode, token, onProgress) {
+            const oneShot = oneShotWithToken(token);
+            const chunks = chunkText(text);
+            const useChunks = chunks.length ? chunks : [text];
+            if (useChunks.length === 1) {
+                const prompt = mode === 'themes'
+                    ? 'Read this text and list the main themes discussed, with one short supporting quote for each.\n\n' + useChunks[0]
+                    : 'Summarize this text in a few sentences.\n\n' + useChunks[0];
+                return await oneShot(prompt, 500);
+            }
+            const partials = [];
+            for (let i = 0; i < useChunks.length; i++) {
+                if (onProgress) onProgress(i, useChunks.length);
+                const prompt = mode === 'themes'
+                    ? 'This is part ' + (i + 1) + ' of ' + useChunks.length + ' of a longer document. List the notable themes or topics discussed in THIS PART ONLY, with a short supporting quote for each. Be brief.\n\n' + useChunks[i]
+                    : 'This is part ' + (i + 1) + ' of ' + useChunks.length + ' of a longer document. Summarize THIS PART ONLY in 2-3 sentences.\n\n' + useChunks[i];
+                partials.push(await oneShot(prompt, 300));
+            }
+            if (onProgress) onProgress(useChunks.length, useChunks.length);
+            const combinedInput = partials.map((p, i) => 'Part ' + (i + 1) + ':\n' + p).join('\n\n');
+            const reducePrompt = mode === 'themes'
+                ? 'Below are theme notes from consecutive parts of one document. Combine them into one clear list of the main themes discussed overall, with one short supporting quote for each. Merge themes that repeat across parts.\n\n' + combinedInput
+                : 'Below are summaries of consecutive parts of one document. Combine them into one coherent summary of the whole document, in a few paragraphs.\n\n' + combinedInput;
+            return await oneShot(reducePrompt, 700);
+        }
+
+        function mountSummarizeSkill(container) {
+            let running = false;
+            let lastResult = null;
+            container.innerHTML = '';
+
+            skillStateProbe = { id: 'summarize', fn: () => running || !!lastResult };
+
+            const sectionA = document.createElement('div');
+            sectionA.className = 'skill-section';
+            sectionA.innerHTML = `
+                <h3>Text to work with</h3>
+                <p class="skill-hint">Paste text below, or upload a plain-text or PDF document.</p>
+                <textarea class="skill-textarea" id="sum-textarea" placeholder="Paste an interview transcript or other long text here..."></textarea>
+                <div class="skill-row" style="margin-top:8px;">
+                    <button class="skill-btn" id="sum-files-btn">Or upload a document...</button>
+                    <input type="file" id="sum-files-input" accept=".txt,.pdf" hidden>
+                </div>
+                <div id="sum-files-chip" style="margin-top:6px;"></div>
+            `;
+            container.appendChild(sectionA);
+            const textarea = sectionA.querySelector('#sum-textarea');
+            const filesBtn = sectionA.querySelector('#sum-files-btn');
+            const filesInput = sectionA.querySelector('#sum-files-input');
+            const filesChip = sectionA.querySelector('#sum-files-chip');
+
+            filesBtn.addEventListener('click', () => filesInput.click());
+            filesInput.addEventListener('change', async () => {
+                if (!filesInput.files.length) return;
+                const errs = [];
+                const docs = await ingestFiles(filesInput.files, {
+                    accept: ['txt', 'pdf'],
+                    onFileError: (f, e) => errs.push(f.name + ': ' + errMsg(e))
+                });
+                filesInput.value = '';
+                const d = docs.find(x => x.kind === 'text');
+                if (d) {
+                    textarea.value = d.text || '';
+                    filesChip.innerHTML = '<span class="skill-chip">' + d.name.replace(/</g, '&lt;') + '</span>';
+                } else if (errs.length) {
+                    filesChip.innerHTML = '<div class="skill-banner error">' + errs.map(e => e.replace(/</g, '&lt;')).join('<br>') + '</div>';
+                }
+            });
+
+            const sectionC = document.createElement('div');
+            sectionC.className = 'skill-section';
+            sectionC.innerHTML = `
+                <h3>Summarize or find themes</h3>
+                <p class="skill-hint">Long text is automatically split into chunks and combined - it is never sent to the model in one giant prompt. A bigger chat model will do noticeably better than a very small one.</p>
+                <div class="skill-row">
+                    <button class="skill-btn primary" id="sum-run-summary">Summarize</button>
+                    <button class="skill-btn primary" id="sum-run-themes">Find themes</button>
+                    <button class="skill-btn" id="sum-cancel" hidden>Stop</button>
+                </div>
+                <div class="skill-status" id="sum-status"></div>
+                <div id="sum-results"></div>
+            `;
+            container.appendChild(sectionC);
+            const runSummaryBtn = sectionC.querySelector('#sum-run-summary');
+            const runThemesBtn = sectionC.querySelector('#sum-run-themes');
+            const cancelBtn = sectionC.querySelector('#sum-cancel');
+            const statusEl = sectionC.querySelector('#sum-status');
+            const resultsEl = sectionC.querySelector('#sum-results');
+
+            function setRunning(isRunning) {
+                running = isRunning;
+                skillBatchRunning = isRunning;
+                runSummaryBtn.disabled = isRunning;
+                runThemesBtn.disabled = isRunning;
+                cancelBtn.hidden = !isRunning;
+                renderTabs();
+            }
+
+            cancelBtn.addEventListener('click', () => {
+                skillLoadToken++;
+                skillLockWaitCtl.abort();
+                ModelGateway.interrupt();
+                skillLog(statusEl, 'Stopped.');
+                setRunning(false);
+            });
+
+            function renderSummarizeResult(text, container) {
+                container.innerHTML = '';
+                const box = document.createElement('div');
+                box.className = 'skill-section';
+                const pre = document.createElement('p');
+                pre.style.whiteSpace = 'pre-wrap';
+                pre.textContent = text;
+                box.appendChild(pre);
+                container.appendChild(box);
+                const row = document.createElement('div');
+                row.className = 'skill-row';
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'skill-btn';
+                copyBtn.textContent = 'Copy';
+                copyBtn.addEventListener('click', () => { navigator.clipboard.writeText(text).catch(() => {}); });
+                row.appendChild(copyBtn);
+                const dlBtn = document.createElement('button');
+                dlBtn.className = 'skill-btn';
+                dlBtn.textContent = 'Download .txt';
+                dlBtn.addEventListener('click', () => downloadBlob(new Blob([text], { type: 'text/plain' }), 'summary.txt'));
+                row.appendChild(dlBtn);
+                const chatBtn = document.createElement('button');
+                chatBtn.className = 'skill-btn';
+                chatBtn.textContent = 'Send to Chat';
+                chatBtn.addEventListener('click', () => chatBridge(text));
+                row.appendChild(chatBtn);
+                container.appendChild(row);
+            }
+
+            async function runMode(mode) {
+                const text = textarea.value.trim();
+                if (!text) { skillLog(statusEl, 'Paste some text or upload a document above first.', true); return; }
+                if (busy) { skillLog(statusEl, 'The chat is still working on a reply. Wait for it to finish and try again.', true); return; }
+
+                resultsEl.innerHTML = '';
+                lastResult = null;
+                setRunning(true);
+                const myToken = skillLoadToken;
+                try {
+                    skillLog(statusEl, 'Working through the text in chunks...');
+                    const result = await summarizeChunked(text, mode, myToken, (done, total) => {
+                        if (myToken === skillLoadToken) skillLog(statusEl, 'Working through part ' + done + ' of ' + total + '...');
+                    });
+                    if (myToken !== skillLoadToken) { skillLog(statusEl, 'Stopped.'); setRunning(false); return; }
+                    lastResult = result;
+                    skillLog(statusEl, 'Done.');
+                    renderSummarizeResult(result, resultsEl);
+                } catch (e) {
+                    if (String(e && e.message) === 'stale') { skillLog(statusEl, 'Stopped.'); }
+                    else { skillLog(statusEl, 'Could not finish. Details: ' + errMsg(e), true); console.error('Summarize/themes failed:', e); }
+                } finally {
+                    setRunning(false);
+                }
+            }
+            runSummaryBtn.addEventListener('click', () => runMode('summary'));
+            runThemesBtn.addEventListener('click', () => runMode('themes'));
         }
 
         // ---------- Mic dictation ----------
