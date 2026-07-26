@@ -935,6 +935,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
     <div id="skills-panel">
         <div id="skills-panel-header">
+            <button type="button" class="skill-btn" id="skills-back" title="Back" hidden>&#8592; Back</button>
             <h2 class="skills-title" id="skills-title">Field Kit</h2>
             <button type="button" class="skill-btn" id="skills-reset" title="Start over (clear files and categories)" hidden>&#8635; Start over</button>
             <button type="button" class="skill-btn primary" id="skills-done" hidden>Done</button>
@@ -8113,8 +8114,20 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const skillsTitle = document.getElementById('skills-title');
         const skillsDoneBtn = document.getElementById('skills-done');
         const skillsResetBtn = document.getElementById('skills-reset');
+        const skillsBackBtn = document.getElementById('skills-back');
         const skillsEngineWaitEl = document.getElementById('skills-engine-wait');
         let skillsCurrentId = null;
+        // Back-arrow support: a skill left via the back arrow (rather than
+        // Done) stays mounted-but-detached here instead of being reset, so
+        // re-entering it resumes exactly where the user left off.
+        // skillsCurrentId / skillStateProbe are deliberately left pointing at
+        // it while paused - see goToGridPreservingSkill().
+        let pausedSkillRoot = null;
+        // Optional { id, fn } a multi-stage skill (currently only
+        // csv-combine) registers so the back arrow can step back one
+        // internal screen instead of leaving to the grid. fn() returns true
+        // if it handled the step-back, false to defer to the grid.
+        let skillBackHandler = null;
 
         // Wait-state UI (item 12): visible only while a skill is mounted AND
         // some OTHER surface (chat) currently holds the shared engine lock.
@@ -8166,11 +8179,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // back to the grid. Called by "Done" and the tab's close-x.
             skillLoadToken++;
             skillStateProbe = null;
+            skillBackHandler = null;
+            pausedSkillRoot = null; // also drop a paused skill, if any - Done/close discard everything
             skillsBody.innerHTML = '';
             skillsCurrentId = null;
             skillCompanionChatId = null; // "Send to Chat" starts a fresh companion next time
             skillsDoneBtn.hidden = true;
             skillsResetBtn.hidden = true;
+            skillsBackBtn.hidden = true;
             skillsTitle.textContent = 'Field Kit';
             // Belt-and-braces (item 22): this function must never touch chat
             // attachments (Phase 4A) - a skill Reset must not destroy user
@@ -8199,13 +8215,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
             applySurfaceVisibility();
         }
 
-        function renderSkillsGrid() {
-            skillsCurrentId = null;
-            skillsDoneBtn.hidden = true;
-            skillsResetBtn.hidden = true;
-            skillStateProbe = null;
-            skillsTitle.textContent = 'Field Kit';
-            skillsBody.innerHTML = '';
+        // Builds the skill-card grid element. Shared by renderSkillsGrid()
+        // (the genuine "nothing running" grid) and goToGridPreservingSkill()
+        // (the grid shown while a skill is paused in the background).
+        function buildSkillsGrid() {
             const grid = document.createElement('div');
             grid.className = 'skills-grid';
             for (const s of SKILLS) {
@@ -8253,19 +8266,82 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 }
                 grid.appendChild(card);
             }
-            skillsBody.appendChild(grid);
+            return grid;
         }
+        function renderSkillsGrid() {
+            skillsCurrentId = null;
+            skillsDoneBtn.hidden = true;
+            skillsResetBtn.hidden = true;
+            skillsBackBtn.hidden = true;
+            skillStateProbe = null;
+            skillBackHandler = null;
+            pausedSkillRoot = null;
+            skillsTitle.textContent = 'Field Kit';
+            skillsBody.innerHTML = '';
+            skillsBody.appendChild(buildSkillsGrid());
+        }
+        // Leaves the currently-shown skill mounted-but-detached and shows the
+        // grid, without resetting anything - the back arrow's "no data
+        // loss" behavior. skillsCurrentId / skillStateProbe are left
+        // pointing at the paused skill on purpose: the tab title, running
+        // dot, engine-wait banner, and every "Waiting - X is using the
+        // model" label already key off skillsCurrentId, and a paused skill
+        // (e.g. a background batch) is still the thing "running."
+        function goToGridPreservingSkill() {
+            const frag = document.createDocumentFragment();
+            while (skillsBody.firstChild) frag.appendChild(skillsBody.firstChild);
+            pausedSkillRoot = frag;
+            skillsDoneBtn.hidden = true;
+            skillsResetBtn.hidden = true;
+            skillsBackBtn.hidden = true;
+            skillsTitle.textContent = 'Field Kit';
+            skillsBody.appendChild(buildSkillsGrid());
+            renderTabs();
+        }
+        skillsBackBtn.addEventListener('click', () => {
+            if (skillBackHandler && skillBackHandler.id === skillsCurrentId && skillBackHandler.fn()) return;
+            goToGridPreservingSkill();
+        });
         // Skills that expose an in-header "Start over" button. All ready
         // skills should be here so the button isn't taxonomy-only.
         const SKILL_HAS_RESET = new Set(['taxonomy-classify', 'csv-combine', 'transcribe', 'emotions', 'pain-level', 'buckets', 'ner', 'dedup', 'summarize']);
         function enterSkill(skill) {
+            if (pausedSkillRoot && skillsCurrentId === skill.id) {
+                // Resume: same skill the back arrow left paused. Reattach
+                // its DOM exactly as left - do not re-mount, which would
+                // lose all its state.
+                skillsBody.innerHTML = '';
+                skillsBody.appendChild(pausedSkillRoot);
+                pausedSkillRoot = null;
+                skillsDoneBtn.hidden = false;
+                skillsResetBtn.hidden = !SKILL_HAS_RESET.has(skill.id);
+                skillsBackBtn.hidden = false;
+                skillsTitle.textContent = skill.name;
+                renderTabs();
+                return;
+            }
+            if (pausedSkillRoot) {
+                // A DIFFERENT skill is paused in the background. Only one
+                // skill's progress can be preserved at a time, so leaving it
+                // for a new one needs the same confirm-before-discard Done
+                // already uses.
+                const pausedName = findSkill(skillsCurrentId)?.name || 'this tool';
+                if (skillHasStateToPreserve(skillsCurrentId) &&
+                    !confirm('Leave "' + pausedName + '"? Its files and any results will be cleared. Saved settings are kept.')) {
+                    return;
+                }
+                try { disposePyodideWorker(); } catch (_) {}
+                pausedSkillRoot = null;
+            }
             // Bump token to invalidate any prior in-flight work
             skillLoadToken++;
             skillLockWaitCtl = new AbortController(); // this session's unit of work for EngineLock
             skillStateProbe = null;
+            skillBackHandler = null; // re-registered below by mountCsvCombineSkill, if applicable
             skillsCurrentId = skill.id;
             skillsDoneBtn.hidden = false;
             skillsResetBtn.hidden = !SKILL_HAS_RESET.has(skill.id);
+            skillsBackBtn.hidden = false;
             skillsTitle.textContent = skill.name;
             skillsBody.innerHTML = '';
             if (skill.id === 'taxonomy-classify') {
@@ -8294,9 +8370,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             renderTabs(); // tab-bar entry's label follows the mounted skill's name
         }
-        // "Done" (item 4): no back arrow anymore - resets the skill and
-        // returns to the grid, staying on the Field Kit tab. Confirms first
-        // if there are undownloaded results.
+        // "Done" resets the skill and returns to the grid, staying on the
+        // Field Kit tab. Confirms first if there are undownloaded results.
+        // Unlike the back arrow (goToGridPreservingSkill), this always
+        // discards - that's the difference between the two.
         skillsDoneBtn.addEventListener('click', () => {
             if (skillHasStateToPreserve(skillsCurrentId) &&
                 !confirm('Leave this tool? Your files and any results here will be cleared. Saved settings are kept.')) {
@@ -8314,6 +8391,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 skillLoadToken++;
                 skillLockWaitCtl = new AbortController(); // fresh session for EngineLock
                 skillStateProbe = null;
+                skillBackHandler = null; // re-registered below by mountCsvCombineSkill, if applicable
                 skillCompanionChatId = null; // "Send to Chat" starts a fresh companion next time
                 // Belt-and-braces (item 22): must never touch chat attachments
                 // (Phase 4A) - a skill "Start over" must not destroy user data.
@@ -9196,6 +9274,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             let stage = 'files';         // files | sniffing | verdict | executing | done
             let sniffing = false;
             let executing = false;
+            let executeStopped = false;  // true once Stop/back is clicked mid-merge; suppresses the auto-retry
             let downloaded = false;
             let lastResult = null;       // { files: [{name, buffer}], stdout, stderr, resultVars, mode: 'planner'|'template' }
             let lastCode = null;
@@ -9221,6 +9300,20 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             skillStateProbe = {
                 id: 'csv-combine',
                 fn: () => sniffing || executing || (ingestedFiles.length > 0) || !!lastResult
+            };
+            // The only multi-screen skill: the header back arrow steps back
+            // one stage instead of leaving to the grid, except from the
+            // first stage (files), where there's nowhere earlier to go.
+            skillBackHandler = {
+                id: 'csv-combine',
+                fn: () => {
+                    if (stage === 'files') return false;
+                    if (stage === 'sniffing') { cancelSniffToFiles(); return true; }
+                    if (stage === 'verdict') { setStage('files'); return true; }
+                    if (stage === 'executing') { cancelExecuteToVerdict(); return true; }
+                    if (stage === 'done') { setStage('verdict'); return true; }
+                    return false;
+                }
             };
 
             // ----- Render helpers -----
@@ -9618,6 +9711,15 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     setStage('files');
                 }
             }
+            // Cancels an in-flight sniff and returns to the Files screen.
+            // Shared by the Stop button here and the header back arrow.
+            function cancelSniffToFiles() {
+                skillLoadToken++;
+                skillLockWaitCtl.abort();
+                ModelGateway.interrupt();
+                sniffing = false;
+                setStage('files');
+            }
             function renderSniffing() {
                 const sec = makeSection('The AI is looking at your files');
                 makeHint(sec, 'It only sees the layout - column names and cell shapes. No values (numbers, names, dates) are sent.');
@@ -9630,13 +9732,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 stopBtn.type = 'button';
                 stopBtn.className = 'skill-btn danger';
                 stopBtn.textContent = 'Stop';
-                stopBtn.addEventListener('click', () => {
-                    skillLoadToken++;
-                    skillLockWaitCtl.abort();
-                    ModelGateway.interrupt();
-                    sniffing = false;
-                    setStage('files');
-                });
+                stopBtn.addEventListener('click', cancelSniffToFiles);
                 btnRow.appendChild(stopBtn);
                 sec.appendChild(btnRow);
             }
@@ -9940,7 +10036,19 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             }
 
             // ----- Execute screen -----
+            // Cancels an in-flight merge and returns to the Verdict screen.
+            // Shared by the Stop button here and the header back arrow.
+            function cancelExecuteToVerdict() {
+                executeStopped = true;
+                skillLoadToken++;
+                skillLockWaitCtl.abort();
+                ModelGateway.interrupt();
+                disposePyodideWorker();
+                executing = false;
+                setStage('verdict');
+            }
             function renderExecute() {
+                executeStopped = false;
                 const sec = makeSection('Merging your files');
                 const modeLine = document.createElement('p');
                 modeLine.className = 'skill-hint';
@@ -9965,22 +10073,13 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     logEl.scrollTop = logEl.scrollHeight;
                 };
 
-                let stopped = false;
                 const btnRow = document.createElement('div');
                 btnRow.className = 'csvc-btn-row';
                 const stopBtn = document.createElement('button');
                 stopBtn.type = 'button';
                 stopBtn.className = 'skill-btn danger';
                 stopBtn.textContent = 'Stop';
-                stopBtn.addEventListener('click', () => {
-                    stopped = true;
-                    skillLoadToken++;
-                    skillLockWaitCtl.abort();
-                    ModelGateway.interrupt();
-                    disposePyodideWorker();
-                    executing = false;
-                    setStage('verdict');
-                });
+                stopBtn.addEventListener('click', cancelExecuteToVerdict);
                 btnRow.appendChild(stopBtn);
                 sec.appendChild(btnRow);
 
@@ -10017,7 +10116,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                                     executeStatus('Done.');
                                     setStage('done');
                                     return;
-                                } else if (result && result.stderr && !stopped) {
+                                } else if (result && result.stderr && !executeStopped) {
                                     executeStatus('AI code raised an error, retrying with feedback...');
                                     const retryCode = await requestCodegenRetry(myToken, code, result.stderr).catch(() => null);
                                     if (myToken !== skillLoadToken) return;
@@ -10305,15 +10404,6 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     chatBridge(buildSummary(), 'Here is a summary of a CSV merge I just ran. Please help me analyze it and suggest next steps.');
                 });
                 btnRow.appendChild(chatBtn);
-
-                // Done closes the popup. "Merge more files" is what the
-                // header Reset button already does, so we don't repeat it.
-                const doneBtn = document.createElement('button');
-                doneBtn.type = 'button';
-                doneBtn.className = 'skill-btn';
-                doneBtn.textContent = 'Done';
-                doneBtn.addEventListener('click', () => { closeSkills(); });
-                btnRow.appendChild(doneBtn);
 
                 sec.appendChild(btnRow);
 
