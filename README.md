@@ -189,7 +189,7 @@ If you find this repository, code or paper useful for your research, please cite
 
 #### Citation Example:
 >_Mongefranco, Gabriel (2026). Field Station AI™. University of Michigan. Software. https://github.com/DepressionCenter/FieldStationAI_  
-​​​​​​​     _DOI: [Pending](https://doi.org/)_
+​​​​​​​     _DOI: [10.5281/zenodo.21617547](https://doi.org/10.5281/zenodo.21617547)_
 
 ----
 
