@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 README.md: Provides an overview of the project, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-20
-Last Modified: 2026-07-26
+Last Modified: 2026-07-27
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This file provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -29,19 +29,87 @@ Field Station AI™ is a private, in-browser AI workspace for health and behavio
 
 [![Field Station AI Preview](/images/FieldStationAI-preview.png)](https://code.depressioncenter.org/FieldStationAI/)
 
-Think of it as a single web page you open in your browser that gives you your own private AI assistant — one that never sends your data anywhere. You can chat with it, transcribe an interview recording, sort and label text responses, or clean up and merge messy spreadsheets, all without uploading anything to the internet. The first time you pick an AI model, your browser downloads it; after that, everything runs locally on your own computer, even without an internet connection. There's nothing to install, no account to create, and no company on the other end seeing your data — the only time the app reaches out to the internet is to download a model you've chosen, or to optionally load a knowledge-base file you've set up.
+Field Station AI™ runs from a single web page, `index.html`, and never sends chats or data anywhere. Researchers can chat with a local assistant, ask questions about attachments, transcribe audio, classify text, summarize documents, and combine messy spreadsheets without sending study data to a cloud AI service by default. Models and optional knowledge base indexes download the first time they are selected, then run locally from the user's browser cache when available. Chats can be protected with a built-in emoji/numeric PIN pad.
+
+Field Station AI™ is designed for workflows where data may be sensitive or contain PHI. However, depending on the user's institutional policies, cybersecurity and IRB review may still be required before use with regulated data.
+
 
 ## Quick Start Guide
-**Want to try it first?** Check out the **[live demo](https://code.depressioncenter.org/FieldStationAI/)** — it ships with the group's knowledge base bundled in and on by default (works best with Llama or larger models).
-+ Field Station AI is a single, dependency-free HTML file — there is no build step, so setup is just a matter of getting that file open in your browser. Download or clone this repository, then serve the folder with any static file host (e.g. `python -m http.server`) and navigate to it in a modern browser (Chrome, Edge, or Firefox recommended). Note: you can't just double-click `index.html` to open it — browsers block AI model downloads for pages opened directly from disk, so it needs to be served over HTTP (localhost is fine).
-+ On first use, pick a language model from the menu; it will download once and run locally from then on (an internet connection is only needed for that initial download).
-+ The knowledge-base badge next to the model dropdown is always visible and has three states: **Off** (no knowledge base — answers come only from the model and any attachments), **UMich Health Research Resource Library** (the bundled `efdc-kb.json` shipped alongside `index.html`, on by default, fully usable offline after the first load), and **External** (a different index loaded via the `?kb=` query parameter, flagged in the badge as network-fetched). Click the badge at any time to switch between whichever states are currently available.
-+ Optional: to point the app at your own knowledge base instead of (or in addition to) the bundled one, run `python build-kb-index.py` to crawl a source site — it writes `index.json` by default (deliberately never `efdc-kb.json`, so your own index can never overwrite the bundled one). Pass it to the app via the `?kb=` query parameter, e.g. `index.html?kb=index.json`; it shows up as "External" in the badge and, if it loads successfully, takes priority over the bundled library for that page load.
+**Want to try it first?** Check out the **[live demo](https://code.depressioncenter.org/FieldStationAI/)** — it ships with the U-M Health Research Resource Library knowledge base bundled in (works best with Llama or larger models).
 
+Field Station AI™ is a single, dependency-free HTML file — there is no build step, so setup is just a matter of getting hosting that file with a web server and opening it in your browser. Note: you can't just double-click `index.html` to open it — browsers block AI model downloads for pages opened directly from disk, so it needs to be served over HTTP (localhost is fine). Follow these simple steps to run it:
+1. Download or clone this repository.
+2. Serve the folder over HTTP (web server):
+ + To run locally, double-click the `run-*` script for your operating system, or serve the folder in python with `python -m http.server 8010`. The run scripts will automatically open your web browser, pointing it to: http://localhost:8010/
+ + To run on a web server, create a directory in your web root called FieldStationAI, and copy the `index.html` file there. Then visit your website and add /FieldStationAI/ at the end of the URL.
+3. Select a model from the dropdown and wait for it to download and compile. Once a model has been downloaded, you will not have to download it again, even if you close the application or refresh the page.
+4. Type a prompt, attach a file, or open **Field Kit** (in the top right) for task-specific tools.
+5. The knowledge-base (KB) badge next to the model dropdown has three states: **Off** (no knowledge base — answers come only from the model and any attachments), **UMich Health Research Resource Library** (answers take into account an index of our knowledge base, bundled in the included `efdc-kb.json` file), and **External** (answers prioritize an optional, custom knowledge base index loaded via the `?kb=` query parameter). Click the badge at any time to switch between whichever the different KB modes.
 
+Optional: to point the app at your own knowledge base instead of (or in addition to) the bundled one, run `python build-kb-index.py <url>` to crawl a source site — it writes `index.json`. Pass it to the app via the `?kb=` query parameter, e.g. `/FieldStationAI/index.html?kb=index.json`; it shows up as "External" in the badge and, if it loads successfully, takes priority over the bundled KB and the models' own answers.
+	 
+### Documentation
 
-## Documentation
-+ The full documentation is available at: https://michmed.org/efdc-kb
+Start here:
+
+- [Quick Start](docs/quick-start.md)
+- [User Guide](docs/user-guide.md)
+- [Field Kit Guide](docs/field-kit.md)
+- [Data, Files, Attachments, and Knowledge Bases](docs/data-files-and-knowledge-bases.md)
+- [Security, Privacy, PHI, and Accessibility](docs/security-privacy-accessibility.md)
+
+Deevloper docs:
+
+- [Architecture Overview](docs/architecture.md)
+- [Models and Runtime](docs/models-and-runtime.md)
+- [Developer Guide](docs/developer-guide.md)
+- [Design Change Record](docs/design-change-record.md)
+
+Full EFDC documentation is available at: [EFDC Knowledge Base](https://michmed.org/efdc-kb)
+
+### Detailed Setup & Usage
+
+For local use:
+
+```bash
+git clone https://github.com/DepressionCenter/FieldStationAI.git
+cd FieldStationAI
+run-linux.sh # for Linux, or run-windows.ps1 for Windows, or run-mac.command for Mac
+# or alternatively, run with: python -m http.server 8010
+```
+Then open the local server URL shown (the default is http://localhost:8010/).
+
+For a custom knowledge base:
+
+```bash
+python build-kb-index.py --url "https://example.org/docs/" --out index.json --max-pages 10000 --delay 0.5
+```
+
+Then load:
+
+```text
+http://localhost:8010/index.html?kb=index.json
+```
+
+### Security, Privacy & Accessibility
+
+Field Station AI™ is local-first. Data entered into the browser-based app is intended to stay on the user's computer unless the user deliberately points the app to an external or network-accessible destination.
+
+Security expectations for contributors:
+
+- Do not commit PHI, secrets, local data exports, model caches, generated indexes with sensitive content, or generated research outputs.
+- Use synthetic examples in documentation and tests.
+- Do not claim HIPAA compliance from code behavior alone.
+- Review workflows with institutional privacy, IRB, and Information Assurance teams when required.
+- If using AI coding agents, point them to [`AGENTS.md`](agents.md). Always verify the output and test it before sending a pull request.
+
+Accessibility target for development:
+
+- WCAG 2.1 AA or WCAG 2.2 AA.
+- Keyboard-operable controls.
+- Visible focus states.
+- Labels for form fields.
+- Status updates that do not rely on color alone.
 
 
 
@@ -82,6 +150,7 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 + [SheetJS (xlsx)](https://github.com/SheetJS/sheetjs) - Reads and writes Excel spreadsheet files entirely client-side.
 + [PDF.js](https://github.com/mozilla/pdf.js) - Renders and extracts text from PDF documents in the browser.
 + [Ollama](https://github.com/ollama/ollama) - Optional, locally-run backend the app auto-detects to offer larger language models beyond what runs directly in-browser.
++ [ZippyServe](https://github.com/DepressionCenter/ZippyServe) - A zero-dependency local web server. It lets you test single-page apps quickly. It serves directories, zips, HTML, and Markdown. It provides the run-* scripts to allow starting Field Station AI locally without installing a full web server. DOI: [10.5281/zenodo.21613944](https://doi.org/10.5281/zenodo.21613944).
 
 **Used by the knowledge-base crawler:**
 + [Requests](https://github.com/psf/requests) - A simple and elegant HTTP library for making web requests in Python.
