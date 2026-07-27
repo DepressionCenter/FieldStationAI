@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 index.html: Main HTML file for the Field Station AI application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-18
-Last Modified: 2026-07-20
+Last Modified: 2026-07-27
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This is the main HTML file for the Field Station AI application.
 Notes: See README file for documentation and full license information.
 
@@ -4802,8 +4802,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const scores = {};
             for (let r = 0; r < routerExemplarIds.length; r++) {
                 const off = r * dims;
-                let dot = 0;
-                for (let d = 0; d < dims; d++) dot += qVec[d] * routerExemplarVecs[off + d];
+                const dot = cosineSim(qVec, 0, routerExemplarVecs, off, dims);
                 const id = routerExemplarIds[r];
                 if (!(id in scores) || dot > scores[id]) scores[id] = dot;
             }
@@ -5401,8 +5400,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const heap = []; // simple ascending-by-score keeping length <= k
             for (let i = 0; i < N; i++) {
                 const off = i * dims;
-                let s = 0;
-                for (let d = 0; d < dims; d++) s += q[d] * vecs[off + d];
+                const s = cosineSim(q, 0, vecs, off, dims);
                 if (heap.length < k) {
                     heap.push({ i, s });
                     heap.sort((a, b) => a.s - b.s);
@@ -5465,8 +5463,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 const N = att.segments.length;
                 for (let i = 0; i < N; i++) {
                     const off = i * dims;
-                    let s = 0;
-                    for (let d = 0; d < dims; d++) s += q[d] * vecs[off + d];
+                    const s = cosineSim(q, 0, vecs, off, dims);
                     if (heap.length < k) { heap.push({ att, i, s }); heap.sort((a, b) => a.s - b.s); }
                     else if (s > heap[0].s) { heap[0] = { att, i, s }; heap.sort((a, b) => a.s - b.s); }
                 }
@@ -6798,16 +6795,44 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // Parse one tabular file to {name, rows, headers}. Rows are Papa/XLSX
         // objects keyed by header. Throws on error; callers surface via UI.
+        // Streams a CSV/TSV File through PapaParse row-by-row without ever
+        // materializing the whole file as one JS string first (unlike
+        // `Papa.parse(await file.text(), ...)`, which loads it all up
+        // front). PapaParse accepts a File directly and reads it in bounded
+        // chunks internally. When opts.onRow is given, each row is handed
+        // to the caller immediately and nothing is accumulated here - the
+        // ingest-side counterpart to writeCsvStreaming on the output side.
+        // When opts.onRow is omitted, rows accumulate into the resolved
+        // array, matching the shape every existing caller already expects.
+        function parseCsvStreaming(file, opts) {
+            opts = opts || {};
+            const onRow = typeof opts.onRow === 'function' ? opts.onRow : null;
+            const rows = onRow ? null : [];
+            let rowIndex = 0;
+            return new Promise((resolve, reject) => {
+                window.Papa.parse(file, {
+                    header: !!opts.header,
+                    dynamicTyping: !!opts.dynamicTyping,
+                    skipEmptyLines: opts.skipEmptyLines !== false,
+                    delimiter: opts.delimiter || '',
+                    step: (results) => {
+                        if (onRow) onRow(results.data, rowIndex++);
+                        else rows.push(results.data);
+                    },
+                    complete: () => resolve(rows),
+                    error: (err) => reject(err)
+                });
+            });
+        }
         async function parseTabularFile(file) {
             const ext = file.name.split('.').pop().toLowerCase();
             let rows;
             if (ext === 'csv' || ext === 'tsv') {
                 if (!window.Papa) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js');
-                const text = await file.text();
-                rows = window.Papa.parse(text, {
+                rows = await parseCsvStreaming(file, {
                     header: true, dynamicTyping: true, skipEmptyLines: true,
                     delimiter: ext === 'tsv' ? '\t' : ''
-                }).data;
+                });
             } else if (ext === 'xlsx' || ext === 'xls') {
                 if (!window.XLSX) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
                 const wb = window.XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array' });
@@ -6832,11 +6857,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
             let sheetName = null;
             if (ext === 'csv' || ext === 'tsv') {
                 if (!window.Papa) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js');
-                const text = await file.text();
-                rows = window.Papa.parse(text, {
+                rows = await parseCsvStreaming(file, {
                     header: false, dynamicTyping: false, skipEmptyLines: false,
                     delimiter: ext === 'tsv' ? '\t' : ''
-                }).data;
+                });
                 rows = rows.map(r => r.map(v => v == null ? '' : String(v)));
             } else if (ext === 'xlsx' || ext === 'xls') {
                 if (!window.XLSX) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
@@ -6918,7 +6942,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
         //   opts.accept: array of lowercased extensions (no leading dot)
         //   opts.maxBytes: per-file cap (default 32 MB)
         //   opts.onFileError(file, err): callback for per-file failures
-        // Returns Array<{name, kind: 'text'|'table', text?, rows?, headers?}>
+        //   opts.onRow(fileMeta, row, rowIndex): optional. When set, a
+        //     non-raw csv/tsv file streams rows through this callback
+        //     instead of being materialized into a `rows` array (the record
+        //     for that file gets kind: 'table-streamed' with headers/
+        //     rowCount only). Ignored for xlsx/xls (SheetJS needs the whole
+        //     workbook resident to resolve sheet structure - not a gap,
+        //     a library constraint) and for raw mode (the CSV Combiner
+        //     needs full raw bytes for its Pyodide worker regardless, so
+        //     streaming the parse step saves nothing there). Nothing calls
+        //     this yet; it is the hook a future large-CSV transform skill
+        //     plugs into without new ingest plumbing.
+        // Returns Array<{name, kind: 'text'|'table'|'table-streamed', text?, rows?, headers?, rowCount?}>
         async function ingestFiles(files, opts) {
             opts = opts || {};
             const accept = opts.accept || ['txt', 'pdf', 'csv', 'tsv', 'xlsx', 'xls'];
@@ -6981,6 +7016,20 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         // Sort runs - otherwise classification just returns 0s.
                         if (nonWs < 100) rec.warning = 'No readable text found. This may be a scanned or image-only PDF - the classifier can only read typed text.';
                         out.push(rec);
+                    } else if ((ext === 'csv' || ext === 'tsv') && typeof opts.onRow === 'function') {
+                        if (!window.Papa) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js');
+                        let headers = [];
+                        let rowCount = 0;
+                        await parseCsvStreaming(file, {
+                            header: true, dynamicTyping: true, skipEmptyLines: true,
+                            delimiter: ext === 'tsv' ? '\t' : '',
+                            onRow: (row, idx) => {
+                                if (idx === 0) headers = Object.keys(row);
+                                opts.onRow({ name: file.name }, row, idx);
+                                rowCount = idx + 1;
+                            }
+                        });
+                        out.push({ name: file.name, kind: 'table-streamed', headers, rowCount });
                     } else {
                         const parsed = await parseTabularFile(file);
                         out.push({ name: file.name, kind: 'table', rows: parsed.rows, headers: parsed.headers });
@@ -7616,25 +7665,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return 'mixed';
         }
 
-        // Standard iterative Levenshtein distance. Used by fuzzyHarmonize.
-        function levenshtein(a, b) {
-            if (a === b) return 0;
-            if (!a.length) return b.length;
-            if (!b.length) return a.length;
-            const prev = new Array(b.length + 1);
-            const curr = new Array(b.length + 1);
-            for (let j = 0; j <= b.length; j++) prev[j] = j;
-            for (let i = 1; i <= a.length; i++) {
-                curr[0] = i;
-                for (let j = 1; j <= b.length; j++) {
-                    const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
-                    curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-                }
-                for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
-            }
-            return prev[b.length];
-        }
-
         // ===== Header-row + data-start detection (heuristic-first, LLM fallback) =====
         // Skill-agnostic: no dependency on the CSV Combiner or DOM. Any skill
         // that reads tabular files can call detectHeaderAndDataStart/
@@ -8134,7 +8164,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
         // Try LLM JSON extraction with one retry. onCall(promptText, maxTok)
         // must return the raw model text. Returns the parsed object or null.
-        // Callers should hard-fall-back to fuzzyHarmonize on null.
+        // Callers must have their own deterministic fallback for a null
+        // result (e.g. the CSV Combiner's fallbackVerdict).
         async function runLlmJson(prompt, maxTok, onCall) {
             const tryParse = t => {
                 const chunk = extractFirstJson(t);
@@ -8220,50 +8251,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Normalize a header for cluster comparison.
         function normalizeHeader(h) {
             return String(h || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-        }
-        // Fuzzy harmonization: never fails. Same shape as the LLM Call B
-        // output: { unified_columns, mappings, notes }.
-        // TODO(review): this function is never called anywhere - the
-        // verdict/role model (VERDICT_ROLES: study_id/participant_id/
-        // timestamp/glucose/other) superseded cross-file column-name
-        // harmonization before it got wired in. CSV_ALIAS_MAP is reused
-        // above for per-file role detection (roleForHeader), but "other"
-        // columns with different names across merged files are never
-        // reconciled into one unified column. Wiring this in (or removing
-        // it) is a separate, larger feature decision than this pass covers.
-        function fuzzyHarmonize(fileSchemas) {
-            const mappings = {};
-            const unifiedSet = new Map(); // canonical -> insertion order
-            const buckets = []; // Array<{ canonical, normalized }>
-            for (const f of fileSchemas) {
-                mappings[f.name] = {};
-                for (const col of f.columns) {
-                    const header = col.header;
-                    let canonical = aliasFor(header);
-                    const norm = normalizeHeader(header);
-                    if (!canonical) {
-                        // Cluster by Levenshtein against existing bucket
-                        // normalized forms.
-                        let best = null, bestDist = Infinity;
-                        for (const b of buckets) {
-                            const d = levenshtein(norm, b.normalized);
-                            const thresh = Math.max(2, Math.floor(Math.max(norm.length, b.normalized.length) / 5));
-                            if (d <= thresh && d < bestDist) { best = b; bestDist = d; }
-                        }
-                        canonical = best ? best.canonical : (norm || 'column');
-                    }
-                    if (!buckets.find(b => b.canonical === canonical)) {
-                        buckets.push({ canonical, normalized: norm });
-                    }
-                    if (!unifiedSet.has(canonical)) unifiedSet.set(canonical, unifiedSet.size);
-                    mappings[f.name][header] = canonical;
-                }
-            }
-            return {
-                unified_columns: Array.from(unifiedSet.keys()),
-                mappings,
-                notes: null
-            };
         }
 
         // Tiny per-skill logger. Sets textContent on the passed status element.
@@ -10367,6 +10354,11 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     renderTabs();
                     notebookLog.appendCell('markdown', buildProvenanceMarkdown());
                     const myToken = skillLoadToken;
+                    // Same target list the codegen prompt was given (see
+                    // buildCodegenPrompt's "Unified column list") - isRunOk
+                    // checks the actual output against exactly what the
+                    // model was asked to produce.
+                    const targetKeys = Array.from(buildTargetSchema().keys());
                     try {
                         executeStatus('Preparing files for the worker...');
                         const workerFiles = [];
@@ -10387,28 +10379,40 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                                 executeStatus('Running the AI-written script in the Python worker...');
                                 const result = await tryRun(code, workerFiles, appendLog);
                                 if (myToken !== skillLoadToken) return;
-                                if (isRunOk(result)) {
+                                if (isRunOk(result, targetKeys)) {
                                     lastResult = { ...result, mode: 'planner' };
                                     lastCode = code;
                                     lastMode = 'planner';
                                     executeStatus('Done.');
                                     setStage('done');
                                     return;
-                                } else if (result && result.stderr && !executeStopped) {
-                                    executeStatus('AI code raised an error, retrying with feedback...');
-                                    const retryCode = await requestCodegenRetry(myToken, code, result.stderr).catch(() => null);
-                                    if (myToken !== skillLoadToken) return;
-                                    if (retryCode) {
-                                        notebookLog.appendCell('markdown', 'First attempt failed. Retrying with error fed back.');
-                                        const retry = await tryRun(retryCode, workerFiles, appendLog);
+                                } else if (!executeStopped) {
+                                    // Feed back either the Python exception or,
+                                    // for a run that finished cleanly but
+                                    // produced the wrong columns, a schema-
+                                    // mismatch description - same retry path
+                                    // either way.
+                                    const feedback = (result && result.stderr) || describeSchemaMismatch(result, targetKeys);
+                                    if (feedback) {
+                                        executeStatus(result && result.stderr
+                                            ? 'AI code raised an error, retrying with feedback...'
+                                            : 'AI code produced the wrong columns, retrying with feedback...');
+                                        const retryCode = await requestCodegenRetry(myToken, code, feedback).catch(() => null);
                                         if (myToken !== skillLoadToken) return;
-                                        if (isRunOk(retry)) {
-                                            lastResult = { ...retry, mode: 'planner' };
-                                            lastCode = retryCode;
-                                            lastMode = 'planner';
-                                            executeStatus('Done.');
-                                            setStage('done');
-                                            return;
+                                        if (retryCode) {
+                                            notebookLog.appendCell('markdown', result && result.stderr
+                                                ? 'First attempt failed. Retrying with error fed back.'
+                                                : 'First attempt produced the wrong columns. Retrying with the mismatch fed back.');
+                                            const retry = await tryRun(retryCode, workerFiles, appendLog);
+                                            if (myToken !== skillLoadToken) return;
+                                            if (isRunOk(retry, targetKeys)) {
+                                                lastResult = { ...retry, mode: 'planner' };
+                                                lastCode = retryCode;
+                                                lastMode = 'planner';
+                                                executeStatus('Done.');
+                                                setStage('done');
+                                                return;
+                                            }
                                         }
                                     }
                                 }
@@ -10424,7 +10428,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         notebookLog.appendCell('markdown', '## Built-in merge (template mode)\n\nNo AI-authored code; the merger uses a fixed pandas template driven by the verdict.');
                         const result = await tryRun(code, workerFiles, appendLog);
                         if (myToken !== skillLoadToken) return;
-                        if (isRunOk(result)) {
+                        if (isRunOk(result, targetKeys)) {
                             lastResult = { ...result, mode: ranFromPlanner ? 'template-fallback' : 'template' };
                             lastCode = code;
                             lastMode = lastResult.mode;
@@ -10432,9 +10436,11 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                             setStage('done');
                             return;
                         }
-                        // Total failure. Surface the error and let the user
-                        // go back.
-                        const errMsg = (result && (result.error || result.stderr)) || 'Unknown error';
+                        // Total failure (template mode has no further
+                        // retry). Surface the error - a schema mismatch here
+                        // is a real bug in the template generator, not just
+                        // a bad AI attempt - and let the user go back.
+                        const errMsg = (result && (result.error || result.stderr)) || describeSchemaMismatch(result, targetKeys) || 'Unknown error';
                         executeStatus('Merge failed: ' + String(errMsg).slice(0, 400), true);
                     } catch (e) {
                         executeStatus('Merge failed: ' + (e && (e.error || e.message) || e), true);
@@ -10446,11 +10452,29 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 })();
             }
 
-            function isRunOk(result) {
-                if (!result) return false;
-                if (result.error) return false;
-                if (!Array.isArray(result.files)) return false;
-                return result.files.some(f => f && f.name === 'merged.csv' && f.buffer && f.buffer.byteLength > 0);
+            function isRunOk(result, targetKeys) {
+                if (!result || result.error) return false;
+                return !describeSchemaMismatch(result, targetKeys);
+            }
+            // Returns null when the run produced a non-empty merged.csv
+            // whose columns cover every target column, else a short
+            // message describing what's wrong - fed back into the retry
+            // prompt exactly like a Python exception is, and shown as the
+            // terminal error if template mode itself produces a mismatch.
+            // Deliberately returns null (not a message) on a hard
+            // exception - that case already has its own, more specific
+            // message in result.stderr; this only covers a run that
+            // finished without throwing but still isn't right.
+            function describeSchemaMismatch(result, targetKeys) {
+                if (!result || result.error) return null;
+                if (!Array.isArray(result.files)) return 'No output file was produced.';
+                const merged = result.files.find(f => f && f.name === 'merged.csv');
+                if (!merged || !merged.buffer || merged.buffer.byteLength === 0) return 'merged.csv was empty or missing.';
+                const actualCols = (result.resultVars && result.resultVars['merged.csv.columns']) || null;
+                if (!Array.isArray(actualCols)) return null; // no column list to check against - nothing more to verify
+                const missing = targetKeys.filter(k => !actualCols.includes(k));
+                if (missing.length) return 'Output is missing expected column(s): ' + missing.join(', ') + '.';
+                return null;
             }
 
             async function tryRun(code, workerFiles, onLog) {
@@ -12345,16 +12369,10 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
         }
 
         // ---------- Phase 9e: Find Similar / Dedup skill ----------
-        // TODO(dedup-cosine-consolidation): this duplicates the dot-product-
-        // of-normalized-vectors loop that already appears 3 other places in
-        // this file - scoreTier1, retrieveKb, retrieveAttachments - all of
-        // them assuming flat Float32Arrays with `dims`-stride row offsets,
-        // same as here. Deliberately NOT refactoring those 3 existing call
-        // sites in this pass (they are proven, in-scope-critical retrieval/
-        // router code, and touching them wasn't part of this session's ask)
-        // - but if a future pass consolidates, this is the helper to point
-        // scoreTier1/retrieveKb/retrieveAttachments at instead of their own
-        // inline copies.
+        // Shared dot-product-of-normalized-vectors helper: flat Float32Arrays
+        // with `dims`-stride row offsets. Used here and by scoreTier1,
+        // retrieveKb, and retrieveAttachments (consolidated - all four used
+        // to carry their own copy of this loop).
         function cosineSim(vecA, offA, vecB, offB, dims) {
             let dot = 0;
             for (let d = 0; d < dims; d++) dot += vecA[offA + d] * vecB[offB + d];
