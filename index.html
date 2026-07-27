@@ -8252,6 +8252,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
         function normalizeHeader(h) {
             return String(h || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
         }
+        // Module-level (not scaffold-internal) so both the transform
+        // scaffold and a skill's own config-building code can name the same
+        // in-sandbox file consistently. Always gives the worker a
+        // CSV-friendly name; every ingested file is sent as CSV bytes
+        // (xlsx included - see ensureBytes).
+        function workerNameFor(f) {
+            let name = f.name.replace(/[\\\/]+/g, '_');
+            if (/\.xlsx?$/i.test(name) || f.sheets) name = name.replace(/\.xlsx?$/i, '') + '.csv';
+            if (!/\.(csv|tsv)$/i.test(name)) name += '.csv';
+            return name;
+        }
 
         // Tiny per-skill logger. Sets textContent on the passed status element.
         function skillLog(el, msg, isError) {
@@ -9533,7 +9544,38 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         // panels collapse to a summary line with a Change button.
         // State probe returns true when any of: files ingested, LLM proposal
         // on screen, LLM call in flight, merge running.
-        function mountCsvCombineSkill(container) {
+        // Phase 10 Stage 1: generic execute-verify transform scaffold. Owns the
+        // detect -> propose -> confirm -> execute stage machine, the mapping
+        // grid, codegen + retry + template fallback, the JS schema check, and
+        // notebook/engine-lock plumbing. A skill supplies `config` (a target
+        // schema plus its own domain vocabulary and, where needed, small UI
+        // hooks) and nothing else. See design doc Section 10.4 / implementation
+        // plan Phase 10 Stage 1. `config` fields:
+        //   id (string)               - skill id, matches its SKILLS registry entry
+        //   verb (string)             - e.g. 'merge'; used in generic status/notebook text
+        //   roles (string[])          - mapping-grid role vocabulary, e.g. ['study_id',...,'other']
+        //   dtypes (string[], opt)    - dtype vocabulary; defaults to DEFAULT_VERDICT_DTYPES
+        //   roleForHeader(header, dtype) (opt) - fallback role heuristic, e.g. alias-map lookup
+        //   sniffPromptExtra(tier) (opt)       - extra domain wording appended to the sniff prompt
+        //   buildTargetSchema(files) -> { outputs: [{key, filename, format, columns:[{name}], required?, optional?}] }
+        //   codegenInstructions(ctx) -> string - domain-specific body of the codegen prompt
+        //   buildTemplateCode(ctx) -> string   - deterministic fallback Python (required, never synthesized)
+        //   buildProvenanceMarkdown(files) (opt) -> string
+        //   buildSummary(ctx) (opt) -> string
+        //   extraFileUI(file, chipWrapEl) (opt)      - extra per-file controls on the files screen
+        //   extraGridUI(file, containerEl) (opt)     - extra content in a file's verdict box
+        //   filesTitle/filesHint/executingTitle (opt strings) - skill-flavored screen text
+        //   ingestAccept/ingestMimeAttr/ingestMaxBytes (opt)  - file-picker constraints
+        //   notebookFilename (opt string), chatBridgeInstruction (opt string)
+        // `ctx` passed to codegenInstructions/buildTemplateCode/buildSummary is
+        // { files, targetSchema }; buildSummary's ctx also carries { result, mode }.
+        function mountTransformScaffold(container, config) {
+            const DEFAULT_VERDICT_DTYPES = ['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'id', 'mixed'];
+            const DEFAULT_INGEST_ACCEPT = ['csv', 'tsv', 'xlsx', 'xls'];
+            const DEFAULT_INGEST_MIME_ATTR = 'text/csv,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,.tsv,.xlsx,.xls';
+            const DEFAULT_INGEST_MAX_BYTES = 200 * 1024 * 1024;
+            const VERDICT_ROLES = config.roles;
+            const VERDICT_DTYPES = config.dtypes || DEFAULT_VERDICT_DTYPES;
             // ----- Skill-scoped state -----
             let ingestedFiles = [];      // Array<{name, path?, rows:string[][], bytes:ArrayBuffer, sheets?, sheetName?, sampled?, forensics, verdict?}>
             let stage = 'files';         // files | sniffing | verdict | executing | done
@@ -9563,14 +9605,14 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             }
 
             skillStateProbe = {
-                id: 'csv-combine',
+                id: config.id,
                 fn: () => sniffing || executing || (ingestedFiles.length > 0) || !!lastResult
             };
-            // The only multi-screen skill: the header back arrow steps back
-            // one stage instead of leaving to the grid, except from the
+            // The only multi-screen skill so far: the header back arrow steps
+            // back one stage instead of leaving to the grid, except from the
             // first stage (files), where there's nowhere earlier to go.
             skillBackHandler = {
-                id: 'csv-combine',
+                id: config.id,
                 fn: () => {
                     if (stage === 'files') return false;
                     if (stage === 'sniffing') { cancelSniffToFiles(); return true; }
@@ -9625,8 +9667,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
             // ----- Files screen -----
             function renderFiles() {
-                const sec = makeSection('Load your spreadsheets');
-                makeHint(sec, 'Pick two or more CSV, TSV, or Excel files, or a folder of them. Each file can have its header on a different row - the next screen will show what the AI found.');
+                const sec = makeSection(config.filesTitle || 'Load your files');
+                makeHint(sec, config.filesHint || 'Pick two or more files, or a folder of them. Each file can have its header on a different row - the next screen will show what the AI found.');
 
                 const row = document.createElement('div');
                 row.className = 'csvc-file-row';
@@ -9634,7 +9676,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 const fileInput = document.createElement('input');
                 fileInput.type = 'file';
                 fileInput.multiple = true;
-                fileInput.accept = 'text/csv,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,.tsv,.xlsx,.xls';
+                fileInput.accept = config.ingestMimeAttr || DEFAULT_INGEST_MIME_ATTR;
                 const fileLbl = document.createElement('label');
                 fileLbl.className = 'skill-btn';
                 fileLbl.textContent = 'Pick files';
@@ -9679,28 +9721,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     });
                     chip.appendChild(x);
                     chipWrap.appendChild(chip);
-                    if (f.sheets && Object.keys(f.sheets).length > 1) {
-                        const sel = document.createElement('select');
-                        sel.className = 'skill-select csvc-sheet-select';
-                        for (const name of Object.keys(f.sheets)) {
-                            const o = document.createElement('option');
-                            o.value = name; o.textContent = name;
-                            if (name === f.sheetName) o.selected = true;
-                            sel.appendChild(o);
-                        }
-                        sel.addEventListener('change', () => {
-                            f.sheetName = sel.value;
-                            f.rows = f.sheets[sel.value] || [];
-                            f.sampled = sampleRowsForLLM(f.rows);
-                            f.forensics = buildForensics(f.rows, f.sampled);
-                            f.verdict = null;
-                        });
-                        const lbl = document.createElement('label');
-                        lbl.className = 'csvc-sheet-label';
-                        lbl.textContent = 'Sheet: ';
-                        lbl.appendChild(sel);
-                        chipWrap.appendChild(lbl);
-                    }
+                    if (config.extraFileUI) config.extraFileUI(f, chipWrap);
                     chips.appendChild(chipWrap);
                 }
 
@@ -9722,8 +9743,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     const errs = [];
                     const results = await ingestFiles(files, {
                         raw: true,
-                        accept: ['csv', 'tsv', 'xlsx', 'xls'],
-                        maxBytes: 200 * 1024 * 1024,
+                        accept: config.ingestAccept || DEFAULT_INGEST_ACCEPT,
+                        maxBytes: config.ingestMaxBytes || DEFAULT_INGEST_MAX_BYTES,
                         onFileError: (file, err) => errs.push(file.name + ': ' + (err && err.message || err))
                     });
                     for (const r of results) {
@@ -9755,6 +9776,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 const notHeaderBullet = tier === 'local'
                     ? '- A row that contains a date, a timestamp, a number, or a shape like ##/##/#### or ##:## is NOT the header. Real header cells look like human-readable field names ("Timestamp", "Glucose mg/dL", "Serial Number").\n'
                     : '- A row that contains a date, a timestamp, a number, a shape like ##/##/#### or ##:##, or that looks like a redacted data row (mostly # and x characters in cell values) is NOT the header. Real header cells look like human-readable field names ("Timestamp", "Glucose mg/dL", "Serial Number").\n';
+                const roleEnum = VERDICT_ROLES.map(r => '"' + r + '"').join('|');
+                const dtypeEnum = VERDICT_DTYPES.map(d => '"' + d + '"').join('|');
                 return intro
                     + '\n'
                     + 'Rules for header_row (very important):\n'
@@ -9764,13 +9787,14 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     + '- Use the length and uniqueness of the cells: header rows have distinct text labels, one per column, roughly the same shape as the rows below them.\n'
                     + '- If unsure, set confidence to "low" and pick the row that most looks like human-readable field names.\n'
                     + '\n'
+                    + (config.sniffPromptExtra ? (config.sniffPromptExtra(tier) + '\n\n') : '')
                     + 'Return one JSON object, no commentary. Prefer null / "low" / "other" over guessing when you are unsure. Shape:\n'
                     + '{ "header_row": <0-based row index of the column headers>,\n'
                     + '  "data_start_row": <0-based row index of the first real data row>,\n'
                     + '  "delimiter": <"," or "\\t" or ";" or "|">,\n'
                     + '  "preamble_summary": <one short sentence about the rows above the header, or null>,\n'
                     + '  "vendor": <"Libre", "Dexcom", "REDCap", or similar, or null>,\n'
-                    + '  "columns": [ { "raw": <the original header text>, "role": "study_id"|"participant_id"|"timestamp"|"glucose"|"other", "dtype": "string"|"integer"|"number"|"boolean"|"date"|"datetime"|"id"|"mixed" }, ... ],\n'
+                    + '  "columns": [ { "raw": <the original header text>, "role": ' + roleEnum + ', "dtype": ' + dtypeEnum + ' }, ... ],\n'
                     + '  "confidence": "high" | "medium" | "low",\n'
                     + '  "notes": <one short sentence or null> }';
             }
@@ -9889,8 +9913,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 };
             }
 
-            const VERDICT_ROLES = ['study_id', 'participant_id', 'timestamp', 'glucose', 'other'];
-            const VERDICT_DTYPES = ['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'id', 'mixed'];
+            // VERDICT_ROLES/VERDICT_DTYPES are config-sourced (declared at the
+            // top of mountTransformScaffold) so every prompt/schema/grid piece
+            // below stays in sync with the skill's declared vocabulary.
             // Mirrors exactly what sniffPromptFor asks for and what
             // normalizeVerdict/fallbackVerdict already consume - no prompt
             // or parsing change, just how the JSON gets produced. Passed to
@@ -9932,9 +9957,10 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 return Math.min(900, 150 + 25 * numCols);
             }
             function fallbackRoleDetectVerdict(columns) {
+                if (!config.roleForHeader) return;
                 for (const c of columns) {
                     if (c.role && c.role !== 'other') continue;
-                    c.role = roleForHeader(c.raw, c.dtype);
+                    c.role = config.roleForHeader(c.raw, c.dtype) || 'other';
                 }
             }
 
@@ -10056,7 +10082,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 const goBtn = document.createElement('button');
                 goBtn.type = 'button';
                 goBtn.className = 'skill-btn primary';
-                goBtn.textContent = 'Continue: merge with ' + (modelCapability() === 'planner' ? 'AI-written code' : 'the built-in merge');
+                goBtn.textContent = 'Continue: ' + config.verb + ' with ' + (modelCapability() === 'planner' ? 'AI-written code' : 'the built-in ' + config.verb);
                 goBtn.addEventListener('click', () => setStage('executing'));
                 btnRow.appendChild(goBtn);
                 top.appendChild(btnRow);
@@ -10205,6 +10231,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     if (v.notes) readText += ' Note: ' + v.notes;
                     readout.textContent = readText;
                     body.appendChild(readout);
+                    if (config.extraGridUI) config.extraGridUI(f, body);
 
                     const ctrl = renderHeaderRowAdjuster(body, f.rows, v.header_row, (newRow) => {
                         recomputeVerdictAt(f, newRow);
@@ -10270,31 +10297,22 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             // heuristic/template fallback"). The UI already marks fallbacks
             // per-file (fillVerdictBody's banners below); this projects the
             // same fields into a notebook cell so the exported .ipynb carries
-            // them too, not just the DOM.
-            function buildProvenanceMarkdown() {
+            // them too, not just the DOM. Default is skill-agnostic; a skill
+            // may override via config.buildProvenanceMarkdown(files) to add
+            // its own fields (e.g. the combiner adds vendor/model/tier).
+            function defaultProvenanceMarkdown(files) {
                 const lines = [
-                    '## Merge run',
-                    'Started: ' + new Date().toISOString() + '. Model: ' + currentModelId + ' (' + ModelGateway.tier() + ' tier).',
+                    '## ' + config.verb.charAt(0).toUpperCase() + config.verb.slice(1) + ' run',
+                    'Started: ' + new Date().toISOString() + '.',
                     '',
                     'Files:'
                 ];
-                for (const f of ingestedFiles) {
+                for (const f of files) {
                     const v = f.verdict || {};
                     const headerRow = (v.header_row != null ? v.header_row : 0) + 1;
-                    let flag;
-                    if (v.source === 'js') {
-                        flag = 'column roles: text-matching fallback - AI unavailable';
-                    } else if (f.forensics && f.forensics.method === 'llm') {
-                        flag = 'header row: AI tiebreak, ' + (v.confidence || 'medium') + ' confidence';
-                    } else {
-                        flag = 'heuristic, ' + (v.confidence || 'unknown') + ' confidence';
-                    }
-                    // Schema-constrained decoding (Phase 3): 'llm-constrained'
-                    // needs no extra note (schema enforcement guaranteed valid
-                    // JSON). Plain 'llm' means the verdict still parsed, but
-                    // via the unconstrained/repair path - visibly marked so it
-                    // is never indistinguishable from the constrained case.
-                    if (v.source === 'llm') flag += '; column roles/vendor: unconstrained JSON (schema enforcement did not engage)';
+                    const flag = v.source === 'js' ? 'column roles: text-matching fallback - AI unavailable'
+                        : (f.forensics && f.forensics.method === 'llm') ? 'header row: AI tiebreak, ' + (v.confidence || 'medium') + ' confidence'
+                        : 'heuristic, ' + (v.confidence || 'unknown') + ' confidence';
                     lines.push('- ' + f.name + ': ' + f.rows.length + ' rows, header row ' + headerRow + ' [' + flag + ']');
                 }
                 return lines.join('\n');
@@ -10314,13 +10332,13 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             }
             function renderExecute() {
                 executeStopped = false;
-                const sec = makeSection('Merging your files');
+                const sec = makeSection(config.executingTitle || ('Running your ' + config.verb));
                 const modeLine = document.createElement('p');
                 modeLine.className = 'skill-hint';
                 const mode = modelCapability();
                 modeLine.textContent = mode === 'planner'
-                    ? 'Using the currently loaded chat model to write a Python merge script. Runs in a background worker; your files stay in this browser tab.'
-                    : 'The loaded chat model is small, so a built-in Python merge is being used instead. Same output; less risk of code errors.';
+                    ? ('Using the currently loaded chat model to write a Python ' + config.verb + ' script. Runs in a background worker; your files stay in this browser tab.')
+                    : ('The loaded chat model is small, so a built-in Python ' + config.verb + ' is being used instead. Same output; less risk of code errors.');
                 sec.appendChild(modeLine);
 
                 const st = makeStatus(sec);
@@ -10352,13 +10370,12 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     executing = true;
                     skillBatchRunning = true;
                     renderTabs();
-                    notebookLog.appendCell('markdown', buildProvenanceMarkdown());
+                    notebookLog.appendCell('markdown', (config.buildProvenanceMarkdown || defaultProvenanceMarkdown)(ingestedFiles));
                     const myToken = skillLoadToken;
-                    // Same target list the codegen prompt was given (see
-                    // buildCodegenPrompt's "Unified column list") - isRunOk
-                    // checks the actual output against exactly what the
-                    // model was asked to produce.
-                    const targetKeys = Array.from(buildTargetSchema().keys());
+                    // Same target schema the codegen prompt was given - isRunOk
+                    // checks the actual output against exactly what the model
+                    // was asked to produce.
+                    const targetSchema = config.buildTargetSchema(ingestedFiles);
                     try {
                         executeStatus('Preparing files for the worker...');
                         const workerFiles = [];
@@ -10367,19 +10384,20 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                             const bytes = await ensureBytes(f);
                             workerFiles.push({ name: workerNameFor(f), buffer: bytes });
                         }
+                        const ctx = { files: ingestedFiles, targetSchema };
                         let code = null;
                         let ranFromPlanner = false;
                         if (mode === 'planner') {
-                            executeStatus('Asking the AI to write the merge code...');
-                            code = await requestCodegen(myToken).catch(() => null);
+                            executeStatus('Asking the AI to write the ' + config.verb + ' code...');
+                            code = await requestCodegen(myToken, ctx).catch(() => null);
                             if (myToken !== skillLoadToken) return;
                             if (code) {
                                 ranFromPlanner = true;
-                                notebookLog.appendCell('markdown', '## AI-authored merge (planner mode)\n\nModel: ' + currentModelId);
+                                notebookLog.appendCell('markdown', '## AI-authored ' + config.verb + ' (planner mode)\n\nModel: ' + currentModelId);
                                 executeStatus('Running the AI-written script in the Python worker...');
                                 const result = await tryRun(code, workerFiles, appendLog);
                                 if (myToken !== skillLoadToken) return;
-                                if (isRunOk(result, targetKeys)) {
+                                if (isRunOk(result, targetSchema)) {
                                     lastResult = { ...result, mode: 'planner' };
                                     lastCode = code;
                                     lastMode = 'planner';
@@ -10392,12 +10410,12 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                                     // produced the wrong columns, a schema-
                                     // mismatch description - same retry path
                                     // either way.
-                                    const feedback = (result && result.stderr) || describeSchemaMismatch(result, targetKeys);
+                                    const feedback = (result && result.stderr) || describeSchemaMismatch(result, targetSchema);
                                     if (feedback) {
                                         executeStatus(result && result.stderr
                                             ? 'AI code raised an error, retrying with feedback...'
                                             : 'AI code produced the wrong columns, retrying with feedback...');
-                                        const retryCode = await requestCodegenRetry(myToken, code, feedback).catch(() => null);
+                                        const retryCode = await requestCodegenRetry(myToken, ctx, code, feedback).catch(() => null);
                                         if (myToken !== skillLoadToken) return;
                                         if (retryCode) {
                                             notebookLog.appendCell('markdown', result && result.stderr
@@ -10405,7 +10423,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                                                 : 'First attempt produced the wrong columns. Retrying with the mismatch fed back.');
                                             const retry = await tryRun(retryCode, workerFiles, appendLog);
                                             if (myToken !== skillLoadToken) return;
-                                            if (isRunOk(retry, targetKeys)) {
+                                            if (isRunOk(retry, targetSchema)) {
                                                 lastResult = { ...retry, mode: 'planner' };
                                                 lastCode = retryCode;
                                                 lastMode = 'planner';
@@ -10417,18 +10435,18 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                                     }
                                 }
                                 // fall through to template.
-                                executeStatus('AI-written code did not work. Falling back to the built-in merge...');
+                                executeStatus('AI-written code did not work. Falling back to the built-in ' + config.verb + '...');
                             } else {
-                                executeStatus('The AI did not return usable code. Falling back to the built-in merge...');
+                                executeStatus('The AI did not return usable code. Falling back to the built-in ' + config.verb + '...');
                             }
                         }
                         // Template mode (either because the model is small,
                         // or planner-mode retries failed).
-                        code = buildTemplateCode();
-                        notebookLog.appendCell('markdown', '## Built-in merge (template mode)\n\nNo AI-authored code; the merger uses a fixed pandas template driven by the verdict.');
+                        code = config.buildTemplateCode(ctx);
+                        notebookLog.appendCell('markdown', '## Built-in ' + config.verb + ' (template mode)\n\nNo AI-authored code; a fixed built-in template produced this output, driven by the verdict.');
                         const result = await tryRun(code, workerFiles, appendLog);
                         if (myToken !== skillLoadToken) return;
-                        if (isRunOk(result, targetKeys)) {
+                        if (isRunOk(result, targetSchema)) {
                             lastResult = { ...result, mode: ranFromPlanner ? 'template-fallback' : 'template' };
                             lastCode = code;
                             lastMode = lastResult.mode;
@@ -10440,10 +10458,10 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         // retry). Surface the error - a schema mismatch here
                         // is a real bug in the template generator, not just
                         // a bad AI attempt - and let the user go back.
-                        const errMsg = (result && (result.error || result.stderr)) || describeSchemaMismatch(result, targetKeys) || 'Unknown error';
-                        executeStatus('Merge failed: ' + String(errMsg).slice(0, 400), true);
+                        const errMsg = (result && (result.error || result.stderr)) || describeSchemaMismatch(result, targetSchema) || 'Unknown error';
+                        executeStatus(config.verb.charAt(0).toUpperCase() + config.verb.slice(1) + ' failed: ' + String(errMsg).slice(0, 400), true);
                     } catch (e) {
-                        executeStatus('Merge failed: ' + (e && (e.error || e.message) || e), true);
+                        executeStatus(config.verb.charAt(0).toUpperCase() + config.verb.slice(1) + ' failed: ' + (e && (e.error || e.message) || e), true);
                     } finally {
                         executing = false;
                         skillBatchRunning = false;
@@ -10452,28 +10470,46 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 })();
             }
 
-            function isRunOk(result, targetKeys) {
+            function isRunOk(result, targetSchema) {
                 if (!result || result.error) return false;
-                return !describeSchemaMismatch(result, targetKeys);
+                return !describeSchemaMismatch(result, targetSchema);
             }
-            // Returns null when the run produced a non-empty merged.csv
-            // whose columns cover every target column, else a short
+            // Returns null when the run produced every declared output (each
+            // non-empty, columns covering what was required), else a short
             // message describing what's wrong - fed back into the retry
             // prompt exactly like a Python exception is, and shown as the
             // terminal error if template mode itself produces a mismatch.
-            // Deliberately returns null (not a message) on a hard
-            // exception - that case already has its own, more specific
-            // message in result.stderr; this only covers a run that
-            // finished without throwing but still isn't right.
-            function describeSchemaMismatch(result, targetKeys) {
+            // Deliberately returns null (not a message) on a hard exception -
+            // that case already has its own, more specific message in
+            // result.stderr; this only covers a run that finished without
+            // throwing but still isn't right. Generalizes to N declared
+            // outputs (targetSchema.outputs); an output marked `optional`
+            // may legitimately be absent (e.g. a measure a wearable archive
+            // didn't contain) without failing the check. Single-output
+            // skills (today, every shipped skill) get the exact same
+            // messages this always produced.
+            function describeSchemaMismatch(result, targetSchema) {
                 if (!result || result.error) return null;
                 if (!Array.isArray(result.files)) return 'No output file was produced.';
-                const merged = result.files.find(f => f && f.name === 'merged.csv');
-                if (!merged || !merged.buffer || merged.buffer.byteLength === 0) return 'merged.csv was empty or missing.';
-                const actualCols = (result.resultVars && result.resultVars['merged.csv.columns']) || null;
-                if (!Array.isArray(actualCols)) return null; // no column list to check against - nothing more to verify
-                const missing = targetKeys.filter(k => !actualCols.includes(k));
-                if (missing.length) return 'Output is missing expected column(s): ' + missing.join(', ') + '.';
+                const outputs = targetSchema.outputs;
+                const singleOutput = outputs.length === 1;
+                for (const out of outputs) {
+                    const file = result.files.find(f => f && f.name === out.filename);
+                    const present = file && file.buffer && file.buffer.byteLength > 0;
+                    if (!present) {
+                        if (out.optional) continue;
+                        return out.filename + ' was empty or missing.';
+                    }
+                    const actualCols = (result.resultVars && result.resultVars[out.filename + '.columns']) || null;
+                    if (!Array.isArray(actualCols)) continue; // no column list to check against - nothing more to verify
+                    const required = out.required || out.columns.map(c => c.name);
+                    const missing = required.filter(k => !actualCols.includes(k));
+                    if (missing.length) {
+                        return singleOutput
+                            ? ('Output is missing expected column(s): ' + missing.join(', ') + '.')
+                            : (out.filename + ' is missing expected column(s): ' + missing.join(', ') + '.');
+                    }
+                }
                 return null;
             }
 
@@ -10501,108 +10537,43 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 return enc.encode(parts.join('')).buffer;
             }
 
-            function workerNameFor(f) {
-                // Always give the worker a CSV-friendly name; we always
-                // send CSV bytes (even for xlsx).
-                let name = f.name.replace(/[\\\/]+/g, '_');
-                if (/\.xlsx?$/i.test(name) || f.sheets) name = name.replace(/\.xlsx?$/i, '') + '.csv';
-                if (!/\.(csv|tsv)$/i.test(name)) name += '.csv';
-                return name;
-            }
-
             // ----- Codegen prompt -----
-            function buildTargetSchema() {
-                // Union of raw columns across files, with role tags used to
-                // suggest a stable merge name.
-                const byUnified = new Map();
-                for (const f of ingestedFiles) {
-                    const names = resolveUnifiedNames(f);
-                    f.verdict.columns.forEach((c, i) => {
-                        const unified = names[i];
-                        if (!byUnified.has(unified)) byUnified.set(unified, []);
-                        byUnified.get(unified).push({ file: workerNameFor(f), raw: c.raw, role: c.role, dtype: c.dtype });
-                    });
-                }
-                return byUnified;
-            }
-            function unifiedNameFor(col) {
-                if (col.role === 'study_id') return 'study_id';
-                if (col.role === 'participant_id') return 'participant_id';
-                if (col.role === 'timestamp') return 'timestamp';
-                if (col.role === 'glucose') return 'glucose';
-                return normalizeHeader(col.raw) || 'column';
-            }
-            function resolveUnifiedNames(f) {
-                // Per-file: unifiedNameFor collapses columns by role (e.g.
-                // every "glucose"-role column becomes "glucose"). If two raw
-                // columns in the SAME file land on the same name, rename()
-                // produces duplicate column labels, which crashes
-                // pd.concat's reindex. Demote every column involved in a
-                // same-file collision back to its own normalized header,
-                // then guarantee uniqueness with a numeric suffix as a last
-                // resort.
-                const cols = f.verdict.columns;
-                const base = cols.map(c => unifiedNameFor(c));
-                const counts = {};
-                base.forEach(n => { counts[n] = (counts[n] || 0) + 1; });
-                const seen = {};
-                return cols.map((c, i) => {
-                    const name = counts[base[i]] > 1 ? (normalizeHeader(c.raw) || base[i]) : base[i];
-                    const n = (seen[name] || 0) + 1;
-                    seen[name] = n;
-                    return n > 1 ? name + '_' + n : name;
-                });
-            }
-            function buildCodegenPrompt() {
+            // Generic shell: the tool-call contract and the /mnt/ file
+            // listing apply to every scaffold-based skill. The actual
+            // transform instructions (what to rename/reshape/produce, and
+            // the per-file verdict detail needed to do it) are entirely
+            // skill-specific and supplied by config.codegenInstructions -
+            // for the combiner that is the rename/concat/merge recipe; a
+            // future skill's would describe its own reshape instead.
+            function buildCodegenPrompt(ctx) {
                 const parts = [];
-                parts.push('You are writing a Python merge script. Pandas and numpy are imported as pd and np. A helper writeOutput(name, df) is defined; it saves a DataFrame to a downloadable file.');
+                parts.push('You are writing a Python ' + config.verb + ' script. Pandas and numpy are imported as pd and np. A helper writeOutput(name, df) is defined; it saves a DataFrame to a downloadable file.');
                 parts.push('Return EXACTLY one fenced JSON block of this shape and nothing else:');
                 parts.push('```json');
                 parts.push('{"tool":"runPython","args":{"code":"<your python code here>"}}');
                 parts.push('```');
                 parts.push('Rules:');
                 parts.push('- The files live under /mnt/ with these names:');
-                for (const f of ingestedFiles) parts.push('  - /mnt/' + workerNameFor(f) + '   (from ' + f.name + ')');
-                parts.push('- Use pd.read_csv with skiprows equal to the header row shown below so pandas picks up the true headers.');
-                parts.push('- Rename columns to unified names using the mapping below.');
-                parts.push('- Concatenate with pd.concat([...], ignore_index=True, sort=False) so columns unique to one file get NaN in others.');
-                parts.push('- Add a "source_file" column set to the original file name.');
-                parts.push('- Assign the final merged DataFrame to a variable called df.');
-                parts.push('- End the script with writeOutput("merged.csv", df).');
-                parts.push('');
-                parts.push('Per-file verdicts:');
-                for (const f of ingestedFiles) {
-                    const v = f.verdict;
-                    parts.push('- ' + workerNameFor(f) + ':');
-                    parts.push('    header_row: ' + v.header_row);
-                    parts.push('    data_start_row: ' + v.data_start_row);
-                    parts.push('    skiprows: ' + v.header_row);
-                    parts.push('    columns (raw -> unified):');
-                    const names = resolveUnifiedNames(f);
-                    v.columns.forEach((c, i) => {
-                        parts.push('      "' + String(c.raw).replace(/"/g, "'") + '" -> ' + names[i] + '   (' + c.dtype + '/' + c.role + ')');
-                    });
-                }
-                parts.push('');
-                parts.push('Unified column list (target order): ' + Array.from(buildTargetSchema().keys()).join(', '));
+                for (const f of ctx.files) parts.push('  - /mnt/' + workerNameFor(f) + '   (from ' + f.name + ')');
+                parts.push(config.codegenInstructions(ctx));
                 return parts.join('\n');
             }
-            async function requestCodegen(token) {
-                const prompt = buildCodegenPrompt();
+            async function requestCodegen(token, ctx) {
+                const prompt = buildCodegenPrompt(ctx);
                 return await extractCode(await oneShotWithToken(token)(prompt, 1500));
             }
-            async function requestCodegenRetry(token, priorCode, stderr) {
-                // Pandas tracebacks can quote the offending cell value (e.g.
-                // "could not convert string to float: '187.3'"). Tier local
-                // sends the real traceback back to the model (more useful for
-                // fixing the code); tier network gets it shape-redacted first,
-                // same as any other data value reaching a model (design doc
-                // Section 6).
+            async function requestCodegenRetry(token, ctx, priorCode, stderr) {
+                // Tracebacks can quote the offending cell value (e.g. "could
+                // not convert string to float: '187.3'"). Tier local sends
+                // the real traceback back to the model (more useful for
+                // fixing the code); tier network gets it shape-redacted
+                // first, same as any other data value reaching a model
+                // (design doc Section 6).
                 const tier = ModelGateway.tier();
                 const stderrForPrompt = tier === 'local'
                     ? String(stderr).slice(0, 1500)
                     : redactCell(String(stderr).slice(0, 1500));
-                const prompt = buildCodegenPrompt()
+                const prompt = buildCodegenPrompt(ctx)
                     + '\n\nYour previous attempt raised this error:\n' + stderrForPrompt
                     + '\n\nWrite corrected code, same tool-call shape.';
                 return await extractCode(await oneShotWithToken(token)(prompt, 1500));
@@ -10630,44 +10601,31 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 return null;
             }
 
-            // ----- Template code (deterministic pandas merge) -----
-            function buildTemplateCode() {
-                const lines = [];
-                lines.push('import pandas as pd');
-                lines.push('import numpy as np');
-                lines.push('parts = []');
-                for (let i = 0; i < ingestedFiles.length; i++) {
-                    const f = ingestedFiles[i];
-                    const v = f.verdict;
-                    const wn = workerNameFor(f);
-                    const rename = {};
-                    const names = resolveUnifiedNames(f);
-                    v.columns.forEach((c, j) => { rename[c.raw] = names[j]; });
-                    lines.push('df_' + i + ' = pd.read_csv(' + JSON.stringify('/mnt/' + wn) + ', skiprows=' + v.header_row + ', dtype=str, keep_default_na=False)');
-                    lines.push('df_' + i + ' = df_' + i + '.rename(columns=' + JSON.stringify(rename) + ')');
-                    lines.push('df_' + i + '["source_file"] = ' + JSON.stringify(f.name));
-                    lines.push('parts.append(df_' + i + ')');
-                }
-                lines.push('df = pd.concat(parts, ignore_index=True, sort=False)');
-                lines.push('writeOutput("merged.csv", df)');
-                return lines.join('\n');
-            }
+            // Template code (deterministic fallback) is entirely
+            // skill-specific - config.buildTemplateCode(ctx) is called
+            // directly at the one call site in renderExecute above. A
+            // rename-and-concat pandas template does not generalize to
+            // e.g. sleep-diary date inference, so the scaffold never
+            // synthesizes one itself.
 
             // ----- Done screen -----
             function renderDone() {
-                const sec = makeSection('Merge done');
+                const sec = makeSection(config.verb.charAt(0).toUpperCase() + config.verb.slice(1) + ' done');
                 if (lastResult && lastResult.mode === 'template-fallback') {
                     const banner = document.createElement('div');
                     banner.className = 'csvc-banner warn';
-                    banner.textContent = 'The AI-written code did not work on this set. The built-in merge ran instead. Same output shape, less risk of code errors.';
+                    banner.textContent = 'The AI-written code did not work on this set. The built-in ' + config.verb + ' ran instead. Same output shape, less risk of code errors.';
                     sec.appendChild(banner);
                 }
-                const mergedFile = lastResult && lastResult.files && lastResult.files.find(x => x.name === 'merged.csv');
-                if (!mergedFile) {
-                    makeHint(sec, 'No merged file was produced.');
+                const targetSchema = config.buildTargetSchema(ingestedFiles);
+                const present = targetSchema.outputs
+                    .map(out => ({ out, file: lastResult && lastResult.files && lastResult.files.find(x => x.name === out.filename) }))
+                    .filter(x => x.file);
+                if (!present.length) {
+                    makeHint(sec, 'No output file was produced.');
                     return;
                 }
-                const previewText = extractPreview(mergedFile.buffer, 10);
+                const previewText = extractPreview(present[0].file.buffer, 10);
                 makeHint(sec, 'Preview (first 10 rows).');
                 const pre = document.createElement('pre');
                 pre.className = 'csvc-preview-pre';
@@ -10677,16 +10635,18 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 const btnRow = document.createElement('div');
                 btnRow.className = 'csvc-btn-row';
 
-                const dlBtn = document.createElement('button');
-                dlBtn.type = 'button';
-                dlBtn.className = 'skill-btn primary';
-                dlBtn.textContent = 'Download merged.csv';
-                dlBtn.addEventListener('click', () => {
-                    const blob = new Blob([mergedFile.buffer.slice(0)], { type: 'text/csv;charset=utf-8' });
-                    downloadBlob(blob, 'merged.csv');
-                    downloaded = true;
+                present.forEach(({ out, file }, i) => {
+                    const dlBtn = document.createElement('button');
+                    dlBtn.type = 'button';
+                    dlBtn.className = i === 0 ? 'skill-btn primary' : 'skill-btn';
+                    dlBtn.textContent = 'Download ' + out.filename;
+                    dlBtn.addEventListener('click', () => {
+                        const blob = new Blob([file.buffer.slice(0)], { type: out.format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv;charset=utf-8' });
+                        downloadBlob(blob, out.filename);
+                        downloaded = true;
+                    });
+                    btnRow.appendChild(dlBtn);
                 });
-                btnRow.appendChild(dlBtn);
 
                 const nbBtn = document.createElement('button');
                 nbBtn.type = 'button';
@@ -10694,7 +10654,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 nbBtn.textContent = 'Download notebook (.ipynb)';
                 nbBtn.addEventListener('click', () => {
                     const blob = new Blob([notebookLog.toIpynb()], { type: 'application/x-ipynb+json' });
-                    downloadBlob(blob, 'csv-combine.ipynb');
+                    downloadBlob(blob, config.notebookFilename || (config.id + '.ipynb'));
                 });
                 btnRow.appendChild(nbBtn);
 
@@ -10703,7 +10663,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 chatBtn.className = 'skill-btn';
                 chatBtn.textContent = 'Send to Chat';
                 chatBtn.addEventListener('click', () => {
-                    chatBridge(buildSummary(), 'Here is a summary of a CSV merge I just ran. Please help me analyze it and suggest next steps.');
+                    const summary = (config.buildSummary || defaultSummary)({ files: ingestedFiles, result: lastResult, targetSchema, mode: lastMode });
+                    chatBridge(summary, config.chatBridgeInstruction || ('Here is a summary of a ' + config.verb + ' I just ran. Please help me analyze it and suggest next steps.'));
                 });
                 btnRow.appendChild(chatBtn);
 
@@ -10736,26 +10697,210 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 } catch { return '(preview unavailable)'; }
             }
 
-            function buildSummary() {
+            // Skill-agnostic default for Send-to-Chat; a skill may override
+            // via config.buildSummary(ctx) for richer narrative (the
+            // combiner adds vendor and per-output row/column counts).
+            function defaultSummary(ctx) {
                 const lines = [];
-                lines.push('CSV merge summary');
-                lines.push('Files merged: ' + ingestedFiles.length);
-                for (const f of ingestedFiles) {
-                    const v = f.verdict;
-                    lines.push('  - ' + f.name + ': header row ' + (v.header_row + 1) + ', ' + v.columns.length + ' columns' + (v.vendor ? (' (' + v.vendor + ')') : ''));
-                }
-                lines.push('Merge mode: ' + (lastMode || 'unknown'));
-                if (lastResult && lastResult.resultVars) {
-                    const rv = lastResult.resultVars;
-                    if (rv['merged.csv.rows']) lines.push('Merged rows: ' + rv['merged.csv.rows']);
-                    if (rv['merged.csv.cols']) lines.push('Merged columns: ' + rv['merged.csv.cols']);
-                    if (rv['merged.csv.columns']) lines.push('Column names: ' + rv['merged.csv.columns'].join(', '));
+                lines.push(config.verb.charAt(0).toUpperCase() + config.verb.slice(1) + ' summary');
+                lines.push('Files: ' + ctx.files.length);
+                lines.push('Mode: ' + (ctx.mode || 'unknown'));
+                for (const out of ctx.targetSchema.outputs) {
+                    const rv = ctx.result && ctx.result.resultVars;
+                    if (rv && rv[out.filename + '.rows']) lines.push(out.filename + ': ' + rv[out.filename + '.rows'] + ' rows, ' + (rv[out.filename + '.cols'] || '?') + ' columns');
                 }
                 return lines.join('\n');
             }
 
             // Kick off.
             render();
+        }
+
+        // ----- CSV Combiner: config for the transform scaffold above -----
+        // Phase 10 Stage 1 refactor: this used to be the whole skill
+        // (mountCsvCombineSkill did everything mountTransformScaffold now
+        // does). It is now just a target-schema declaration plus the two
+        // bits of UI the scaffold has no generic opinion about (the
+        // multi-sheet XLSX picker) and the CGM-specific role vocabulary /
+        // alias heuristic (VERDICT_ROLES/CSV_ALIAS_MAP/roleForHeader,
+        // defined earlier in this file, are unchanged).
+        function mountCsvCombineSkill(container) {
+            // role -> unified column name. Collapses every column assigned
+            // the same role across all files into one merged column;
+            // anything left 'other' keeps its own normalized header name.
+            function unifiedNameFor(col) {
+                if (col.role === 'study_id') return 'study_id';
+                if (col.role === 'participant_id') return 'participant_id';
+                if (col.role === 'timestamp') return 'timestamp';
+                if (col.role === 'glucose') return 'glucose';
+                return normalizeHeader(col.raw) || 'column';
+            }
+            // Per-file: unifiedNameFor collapses columns by role (e.g. every
+            // "glucose"-role column becomes "glucose"). If two raw columns
+            // in the SAME file land on the same name, rename() produces
+            // duplicate column labels, which crashes pd.concat's reindex.
+            // Demote every column involved in a same-file collision back to
+            // its own normalized header, then guarantee uniqueness with a
+            // numeric suffix as a last resort.
+            function resolveUnifiedNames(f) {
+                const cols = f.verdict.columns;
+                const base = cols.map(c => unifiedNameFor(c));
+                const counts = {};
+                base.forEach(n => { counts[n] = (counts[n] || 0) + 1; });
+                const seen = {};
+                return cols.map((c, i) => {
+                    const name = counts[base[i]] > 1 ? (normalizeHeader(c.raw) || base[i]) : base[i];
+                    const n = (seen[name] || 0) + 1;
+                    seen[name] = n;
+                    return n > 1 ? name + '_' + n : name;
+                });
+            }
+
+            const csvCombineConfig = {
+                id: 'csv-combine',
+                verb: 'merge',
+                roles: ['study_id', 'participant_id', 'timestamp', 'glucose', 'other'],
+                roleForHeader: roleForHeader,
+                filesTitle: 'Load your spreadsheets',
+                filesHint: 'Pick two or more CSV, TSV, or Excel files, or a folder of them. Each file can have its header on a different row - the next screen will show what the AI found.',
+                executingTitle: 'Merging your files',
+                notebookFilename: 'csv-combine.ipynb',
+                chatBridgeInstruction: 'Here is a summary of a CSV merge I just ran. Please help me analyze it and suggest next steps.',
+
+                extraFileUI(f, chipWrap) {
+                    if (!f.sheets || Object.keys(f.sheets).length <= 1) return;
+                    const sel = document.createElement('select');
+                    sel.className = 'skill-select csvc-sheet-select';
+                    for (const name of Object.keys(f.sheets)) {
+                        const o = document.createElement('option');
+                        o.value = name; o.textContent = name;
+                        if (name === f.sheetName) o.selected = true;
+                        sel.appendChild(o);
+                    }
+                    sel.addEventListener('change', () => {
+                        f.sheetName = sel.value;
+                        f.rows = f.sheets[sel.value] || [];
+                        f.sampled = sampleRowsForLLM(f.rows);
+                        f.forensics = buildForensics(f.rows, f.sampled);
+                        f.verdict = null;
+                    });
+                    const lbl = document.createElement('label');
+                    lbl.className = 'csvc-sheet-label';
+                    lbl.textContent = 'Sheet: ';
+                    lbl.appendChild(sel);
+                    chipWrap.appendChild(lbl);
+                },
+
+                // Union of raw columns across files, with role tags used to
+                // suggest a stable merge name. One output, 'merged.csv'.
+                buildTargetSchema(files) {
+                    const byUnified = new Map();
+                    for (const f of files) {
+                        const names = resolveUnifiedNames(f);
+                        f.verdict.columns.forEach((c, i) => {
+                            const unified = names[i];
+                            if (!byUnified.has(unified)) byUnified.set(unified, []);
+                            byUnified.get(unified).push({ file: workerNameFor(f), raw: c.raw, role: c.role, dtype: c.dtype });
+                        });
+                    }
+                    return { outputs: [{ key: 'merged', filename: 'merged.csv', format: 'csv', columns: Array.from(byUnified.keys()).map(name => ({ name })) }] };
+                },
+
+                codegenInstructions(ctx) {
+                    const lines = [];
+                    lines.push('- Use pd.read_csv with skiprows equal to the header row shown below so pandas picks up the true headers.');
+                    lines.push('- Rename columns to unified names using the mapping below.');
+                    lines.push('- Concatenate with pd.concat([...], ignore_index=True, sort=False) so columns unique to one file get NaN in others.');
+                    lines.push('- Add a "source_file" column set to the original file name.');
+                    lines.push('- Assign the final merged DataFrame to a variable called df.');
+                    lines.push('- End the script with writeOutput("merged.csv", df).');
+                    lines.push('');
+                    lines.push('Per-file verdicts:');
+                    for (const f of ctx.files) {
+                        const v = f.verdict;
+                        lines.push('- ' + workerNameFor(f) + ':');
+                        lines.push('    header_row: ' + v.header_row);
+                        lines.push('    data_start_row: ' + v.data_start_row);
+                        lines.push('    skiprows: ' + v.header_row);
+                        lines.push('    columns (raw -> unified):');
+                        const names = resolveUnifiedNames(f);
+                        v.columns.forEach((c, i) => {
+                            lines.push('      "' + String(c.raw).replace(/"/g, "'") + '" -> ' + names[i] + '   (' + c.dtype + '/' + c.role + ')');
+                        });
+                    }
+                    lines.push('');
+                    lines.push('Unified column list (target order): ' + ctx.targetSchema.outputs[0].columns.map(c => c.name).join(', '));
+                    return lines.join('\n');
+                },
+
+                buildTemplateCode(ctx) {
+                    const lines = [];
+                    lines.push('import pandas as pd');
+                    lines.push('import numpy as np');
+                    lines.push('parts = []');
+                    for (let i = 0; i < ctx.files.length; i++) {
+                        const f = ctx.files[i];
+                        const v = f.verdict;
+                        const wn = workerNameFor(f);
+                        const rename = {};
+                        const names = resolveUnifiedNames(f);
+                        v.columns.forEach((c, j) => { rename[c.raw] = names[j]; });
+                        lines.push('df_' + i + ' = pd.read_csv(' + JSON.stringify('/mnt/' + wn) + ', skiprows=' + v.header_row + ', dtype=str, keep_default_na=False)');
+                        lines.push('df_' + i + ' = df_' + i + '.rename(columns=' + JSON.stringify(rename) + ')');
+                        lines.push('df_' + i + '["source_file"] = ' + JSON.stringify(f.name));
+                        lines.push('parts.append(df_' + i + ')');
+                    }
+                    lines.push('df = pd.concat(parts, ignore_index=True, sort=False)');
+                    lines.push('writeOutput("merged.csv", df)');
+                    return lines.join('\n');
+                },
+
+                // Provenance markdown, extended with vendor/model/tier and the
+                // unconstrained-JSON marker (design doc Section 7/Phase 3).
+                buildProvenanceMarkdown(files) {
+                    const lines = [
+                        '## Merge run',
+                        'Started: ' + new Date().toISOString() + '. Model: ' + currentModelId + ' (' + ModelGateway.tier() + ' tier).',
+                        '',
+                        'Files:'
+                    ];
+                    for (const f of files) {
+                        const v = f.verdict || {};
+                        const headerRow = (v.header_row != null ? v.header_row : 0) + 1;
+                        let flag;
+                        if (v.source === 'js') {
+                            flag = 'column roles: text-matching fallback - AI unavailable';
+                        } else if (f.forensics && f.forensics.method === 'llm') {
+                            flag = 'header row: AI tiebreak, ' + (v.confidence || 'medium') + ' confidence';
+                        } else {
+                            flag = 'heuristic, ' + (v.confidence || 'unknown') + ' confidence';
+                        }
+                        if (v.source === 'llm') flag += '; column roles/vendor: unconstrained JSON (schema enforcement did not engage)';
+                        lines.push('- ' + f.name + ': ' + f.rows.length + ' rows, header row ' + headerRow + ' [' + flag + ']');
+                    }
+                    return lines.join('\n');
+                },
+
+                buildSummary(ctx) {
+                    const lines = [];
+                    lines.push('CSV merge summary');
+                    lines.push('Files merged: ' + ctx.files.length);
+                    for (const f of ctx.files) {
+                        const v = f.verdict;
+                        lines.push('  - ' + f.name + ': header row ' + (v.header_row + 1) + ', ' + v.columns.length + ' columns' + (v.vendor ? (' (' + v.vendor + ')') : ''));
+                    }
+                    lines.push('Merge mode: ' + (ctx.mode || 'unknown'));
+                    if (ctx.result && ctx.result.resultVars) {
+                        const rv = ctx.result.resultVars;
+                        if (rv['merged.csv.rows']) lines.push('Merged rows: ' + rv['merged.csv.rows']);
+                        if (rv['merged.csv.cols']) lines.push('Merged columns: ' + rv['merged.csv.cols']);
+                        if (rv['merged.csv.columns']) lines.push('Column names: ' + rv['merged.csv.columns'].join(', '));
+                    }
+                    return lines.join('\n');
+                }
+            };
+
+            mountTransformScaffold(container, csvCombineConfig);
         }
         // Given a zero-shot result and the arrays that were passed in, remap
         // the returned labels to their display-label form. Called for both
