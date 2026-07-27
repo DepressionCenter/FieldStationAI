@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 README.md: Provides an overview of the project, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-20
-Last Modified: 2026-07-20
+Last Modified: 2026-07-26
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This file provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -32,10 +32,11 @@ Field Station AI™ is a private, in-browser AI workspace for health and behavio
 Think of it as a single web page you open in your browser that gives you your own private AI assistant — one that never sends your data anywhere. You can chat with it, transcribe an interview recording, sort and label text responses, or clean up and merge messy spreadsheets, all without uploading anything to the internet. The first time you pick an AI model, your browser downloads it; after that, everything runs locally on your own computer, even without an internet connection. There's nothing to install, no account to create, and no company on the other end seeing your data — the only time the app reaches out to the internet is to download a model you've chosen, or to optionally load a knowledge-base file you've set up.
 
 ## Quick Start Guide
-**Want to try it first?** Check out the **[general live demo](https://code.depressioncenter.org/FieldStationAI/)**, or the **[KB version](https://code.depressioncenter.org/FieldStationAI/?kb=efdc-kb.json)** that answers questions based on our knowledge base (works best with Llama or larger models).
+**Want to try it first?** Check out the **[live demo](https://code.depressioncenter.org/FieldStationAI/)** — it ships with the group's knowledge base bundled in and on by default (works best with Llama or larger models).
 + Field Station AI is a single, dependency-free HTML file — there is no build step, so setup is just a matter of getting that file open in your browser. Download or clone this repository, then serve the folder with any static file host (e.g. `python -m http.server`) and navigate to it in a modern browser (Chrome, Edge, or Firefox recommended). Note: you can't just double-click `index.html` to open it — browsers block AI model downloads for pages opened directly from disk, so it needs to be served over HTTP (localhost is fine).
 + On first use, pick a language model from the menu; it will download once and run locally from then on (an internet connection is only needed for that initial download).
-+ Optional: to serve a bundled knowledge base for the Skills' retrieval features, run `python build-kb-index.py` to crawl a source site and produce an `index.json` alongside `index.html`. Then pass it to the app via the `?kb=index.json` query parameter (e.g. `index.html?kb=index.json`).
++ The knowledge-base badge next to the model dropdown is always visible and has three states: **Off** (no knowledge base — answers come only from the model and any attachments), **UMich Health Research Resource Library** (the bundled `efdc-kb.json` shipped alongside `index.html`, on by default, fully usable offline after the first load), and **External** (a different index loaded via the `?kb=` query parameter, flagged in the badge as network-fetched). Click the badge at any time to switch between whichever states are currently available.
++ Optional: to point the app at your own knowledge base instead of (or in addition to) the bundled one, run `python build-kb-index.py` to crawl a source site — it writes `index.json` by default (deliberately never `efdc-kb.json`, so your own index can never overwrite the bundled one). Pass it to the app via the `?kb=` query parameter, e.g. `index.html?kb=index.json`; it shows up as "External" in the badge and, if it loads successfully, takes priority over the bundled library for that page load.
 
 
 

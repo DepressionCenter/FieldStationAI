@@ -120,16 +120,25 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
         #menu-popup button:hover { background: var(--bg); color: var(--accent); }
 
-        /* Knowledge Base badge (only appears when ?kb=<url> is in the URL).
-           Two variants share the same base icon; the corner overlay differs so
-           include vs lockdown reads at a glance without color-only coding. */
-        .kb-badge {
-            position: relative;
+        /* Knowledge Base badge: always visible, three states (kb-off /
+           kb-bundled / kb-external). The include/lockdown corner overlay
+           (+/lock) layers on top of bundled/external. Off and External get
+           a shape/border cue in addition to the tooltip text, so state never
+           depends on color alone: Off is dashed + dimmed, External has an
+           accent border ("network-fetched"), Bundled is the plain/neutral
+           pill. Structure mirrors #menu-wrap/#menu-btn/#menu-popup: .kb-badge
+           is the positioning wrapper, #kb-badge-btn the actual <button>,
+           .kb-picker-popup the click-to-open menu. */
+        .kb-badge { position: relative; display: inline-flex; align-items: center; }
+        #kb-badge-btn {
             display: inline-flex; align-items: center; justify-content: center;
             padding: 5px 6px; border-radius: 8px; border: 1px solid var(--line);
             background: var(--panel); color: var(--ink);
-            font-family: inherit; cursor: help;
+            font-family: inherit; cursor: pointer;
         }
+        #kb-badge-btn:hover, #kb-badge-btn:focus-visible { border-color: var(--accent); color: var(--accent); }
+        .kb-badge.kb-off #kb-badge-btn { opacity: 0.55; border-style: dashed; }
+        .kb-badge.kb-external #kb-badge-btn { border-color: var(--accent); }
         .kb-badge .kb-icon-wrap { position: relative; display: inline-flex; }
         .kb-badge svg.kb-doc { display: block; }
         .kb-badge .kb-overlay {
@@ -143,10 +152,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         .kb-badge.kb-lockdown .kb-overlay { background: var(--accent); color: #fff; }
         .kb-badge.kb-lockdown .kb-overlay svg { display: block; }
 
-        /* Rich tooltip for the KB badge: site name, URL, and an explanation of
-           what the KB does to answers. Modeled on .info-popover but wider and
-           multi-line. Hidden by default; shown on hover/focus of the badge or
-           when the badge gets the .kb-open class (touch click-toggle). */
+        /* Rich tooltip for the KB badge: site name, provenance/URL, index
+           age, and a plain-language explanation of what the active state
+           does to answers. Modeled on .info-popover but wider and
+           multi-line. Hidden by default; shown on hover/focus - the click
+           interaction instead opens .kb-picker-popup below. */
         .kb-tooltip {
             position: absolute; top: calc(100% + 6px); right: 0; z-index: 90;
             background: var(--ink); color: #fff;
@@ -163,9 +173,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             border: 5px solid transparent; border-bottom-color: var(--ink);
         }
         .kb-badge:hover .kb-tooltip,
-        .kb-badge:focus .kb-tooltip,
-        .kb-badge:focus-within .kb-tooltip,
-        .kb-badge.kb-open .kb-tooltip { opacity: 1; }
+        .kb-badge:focus-within .kb-tooltip { opacity: 1; }
         .kb-tooltip .kb-tt-site { display: block; font-weight: 700; font-size: 0.82rem; }
         .kb-tooltip .kb-tt-url {
             display: block; margin-top: 2px;
@@ -178,6 +186,25 @@ with this program. If not, see https://www.gnu.org/licenses/.
             border-top: 1px solid rgba(255, 255, 255, 0.15);
             color: rgba(255, 255, 255, 0.92);
         }
+
+        /* Picker menu: lists the reachable states (Off/Bundled always,
+           External once a ?kb= index has loaded) and marks the active one.
+           Same visual language as #menu-popup. */
+        .kb-picker-popup {
+            position: absolute; top: calc(100% + 6px); right: 0; z-index: 91;
+            min-width: 220px; padding: 4px;
+            background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+            box-shadow: 0 8px 24px rgba(23, 38, 59, 0.14);
+            display: none;
+        }
+        .kb-picker-popup.open { display: block; }
+        .kb-picker-popup button {
+            display: block; width: 100%; text-align: left;
+            padding: 8px 12px; border: none; background: none; border-radius: 6px;
+            font-family: inherit; font-size: 0.85rem; color: var(--ink); cursor: pointer;
+        }
+        .kb-picker-popup button:hover { background: var(--bg); color: var(--accent); }
+        .kb-picker-popup button[aria-current="true"] { font-weight: 700; }
 
         /* Sources row rendered under a bot bubble when KB retrieval had hits.
            Small, muted, one line of anchor links; wraps if there are many. */
@@ -1192,9 +1219,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         // ---------- KB / RAG constants ----------
-        // Static-RAG mode: activated only when ?kb=<url> is present. The URL
-        // points at a prebuilt index.json (see plan). Everything else defaults
-        // so the app is a strict no-op when the param is absent.
+        // Static-RAG mode, three states (kbState.kind): 'bundled' loads the
+        // same-origin efdc-kb.json shipped with this app (the default);
+        // 'external' loads a prebuilt index from ?kb=<url> instead; 'off'
+        // disables retrieval entirely. See bootKb()/switchKbTo() below.
         const KB_EMBED_ID = 'Xenova/bge-small-en-v1.5';
         const KB_DIMS = 384;                              // must match the embedder above
         // bge models are trained for asymmetric retrieval: prepend this to the
@@ -1204,9 +1232,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const KB_SCORE_MIN = 0.44;                        // dot product below this = not relevant (raised from 0.25 - bge-small cosine sim runs high, even for unrelated text, due to embedding-space anisotropy; tune empirically if still over/under-triggering)
         const KB_TOPK = 4;                                // hits per turn fed into the prompt
         const KB_CTX_TOKEN_BUDGET = 1500;                 // rough cap for the reference block
-        const KB_TTL_MS = 7 * 24 * 60 * 60 * 1000;        // 7 days for cached index.json bodies
-        const KB_META_PREFIX = 'fieldstation_kb_meta::';   // localStorage key prefix, one per KB URL
-        const KB_CACHE_NAME = 'fieldstation-kb-v1';        // Cache Storage bucket for the JSON blobs
+        const KB_TTL_MS = 7 * 24 * 60 * 60 * 1000;        // 7 days for cached EXTERNAL index bodies
+        const KB_META_PREFIX = 'fieldstation_kb_meta::';   // localStorage key prefix, one per external KB URL
+        const KB_CACHE_NAME = 'fieldstation-kb-v1';        // Cache Storage bucket for the JSON blobs (bundled + external share this bucket, keyed by URL)
+        const BUNDLED_KB_URL = 'efdc-kb.json';             // same-origin, relative to index.html. NEVER index.json - that stays the crawler's default output so a user's own generated index can never collide with this one.
+        const KB_CHOICE_KEY = 'fieldstation_kb_choice_v1'; // persisted user choice: 'off' | 'bundled' (external is never persisted - it only exists while ?kb= is on the URL)
         const KB_INCLUDE_SUFFIX = 'If the reference excerpts are relevant to this question, prefer and prioritize them and cite their source URLs inline. If they are not relevant, ignore them completely and answer normally from general knowledge - do not cite or mention them.';
         const KB_LOCKDOWN_SUFFIX = 'Answer ONLY from the reference excerpts. If they do not contain the answer, say exactly that and list the closest excerpt URLs. Never use outside knowledge.';
 
@@ -1883,10 +1913,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // generation to return).
         let cancelledForNewChat = false;
 
-        // KB / RAG state (URL-driven, per page load; never persisted itself).
-        // active flips true only after fetchKbIndex validates and initRAG succeeds.
-        // embedderLoading holds the in-flight promise so concurrent retrieveKb
-        // calls share one download instead of racing.
+        // KB / RAG state. kbState always reflects whichever source (if any)
+        // is currently ACTIVE - kind is 'off' | 'bundled' | 'external'.
+        // switchKbTo()/applyKbSource() are the only things that mutate it
+        // after boot. embedderLoading holds the in-flight promise so
+        // concurrent retrieveKb calls share one download instead of racing.
         //
         // GUARDRAIL: KB context (retrieveKb/buildKbContextBlock/kbSystemPrompt)
         // is wired into handleSend()'s main-chat path ONLY. Skills
@@ -1898,10 +1929,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // skill or vision path without deliberately designing KB support for
         // it (separate token budget, prompt shape, citation UI, etc.).
         const kbState = {
-            active: false, mode: 'include', url: '', site: '',
-            chunks: null, vecs: null, dims: 0,
+            kind: 'off', mode: 'include', url: '', site: '',
+            chunks: null, vecs: null, dims: 0, builtAt: null, sourceCount: null,
             embedder: null, embedderLoading: null
         };
+        // Session-scoped fetch caches so switching Off/Bundled/External back
+        // and forth doesn't re-fetch a (potentially 30+ MB) index every time.
+        // Never persisted - repopulated by bootKb()/switchKbTo() as needed.
+        let kbBundledIndex = null;
+        let kbExternalIndex = null;
 
         function errMsg(e) {
             if (!e) return 'Unknown error';
@@ -5051,10 +5087,40 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return new Float32Array(u8.buffer);
         }
 
-        // Fetch + validate index.json. force=true refetches even when a cache
-        // entry exists. HEAD size pre-check aborts oversize downloads before
-        // spending bandwidth; some servers omit Content-Length, in which case
-        // we fall through and enforce the byte cap after the GET.
+        // Shared index-guard + shape validation for BOTH bundled and external
+        // indexes: idx.model/idx.dims must match the embedder this build
+        // ships (KB_EMBED_ID/KB_DIMS - see the asymmetric query convention
+        // notes above), chunks/vecs must be present and consistent, and
+        // builtAt/sourceCount are read as OPTIONAL staleness-stamp fields
+        // (null when absent, e.g. an index built before this feature
+        // existed) rather than causing a hard failure.
+        function parseKbIndexBody(idx) {
+            if (!idx || idx.v !== 1) throw new Error('KB index version mismatch (expected v:1)');
+            if (idx.model !== KB_EMBED_ID) throw new Error('KB embedder mismatch (expected ' + KB_EMBED_ID + ')');
+            if (idx.dims !== KB_DIMS) throw new Error('KB dims mismatch (expected ' + KB_DIMS + ')');
+            if (!Array.isArray(idx.chunks) || !idx.chunks.length) throw new Error('KB has no chunks');
+            if (typeof idx.vecs !== 'string' || !idx.vecs) throw new Error('KB vecs missing');
+            const vecs = b64ToF32(idx.vecs);
+            const expected = idx.dims * idx.chunks.length;
+            if (vecs.length !== expected) {
+                throw new Error('KB vecs length mismatch (' + vecs.length + ' floats, expected ' + expected + ')');
+            }
+            return {
+                site: idx.site || '',
+                chunks: idx.chunks,
+                dims: idx.dims,
+                vecs,
+                builtAt: (typeof idx.builtAt === 'string' && idx.builtAt) ? idx.builtAt : null,
+                sourceCount: Number.isFinite(idx.sourceCount) ? idx.sourceCount : null
+            };
+        }
+
+        // Fetch + validate an EXTERNAL (?kb=) index. force=true refetches even
+        // when a cache entry exists. HEAD size pre-check aborts oversize
+        // downloads before spending bandwidth; some servers omit
+        // Content-Length, in which case we fall through and enforce the byte
+        // cap after the GET. Cache-first + KB_TTL_MS (see purgeExpiredKb) -
+        // appropriate for a third-party URL we shouldn't hammer on every load.
         async function fetchKbIndex(url, force) {
             const cache = await caches.open(KB_CACHE_NAME);
             let res = null;
@@ -5089,8 +5155,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             let idx;
             try { idx = JSON.parse(bodyText); }
             catch { throw new Error('KB index is not valid JSON'); }
-            if (!idx || idx.v !== 1) throw new Error('KB index version mismatch (expected v:1)');
-            const staleMismatch = idx.model !== KB_EMBED_ID || idx.dims !== KB_DIMS;
+            const staleMismatch = !idx || idx.model !== KB_EMBED_ID || idx.dims !== KB_DIMS;
             if (staleMismatch && cameFromCache && !force) {
                 // Cache Storage is keyed only by URL, not by model, so a browser
                 // that cached this index before an embedder swap has no other way
@@ -5099,23 +5164,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 await purgeKbEntry(url);
                 return fetchKbIndex(url, true);
             }
-            if (idx.model !== KB_EMBED_ID) throw new Error('KB embedder mismatch (expected ' + KB_EMBED_ID + ')');
-            if (idx.dims !== KB_DIMS) throw new Error('KB dims mismatch (expected ' + KB_DIMS + ')');
-            if (!Array.isArray(idx.chunks) || !idx.chunks.length) throw new Error('KB has no chunks');
-            if (typeof idx.vecs !== 'string' || !idx.vecs) throw new Error('KB vecs missing');
-            const vecs = b64ToF32(idx.vecs);
-            const expected = idx.dims * idx.chunks.length;
-            if (vecs.length !== expected) {
-                throw new Error('KB vecs length mismatch (' + vecs.length + ' floats, expected ' + expected + ')');
-            }
+            const parsed = parseKbIndexBody(idx);
             // Only stamp fetchedAt when we actually hit the network. Bumping it
             // on every cache-served load would reset the 7-day clock and the
             // entry would never expire.
             if (!cameFromCache) {
                 writeKbMeta(url, {
                     fetchedAt: Date.now(),
-                    chunkCount: idx.chunks.length,
-                    site: idx.site || '',
+                    chunkCount: parsed.chunks.length,
+                    site: parsed.site,
                     byteLength: bodyText.length
                 });
             } else if (!readKbMeta(url)) {
@@ -5123,12 +5180,46 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 // now so purgeExpiredKb has something to key on going forward.
                 writeKbMeta(url, {
                     fetchedAt: Date.now(),
-                    chunkCount: idx.chunks.length,
-                    site: idx.site || '',
+                    chunkCount: parsed.chunks.length,
+                    site: parsed.site,
                     byteLength: bodyText.length
                 });
             }
-            return { site: idx.site || '', chunks: idx.chunks, dims: idx.dims, vecs };
+            return parsed;
+        }
+
+        // Fetch + validate the BUNDLED index shipped alongside index.html.
+        // Network-first (not cache-first like the external path above): a new
+        // app release means a new efdc-kb.json at the same same-origin URL,
+        // so we always try the network first (normal HTTP revalidation avoids
+        // re-downloading the ~30 MB body when it hasn't changed) and only
+        // fall back to the Cache Storage copy when offline or the request
+        // otherwise fails. There is no service worker anywhere in this app;
+        // this reuses the exact same direct-from-page-JS Cache Storage bucket
+        // (KB_CACHE_NAME) the external path already uses, just keyed by the
+        // bundled file's own relative URL instead of a third-party one - that
+        // is the entirety of "cached... fully offline after first load" for
+        // this file. Throws when neither the network nor the cache has it,
+        // which the caller (bootKb/switchKbTo) treats as "not shipped -> Off".
+        async function fetchBundledKbIndex() {
+            const cache = await caches.open(KB_CACHE_NAME);
+            let res;
+            try {
+                res = await fetch(BUNDLED_KB_URL, { cache: 'no-cache' });
+                if (!res.ok) throw new Error('Bundled KB fetch failed: HTTP ' + res.status);
+                try { await cache.put(BUNDLED_KB_URL, res.clone()); } catch {}
+            } catch (networkErr) {
+                res = await cache.match(BUNDLED_KB_URL);
+                if (!res) throw networkErr;
+            }
+            const bodyText = await res.text();
+            if (bodyText.length > KB_MAX_BYTES) {
+                throw new Error('Bundled KB body exceeds ' + KB_MAX_BYTES + ' bytes');
+            }
+            let idx;
+            try { idx = JSON.parse(bodyText); }
+            catch { throw new Error('Bundled KB index is not valid JSON'); }
+            return parseKbIndexBody(idx);
         }
 
         // Lazy embedder load. Mirrors ensureRouterNli: single in-flight
@@ -5294,7 +5385,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // 1's) because retrieval needs the KB_QUERY_INSTRUCTION prefix and
         // Tier 1's symmetric intent-classification vector must stay unprefixed.
         async function retrieveKb(query, k, noThreshold) {
-            if (!kbState.active || !kbState.vecs || !kbState.chunks) return [];
+            if (kbState.kind === 'off' || !kbState.vecs || !kbState.chunks) return [];
             const em = await ensureKbEmbedder();
             await EngineLock.acquire('chat', chatLockWaitCtl.signal);
             let out;
@@ -5483,28 +5574,74 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return (baseContent || '') + '\n\n' + suffix;
         }
 
-        // Header badge next to the model dropdown. Two variants: include shows
-        // a "+" corner overlay; lockdown shows a small lock overlay. Icons are
-        // built with createElement so no innerHTML on user-controlled strings.
-        // Idempotent: removes any previously mounted badge before adding one.
+        // "Built <date> (<age>)" from an optional ISO builtAt stamp, or a
+        // plain "Build date unknown" for indexes that predate this field
+        // (e.g. one built by an older crawler version) - never guessed or
+        // substituted with an unrelated timestamp (like the browser's own
+        // fetch/cache time, which measures a different thing).
+        function kbAgeText(builtAt) {
+            const t = builtAt ? Date.parse(builtAt) : NaN;
+            if (!Number.isFinite(t)) return 'Build date unknown';
+            const days = Math.max(0, Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000)));
+            const ageStr = days === 0 ? 'today' : days === 1 ? '1 day ago' : days + ' days ago';
+            return 'Built ' + new Date(t).toISOString().slice(0, 10) + ' (' + ageStr + ')';
+        }
+        function kbSourceCountText(sourceCount) {
+            return Number.isFinite(sourceCount) ? sourceCount.toLocaleString() + ' source pages indexed' : null;
+        }
+        // "External (<host+domain or title>)" per the design doc - prefers
+        // the index's own declared site/title, falls back to the URL's host.
+        function kbExternalLabel(idx) {
+            if (idx && idx.site && idx.site.trim()) return idx.site.trim();
+            try { return new URL(idx.url, location.href).host; } catch { return (idx && idx.url) || 'external index'; }
+        }
+
+        // Header badge next to the model dropdown. Always mounted (Off is a
+        // selectable state, not the absence of the badge). Three kinds -
+        // Off / Bundled / External - each with the include/+ or lockdown/lock
+        // corner overlay layered on top when a KB is active. Clicking opens a
+        // small picker (mirrors the #menu-btn/#menu-popup pattern) to switch
+        // between whichever of the three states are currently reachable;
+        // hovering/focusing shows a read-only tooltip with the full plain-
+        // English explanation, provenance, and index age. Icons are built
+        // with createElement so no innerHTML on user- or index-controlled
+        // strings. Idempotent: removes any previously mounted badge first.
         function mountKbBadge() {
             const existing = document.getElementById('kb-badge');
             if (existing) existing.remove();
-            if (!kbState.active) return;
-            const badge = document.createElement('span');
-            badge.id = 'kb-badge';
-            badge.className = 'kb-badge kb-' + kbState.mode;
-            badge.tabIndex = 0;
-            badge.setAttribute('role', 'img');
-            const siteName = kbState.site || 'Knowledge base';
-            const modeWord = kbState.mode === 'lockdown' ? 'limited to' : 'enhanced with excerpts from';
-            badge.setAttribute('aria-label',
-                `Knowledge base active: ${siteName}. Answers on this page are ${modeWord} this site or knowledge base. Only a pre-built index of the site is used; the site itself is not accessed.`);
+
+            const kind = kbState.kind; // 'off' | 'bundled' | 'external'
+            const svgNS = 'http://www.w3.org/2000/svg';
+
+            const wrap = document.createElement('span');
+            wrap.id = 'kb-badge';
+            wrap.className = 'kb-badge kb-' + kind + (kbState.mode === 'lockdown' ? ' kb-lockdown' : '');
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.id = 'kb-badge-btn';
+            btn.setAttribute('aria-haspopup', 'true');
+            btn.setAttribute('aria-expanded', 'false');
+
+            let ariaLabel;
+            if (kind === 'off') {
+                ariaLabel = 'Knowledge base: Off. Answers are not grounded in any index. Click to turn a knowledge base on.';
+            } else {
+                const label = kind === 'bundled' ? 'UMich Health Research Resource Library' : kbExternalLabel(kbState);
+                const provenance = kind === 'bundled'
+                    ? 'bundled with this app, works fully offline'
+                    : 'network-fetched from ' + kbState.url;
+                const modeWord = kbState.mode === 'lockdown' ? 'limited to' : 'enhanced with excerpts from';
+                const age = kbAgeText(kbState.builtAt);
+                const srcCount = kbSourceCountText(kbState.sourceCount);
+                ariaLabel = `Knowledge base: ${label} (${provenance}). Answers on this page are ${modeWord} this knowledge base. ${age}` +
+                    (srcCount ? `, ${srcCount}` : '') + '. Click to switch knowledge bases.';
+            }
+            btn.setAttribute('aria-label', ariaLabel);
 
             const iconWrap = document.createElement('span');
             iconWrap.className = 'kb-icon-wrap';
             // Document icon (SVG, inline; label='KB').
-            const svgNS = 'http://www.w3.org/2000/svg';
             const doc = document.createElementNS(svgNS, 'svg');
             doc.setAttribute('class', 'kb-doc');
             doc.setAttribute('viewBox', '0 0 24 24');
@@ -5523,88 +5660,228 @@ with this program. If not, see https://www.gnu.org/licenses/.
             doc.appendChild(line1);
             iconWrap.appendChild(doc);
 
-            const overlay = document.createElement('span');
-            overlay.className = 'kb-overlay';
-            if (kbState.mode === 'lockdown') {
-                // Small lock icon
-                const lock = document.createElementNS(svgNS, 'svg');
-                lock.setAttribute('viewBox', '0 0 24 24');
-                lock.setAttribute('width', '7');
-                lock.setAttribute('height', '7');
-                lock.setAttribute('fill', 'currentColor');
-                const body = document.createElementNS(svgNS, 'rect');
-                body.setAttribute('x', '5'); body.setAttribute('y', '11');
-                body.setAttribute('width', '14'); body.setAttribute('height', '10');
-                body.setAttribute('rx', '2');
-                lock.appendChild(body);
-                const shackle = document.createElementNS(svgNS, 'path');
-                shackle.setAttribute('d', 'M8 11 V7 a4 4 0 0 1 8 0 v4');
-                shackle.setAttribute('fill', 'none');
-                shackle.setAttribute('stroke', 'currentColor');
-                shackle.setAttribute('stroke-width', '2.5');
-                lock.appendChild(shackle);
-                overlay.appendChild(lock);
-            } else {
-                overlay.textContent = '+';
+            if (kind !== 'off') {
+                const overlay = document.createElement('span');
+                overlay.className = 'kb-overlay';
+                if (kbState.mode === 'lockdown') {
+                    // Small lock icon
+                    const lock = document.createElementNS(svgNS, 'svg');
+                    lock.setAttribute('viewBox', '0 0 24 24');
+                    lock.setAttribute('width', '7');
+                    lock.setAttribute('height', '7');
+                    lock.setAttribute('fill', 'currentColor');
+                    const body = document.createElementNS(svgNS, 'rect');
+                    body.setAttribute('x', '5'); body.setAttribute('y', '11');
+                    body.setAttribute('width', '14'); body.setAttribute('height', '10');
+                    body.setAttribute('rx', '2');
+                    lock.appendChild(body);
+                    const shackle = document.createElementNS(svgNS, 'path');
+                    shackle.setAttribute('d', 'M8 11 V7 a4 4 0 0 1 8 0 v4');
+                    shackle.setAttribute('fill', 'none');
+                    shackle.setAttribute('stroke', 'currentColor');
+                    shackle.setAttribute('stroke-width', '2.5');
+                    lock.appendChild(shackle);
+                    overlay.appendChild(lock);
+                } else {
+                    overlay.textContent = '+';
+                }
+                iconWrap.appendChild(overlay);
             }
-            iconWrap.appendChild(overlay);
-            badge.appendChild(iconWrap);
+            btn.appendChild(iconWrap);
+            wrap.appendChild(btn);
 
-            // Rich tooltip: site name, URL, and a plain-language explanation
-            // of what an active KB does to answers. Populated via textContent
-            // so any characters in the site/URL are inert.
+            // Read-only tooltip (hover/focus): plain-language state, source,
+            // and age. Populated via textContent so index-controlled strings
+            // (site name, URL) are always inert.
             const tt = document.createElement('span');
             tt.className = 'kb-tooltip';
             tt.setAttribute('role', 'tooltip');
-            const ttSite = document.createElement('span');
-            ttSite.className = 'kb-tt-site';
-            ttSite.textContent = siteName;
-            tt.appendChild(ttSite);
-            const ttUrl = document.createElement('span');
-            ttUrl.className = 'kb-tt-url';
-            ttUrl.textContent = kbState.url;
-            tt.appendChild(ttUrl);
-            const ttDesc = document.createElement('p');
-            ttDesc.className = 'kb-tt-desc';
-            ttDesc.textContent = kbState.mode === 'lockdown'
-                ? "Answers on this page are limited to this site or knowledge base. Only a pre-built index of the site is used — the site itself is not accessed."
-                : "Answers on this page are enhanced with excerpts from this site or knowledge base. Only a pre-built index of the site is used — the site itself is not accessed.";
-            tt.appendChild(ttDesc);
-            badge.appendChild(tt);
+            if (kind === 'off') {
+                const ttDesc = document.createElement('p');
+                ttDesc.className = 'kb-tt-desc';
+                ttDesc.textContent = 'No knowledge base is active. Answers come only from the model (and any attachments) - nothing is retrieved from an index.';
+                tt.appendChild(ttDesc);
+            } else {
+                const ttSite = document.createElement('span');
+                ttSite.className = 'kb-tt-site';
+                ttSite.textContent = kind === 'bundled' ? 'UMich Health Research Resource Library' : kbExternalLabel(kbState);
+                tt.appendChild(ttSite);
+                const ttUrl = document.createElement('span');
+                ttUrl.className = 'kb-tt-url';
+                ttUrl.textContent = kind === 'bundled' ? 'Bundled with this app - works fully offline' : 'Network-fetched: ' + kbState.url;
+                tt.appendChild(ttUrl);
+                const ttAge = document.createElement('span');
+                ttAge.className = 'kb-tt-url';
+                const srcCount = kbSourceCountText(kbState.sourceCount);
+                ttAge.textContent = kbAgeText(kbState.builtAt) + (srcCount ? ' - ' + srcCount : '');
+                tt.appendChild(ttAge);
+                const ttDesc = document.createElement('p');
+                ttDesc.className = 'kb-tt-desc';
+                ttDesc.textContent = kbState.mode === 'lockdown'
+                    ? "Answers on this page are limited to this knowledge base. Only a pre-built index is used — the source site itself is not accessed."
+                    : "Answers on this page are enhanced with excerpts from this knowledge base. Only a pre-built index is used — the source site itself is not accessed.";
+                tt.appendChild(ttDesc);
+            }
+            wrap.appendChild(tt);
 
-            // Touch/click toggle so users without hover devices can still see
-            // the tooltip. Hover/focus are handled purely in CSS above.
-            badge.addEventListener('click', (e) => {
+            // Picker: lists every currently reachable state. Off and Bundled
+            // are always offered; External only appears once a ?kb= index has
+            // actually loaded this session (kbExternalIndex is set).
+            const picker = document.createElement('div');
+            picker.className = 'kb-picker-popup';
+            picker.setAttribute('role', 'menu');
+            const options = [
+                { kind: 'off', label: 'Off' },
+                { kind: 'bundled', label: 'UMich Health Research Resource Library' }
+            ];
+            if (kbExternalIndex) {
+                options.push({ kind: 'external', label: 'External: ' + kbExternalLabel(kbExternalIndex) });
+            }
+            for (const opt of options) {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.setAttribute('role', 'menuitem');
+                item.textContent = (opt.kind === kind ? '✓ ' : '') + opt.label;
+                if (opt.kind === kind) item.setAttribute('aria-current', 'true');
+                item.addEventListener('click', () => {
+                    closeKbPicker();
+                    switchKbTo(opt.kind);
+                });
+                picker.appendChild(item);
+            }
+            wrap.appendChild(picker);
+
+            function openKbPicker() {
+                picker.classList.add('open');
+                btn.setAttribute('aria-expanded', 'true');
+                setTimeout(() => document.addEventListener('click', onKbPickerDocClick), 0);
+                document.addEventListener('keydown', onKbPickerKey);
+            }
+            function closeKbPicker() {
+                picker.classList.remove('open');
+                btn.setAttribute('aria-expanded', 'false');
+                document.removeEventListener('click', onKbPickerDocClick);
+                document.removeEventListener('keydown', onKbPickerKey);
+            }
+            function onKbPickerDocClick(e) {
+                if (!wrap.contains(e.target)) closeKbPicker();
+            }
+            function onKbPickerKey(e) { if (e.key === 'Escape') closeKbPicker(); }
+            btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                badge.classList.toggle('kb-open');
-            });
-            document.addEventListener('click', (e) => {
-                if (!badge.contains(e.target)) badge.classList.remove('kb-open');
+                picker.classList.contains('open') ? closeKbPicker() : openKbPicker();
             });
 
             // Insert immediately after the model dropdown.
-            modelSelect.parentNode.insertBefore(badge, modelSelect.nextSibling);
+            modelSelect.parentNode.insertBefore(wrap, modelSelect.nextSibling);
         }
 
-        // Orchestrator: fetch + validate, populate kbState, mount the badge.
-        // On any failure everything stays inert and a status-line error appears
-        // so the user knows the app is running WITHOUT their KB.
-        async function initRAG(url, mode, forceRefresh) {
+        // Persisted badge choice: 'off' or 'bundled' only. 'external' is
+        // never persisted - it only ever exists while ?kb= is on the URL, so
+        // there is nothing to resurrect without the param on a later load.
+        function readKbChoice() {
             try {
-                const idx = await fetchKbIndex(url, forceRefresh);
-                kbState.active = true;
-                kbState.mode = mode === 'lockdown' ? 'lockdown' : 'include';
-                kbState.url = url;
-                kbState.site = idx.site;
-                kbState.chunks = idx.chunks;
-                kbState.vecs = idx.vecs;
-                kbState.dims = idx.dims;
+                const v = localStorage.getItem(KB_CHOICE_KEY);
+                return (v === 'off' || v === 'bundled') ? v : null;
+            } catch { return null; }
+        }
+        function writeKbChoice(kind) {
+            try { localStorage.setItem(KB_CHOICE_KEY, kind); } catch {}
+        }
+
+        // Copies an already-fetched index's fields onto kbState and marks it
+        // active. Does not fetch anything itself - callers (bootKb/
+        // switchKbTo) own the fetch and the session cache (kbBundledIndex/
+        // kbExternalIndex).
+        function applyKbSource(kind, idx) {
+            kbState.kind = kind;
+            kbState.url = idx.url || '';
+            kbState.site = idx.site;
+            kbState.chunks = idx.chunks;
+            kbState.vecs = idx.vecs;
+            kbState.dims = idx.dims;
+            kbState.builtAt = idx.builtAt;
+            kbState.sourceCount = idx.sourceCount;
+        }
+
+        // Picker action handler - the only way kbState.kind changes after
+        // boot. 'external' is a no-op unless a ?kb= index already loaded
+        // this session (the picker itself only offers it in that case).
+        async function switchKbTo(kind) {
+            if (kind === 'off') {
+                kbState.kind = 'off';
+                writeKbChoice('off');
                 mountKbBadge();
-            } catch (e) {
-                kbState.active = false;
-                setStatus('KB unavailable: ' + errMsg(e) + '. Continuing without knowledge base.', true);
-                console.error('KB init failed:', e);
+                return;
             }
+            if (kind === 'bundled') {
+                if (!kbBundledIndex) {
+                    try {
+                        kbBundledIndex = await fetchBundledKbIndex();
+                    } catch (e) {
+                        setStatus('Bundled knowledge base unavailable: ' + errMsg(e), true);
+                        console.error('Bundled KB fetch failed:', e);
+                        return;
+                    }
+                }
+                applyKbSource('bundled', { ...kbBundledIndex, url: BUNDLED_KB_URL });
+                writeKbChoice('bundled');
+                mountKbBadge();
+                return;
+            }
+            if (kind === 'external' && kbExternalIndex) {
+                applyKbSource('external', kbExternalIndex);
+                mountKbBadge();
+            }
+        }
+
+        // Boot-time resolution of which KB source (if any) starts active.
+        // Fire-and-forget from the boot IIFE, same as the old initRAG call -
+        // never awaited at the top level, so a slow/offline bundled fetch
+        // can never block the chat-model load or first paint.
+        //
+        // Order: an explicit ?kb= that loads successfully always wins
+        // (deliberate per-load signal from the URL, same as today's
+        // ?kb=-is-the-only-way-in behavior). Otherwise fall back to the
+        // user's persisted Off/Bundled choice, defaulting to Bundled on a
+        // first-ever visit. A missing bundled file is a normal deploy
+        // configuration (e.g. a fork without the KB feature) so it degrades
+        // to Off quietly (console only); a broken ?kb= is something the user
+        // explicitly asked for, so it keeps the existing status-line error.
+        async function bootKb() {
+            const params = parseKbParams();
+            kbState.mode = params.mode;
+
+            let externalOk = false;
+            if (params.url) {
+                try { await purgeExpiredKb(); } catch {}
+                if (params.forceRefresh) { try { await purgeKbEntry(params.url); } catch {} }
+                try {
+                    const idx = await fetchKbIndex(params.url, params.forceRefresh);
+                    kbExternalIndex = { ...idx, url: params.url };
+                    applyKbSource('external', kbExternalIndex);
+                    externalOk = true;
+                } catch (e) {
+                    setStatus('KB unavailable: ' + errMsg(e) + '. Continuing without that knowledge base.', true);
+                    console.error('External KB init failed:', e);
+                }
+            }
+
+            if (!externalOk) {
+                if (readKbChoice() === 'off') {
+                    kbState.kind = 'off';
+                } else {
+                    try {
+                        kbBundledIndex = await fetchBundledKbIndex();
+                        applyKbSource('bundled', { ...kbBundledIndex, url: BUNDLED_KB_URL });
+                    } catch (e) {
+                        kbState.kind = 'off';
+                        console.warn('Bundled KB not available (this is a normal configuration if the file was not shipped):', errMsg(e));
+                    }
+                }
+            }
+
+            mountKbBadge();
         }
 
         // Gemma's chat template refuses any 'system' role - conversations must
@@ -6263,7 +6540,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 // to answer and produces garbage. Real questions still hit the
                 // KB path below.
                 const skipKbForIntent = intent === 'greeting' || intent === 'calculation';
-                if (kbState.active && !skipKbForIntent && !attachmentUsed) {
+                if (kbState.kind !== 'off' && !skipKbForIntent && !attachmentUsed) {
                     try {
                         // One embedding, both views: pass noThreshold=true and
                         // filter locally so the "closest URLs" fallback doesn't
@@ -12890,19 +13167,13 @@ Feeling anxious about work."></textarea>
             }
         });
         (async () => {
-            // KB / RAG bootstrap: if ?kb=<url> is present, parse params first so
-            // expired KB caches are purged before we do anything else, then
-            // kick off initRAG in parallel with the chat-model load below.
-            // initRAG populates kbState and mounts the header badge on success;
-            // on failure it sets a status-line error and leaves the app in
-            // normal (non-KB) mode. Fire-and-forget - loadModel below is the
-            // same pattern.
-            const kbParams = parseKbParams();
-            if (kbParams.url) {
-                try { await purgeExpiredKb(); } catch {}
-                if (kbParams.forceRefresh) { try { await purgeKbEntry(kbParams.url); } catch {} }
-                initRAG(kbParams.url, kbParams.mode, kbParams.forceRefresh);
-            }
+            // KB / RAG bootstrap: bootKb() resolves Off/Bundled/External per
+            // the three-state rules (?kb= wins if it loads; otherwise the
+            // persisted choice, defaulting to Bundled) and mounts the header
+            // badge, which is now always visible. Fire-and-forget - loadModel
+            // below is the same pattern, so a slow/offline bundled fetch
+            // never blocks first paint or the chat model download.
+            bootKb();
             // Don't block the rest of boot on the popup being dismissed - it
             // adds its 'open' class synchronously before returning, so it still
             // shows immediately, but this lets initStore/cleanupModelCache/

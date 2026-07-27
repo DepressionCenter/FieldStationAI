@@ -207,6 +207,7 @@ import json
 import os
 import time
 from collections import deque
+from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
 import numpy as np
@@ -632,6 +633,12 @@ def build_index(chunks, site_name, out_path):
     assert vecs.shape == (len(chunks), DIMS), f"Shape mismatch: {vecs.shape}"
 
     b64 = base64.b64encode(vecs.tobytes()).decode("ascii")
+    # Distinct source pages actually contributing content, not total pages
+    # visited (which includes pages skipped by INDEX_EXCLUDE_PATTERNS or
+    # with no extractable content) -- this is what "staleness" means to a
+    # reader of the badge: how much of the site is actually represented.
+    source_count = len({c["u"] for c in chunks})
+    built_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     index = {
         "_license": (
             "This file is part of Field Station AI. Copyright © 2026 The Regents "
@@ -649,6 +656,8 @@ def build_index(chunks, site_name, out_path):
         "v": 1,
         "model": EMBED_MODEL_BROWSER_ID,
         "dims": DIMS,
+        "builtAt": built_at,
+        "sourceCount": source_count,
         "site": site_name,
         "vecs": b64,
         "chunks": chunks,
@@ -662,6 +671,8 @@ def build_index(chunks, site_name, out_path):
     print(f"  chunks : {len(chunks)}")
     print(f"  vecs   : {size_mb:.2f} MB float32")
     print(f"  site   : {site_name}")
+    print(f"  built  : {built_at}")
+    print(f"  sources: {source_count}")
 
 
 # ---------------------------------------------------------------------------
