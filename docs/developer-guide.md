@@ -40,6 +40,9 @@ index.html
 
 The script is organized by visible section comments. Preserve that structure when editing. Avoid broad reformatting; unrelated churn makes the file hard to review.
 
+## AI Coding Assistants
+When using an AI coding assistant to help you write code, tell it to read [AGENTS.md](./AGENTS.md) first. Use the assistant to generate code, but review and edit the output carefully. Do not blindly accept generated code. Always test before submitting a pull request. Avoid sharing PHI, secrets, or participant identifiers with any code assistant.
+
 ## Editing Rules
 
 Before editing:
