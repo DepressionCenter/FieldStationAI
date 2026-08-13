@@ -494,8 +494,24 @@ def extract_links(soup, base_url):
 # Chunking
 # ---------------------------------------------------------------------------
 
+def chunk_kind(url):
+    """
+    Coarse per-chunk provenance facet. Not consumed by the browser yet --
+    reserved for a future router-driven hard filter (e.g. a code question
+    shouldn't be scored against outreach pages) and for a future YouTube
+    producer, which will add a fourth kind alongside these three.
+    """
+    if is_git_host_url(url):
+        return "code"
+    if "teamdynamix." in url.lower():
+        return "kb"
+    return "page"
+
+
 def split_into_chunks(title, node, url):
     chunks = []
+    host = urlparse(url).netloc.lower()
+    kind = chunk_kind(url)
 
     def _make(heading, text):
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -505,10 +521,10 @@ def split_into_chunks(title, node, url):
             cut = text.rfind("\n", 0, CHUNK_MAX_CHARS)
             if cut < CHUNK_MIN_CHARS:
                 cut = CHUNK_MAX_CHARS
-            chunks.append({"t": heading, "x": text[:cut], "u": url})
+            chunks.append({"t": heading, "x": text[:cut], "u": url, "host": host, "kind": kind, "weight": 1.0})
             text = text[cut:].strip()
         if text:
-            chunks.append({"t": heading, "x": text, "u": url})
+            chunks.append({"t": heading, "x": text, "u": url, "host": host, "kind": kind, "weight": 1.0})
 
     headings = node.find_all(["h2", "h3"])
     if headings:
@@ -547,6 +563,55 @@ def embed_chunks(chunks):
     vecs = model.encode(texts, normalize_embeddings=True,
                         batch_size=64, show_progress_bar=True)
     return vecs.astype(np.float32)
+
+
+# Near-duplicate collapse at build time. Boilerplate (nav sidebars, footers,
+# repeated disclaimers) crawls into many chunks that are near-identical after
+# embedding; collapsing them here means every query-time retrieval benefits,
+# instead of filtering the same boilerplate out of every top-k result forever.
+NEAR_DUP_COSINE_THRESHOLD = 0.95
+
+
+def drop_near_duplicates(chunks, vecs, threshold=NEAR_DUP_COSINE_THRESHOLD):
+    """
+    Greedy sequential near-duplicate collapse. Vectors are already
+    L2-normalized (embed_chunks uses normalize_embeddings=True), so cosine
+    similarity between any two rows is a single dot product -- one matrix
+    multiply against the kept set per chunk, cheap at this corpus size.
+    Keeps the first occurrence encountered (crawl order) of each
+    near-duplicate cluster and drops the rest.
+
+    Returns (kept_chunks, kept_vecs, dropped_count).
+    """
+    if len(chunks) == 0:
+        return chunks, vecs, 0
+    kept_rows = []      # indices into the original chunks/vecs arrays
+    kept_matrix = None  # np.ndarray, grows as rows are kept
+    for i in range(len(chunks)):
+        v = vecs[i]
+        if kept_matrix is not None and kept_matrix.shape[0] > 0:
+            sims = kept_matrix @ v
+            if float(sims.max()) > threshold:
+                continue  # near-duplicate of an already-kept chunk -- drop
+        kept_rows.append(i)
+        row = v.reshape(1, -1)
+        kept_matrix = row if kept_matrix is None else np.vstack([kept_matrix, row])
+    dropped = len(chunks) - len(kept_rows)
+    kept_chunks = [chunks[i] for i in kept_rows]
+    kept_vecs = vecs[kept_rows]
+    return kept_chunks, kept_vecs, dropped
+
+
+# int8 vector quantization. Vectors are L2-normalized, so every component
+# already lies in roughly [-1, 1] -- round(v * INT8_SCALE) loses negligible
+# precision at 384 dims and needs no per-vector calibration. Reversed in the
+# browser by dividing back by the same scale (see parseKbIndexBody's vecsQ
+# branch in index.html).
+INT8_SCALE = 127
+
+
+def quantize_int8(vecs):
+    return np.clip(np.round(vecs * INT8_SCALE), -INT8_SCALE, INT8_SCALE).astype(np.int8)
 
 
 # ---------------------------------------------------------------------------
@@ -624,7 +689,7 @@ def crawl(seed_url, max_pages, delay, include_res, crawl_exclude_res, index_excl
 # Build index
 # ---------------------------------------------------------------------------
 
-def build_index(chunks, site_name, out_path):
+def build_index(chunks, site_name, out_path, float32_vecs=False):
     if not chunks:
         print("No chunks -- nothing to write.")
         return
@@ -632,7 +697,18 @@ def build_index(chunks, site_name, out_path):
     vecs = embed_chunks(chunks)
     assert vecs.shape == (len(chunks), DIMS), f"Shape mismatch: {vecs.shape}"
 
-    b64 = base64.b64encode(vecs.tobytes()).decode("ascii")
+    chunks, vecs, dropped_dupes = drop_near_duplicates(chunks, vecs)
+    if dropped_dupes:
+        print(f"Dropped {dropped_dupes} near-duplicate chunk(s) (cosine > {NEAR_DUP_COSINE_THRESHOLD}).")
+
+    if float32_vecs:
+        payload_bytes = vecs.tobytes()
+        vecs_q_field = None
+    else:
+        payload_bytes = quantize_int8(vecs).tobytes()
+        vecs_q_field = "i8"
+    b64 = base64.b64encode(payload_bytes).decode("ascii")
+
     # Distinct source pages actually contributing content, not total pages
     # visited (which includes pages skipped by INDEX_EXCLUDE_PATTERNS or
     # with no extractable content) -- this is what "staleness" means to a
@@ -662,14 +738,17 @@ def build_index(chunks, site_name, out_path):
         "vecs": b64,
         "chunks": chunks,
     }
+    if vecs_q_field:
+        index["vecsQ"] = vecs_q_field
+        index["vecsScale"] = INT8_SCALE
 
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(index, f, ensure_ascii=False, separators=(",", ":"))
 
-    size_mb = len(vecs.tobytes()) / 1024 / 1024
+    size_mb = len(payload_bytes) / 1024 / 1024
     print(f"\nWrote: {out_path}")
     print(f"  chunks : {len(chunks)}")
-    print(f"  vecs   : {size_mb:.2f} MB float32")
+    print(f"  vecs   : {size_mb:.2f} MB " + ("float32" if float32_vecs else "int8 (quantized)"))
     print(f"  site   : {site_name}")
     print(f"  built  : {built_at}")
     print(f"  sources: {source_count}")
@@ -687,6 +766,8 @@ def main():
     parser.add_argument("--out", default=OUT_PATH)
     parser.add_argument("--max-pages", type=int, default=MAX_PAGES)
     parser.add_argument("--delay", type=float, default=DELAY)
+    parser.add_argument("--float32-vecs", action="store_true",
+                        help="Write vectors as float32 instead of the default int8 quantization.")
     args = parser.parse_args()
 
     include_res = compile_patterns(INCLUDE_PATTERNS)
@@ -695,7 +776,7 @@ def main():
 
     chunks, site_name = crawl(args.url, args.max_pages, args.delay,
                               include_res, crawl_exclude_res, index_exclude_res)
-    build_index(chunks, site_name, args.out)
+    build_index(chunks, site_name, args.out, float32_vecs=args.float32_vecs)
 
 
 if __name__ == "__main__":
