@@ -542,7 +542,7 @@ def split_into_chunks(title, node, url):
 def embed_chunks(chunks):
     print(f"\nLoading embedding model: {EMBED_MODEL}")
     model = SentenceTransformer(EMBED_MODEL)
-    texts = [c["x"] for c in chunks]
+    texts = [((c["t"] + "\n") if c.get("t") else "") + c["x"] for c in chunks]
     print(f"Embedding {len(texts)} chunks...")
     vecs = model.encode(texts, normalize_embeddings=True,
                         batch_size=64, show_progress_bar=True)
