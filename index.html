@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 index.html: Main HTML file for the Field Station AI application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-18
-Last Modified: 2026-07-27
+Last Modified: 2026-08-13
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This is the main HTML file for the Field Station AI application.
 Notes: See README file for documentation and full license information.
 
@@ -934,7 +934,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <select id="model-select" aria-label="Model" title="Applies to all tabs. Conversation context carries over when you switch.">
                 <option value="router:webllm:SmolLM2-360M-Instruct-q4f16_1-MLC" selected>SmolLM2-360M + Router (default, ~210 MB)</option>
                 <option value="webllm:Qwen3-0.6B-q4f16_1-MLC">Qwen3-0.6B (~350 MB)</option>
-                <option value="webllm:gemma3-1b-it-q4f16_1-MLC">Gemma 3-1B (~530 MB)</option>
                 <option value="webllm:Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2-1B (~630 MB)</option>
                 <option value="webllm:SmolLM2-1.7B-Instruct-q4f16_1-MLC">SmolLM2-1.7B (~1.0 GB)</option>
                 <option value="webllm:Llama-3.2-3B-Instruct-q4f16_1-MLC">Llama 3.2-3B (~1.8 GB)</option>
@@ -1198,6 +1197,22 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // to key off, unlike the crawled HTML the KB is built from.
         const ATTACHMENT_CHUNK_MAX_CHARS = 1200;
         const ATTACHMENT_CHUNK_MIN_CHARS = 60;
+        // Small-to-big child sizing for DOCUMENT attachments only (mirrors
+        // build-kb-index.py's CHILD_CHUNK_MAX_CHARS/CHILD_CHUNK_MIN_CHARS/
+        // CHILD_OVERLAP_CHARS exactly - same numbers, same rationale).
+        // Audio/Whisper segments already have real timestamp boundaries
+        // that serve as a natural parent unit and are NOT restructured -
+        // see runAudioDaisyChain.
+        const ATTACHMENT_CHILD_CHUNK_MAX_CHARS = 350;
+        const ATTACHMENT_CHILD_CHUNK_MIN_CHARS = 60;
+        const ATTACHMENT_CHILD_OVERLAP_CHARS = 53;
+        // BM25 defaults for the attachment-side hybrid retrieval mirror -
+        // there is no crawler step for attachments, so these can't be read
+        // from a loaded index the way kbState.bm25's k/b/d are; hardcoded to
+        // the same values build-kb-index.py uses (BM25_K1/B/D).
+        const ATTACHMENT_BM25_K1 = 1.2;
+        const ATTACHMENT_BM25_B = 0.75;
+        const ATTACHMENT_BM25_D = 0.5;
         // A short document (roughly under 1,500 tokens) skips retrieval and
         // is passed whole instead - not worth chunking/embedding/searching
         // something that already fits the budget. ~4 chars/token, the same
@@ -1236,6 +1251,53 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return chunks;
         }
 
+        // Small-to-big child splitter for one PARENT string (a chunkText()
+        // output). Mirrors build-kb-index.py's split_parent_into_children
+        // exactly: fixed-step sliding window (not cut-position-based, so
+        // progress is guaranteed every iteration regardless of where the
+        // nearest newline falls), ATTACHMENT_CHILD_OVERLAP_CHARS of overlap
+        // between windows, each window trimmed back to the nearest
+        // preceding newline. A parent shorter than
+        // ATTACHMENT_CHILD_CHUNK_MAX_CHARS is returned as its own single
+        // child - splitting an already-short parent would only hand
+        // dropNearDuplicateSegments a near-identical extra vector to
+        // discard later.
+        function chunkParentIntoChildren(parentText) {
+            if (parentText.length <= ATTACHMENT_CHILD_CHUNK_MAX_CHARS) return [parentText];
+            const children = [];
+            const step = Math.max(ATTACHMENT_CHILD_CHUNK_MAX_CHARS - ATTACHMENT_CHILD_OVERLAP_CHARS, ATTACHMENT_CHILD_CHUNK_MIN_CHARS);
+            const n = parentText.length;
+            let start = 0;
+            while (start < n) {
+                const end = Math.min(start + ATTACHMENT_CHILD_CHUNK_MAX_CHARS, n);
+                let cut = end < n ? parentText.lastIndexOf('\n', end) : end;
+                if (cut <= start) cut = end;
+                const childText = parentText.slice(start, cut).trim();
+                if (childText.length >= ATTACHMENT_CHILD_CHUNK_MIN_CHARS) children.push(childText);
+                if (end >= n) break;
+                start += step; // fixed step, independent of `cut` - guarantees progress every iteration
+            }
+            return children.length ? children : [parentText];
+        }
+
+        // Small-to-big for DOCUMENT attachments only (see the constants'
+        // comment above for why audio is excluded). Parents are chunkText's
+        // existing output (full-section text, sent to the model); children
+        // are the smaller windows actually embedded/searched, each an
+        // {text, pid} object (segmentText() already handles either a plain
+        // string or a {text,...} object, so this needs no changes to the
+        // shared embed/retrieve code paths beyond parent-text resolution).
+        function chunkTextParentChild(text) {
+            const parents = chunkText(text);
+            const children = [];
+            parents.forEach((parentText, pid) => {
+                for (const childText of chunkParentIntoChildren(parentText)) {
+                    children.push({ text: childText, pid });
+                }
+            });
+            return { parents, children };
+        }
+
         // ---------- KB / RAG constants ----------
         // Static-RAG mode, three states (kbState.kind): 'bundled' loads the
         // same-origin efdc-kb.json shipped with this app (the default);
@@ -1259,9 +1321,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // the whole context budget.
         const KB_MMR_POOL_CAP = 20;                       // how many of the candidate pool get MMR-diversified
         const KB_MMR_LAMBDA = 0.7;                        // relevance vs. diversity trade-off (1.0 = pure relevance)
-        // A "source" is identity u + '#' + start, never bare u - a future
-        // long video transcript would otherwise collapse to one citable
-        // unit under a bare-URL cap.
+        // A "source" is identity u + '#p' + pid (parent id) - never bare u.
+        // pid makes this a real per-section cap, so e.g. a long video
+        // transcript's many sections can't collapse to one citable unit.
         const KB_SOURCE_CAP = 2;                          // max hits kept per source identity
         const KB_TOPK = 4;                                // hits per turn fed into the prompt
         const KB_CTX_TOKEN_BUDGET = 1500;                 // rough cap for the reference block
@@ -1270,6 +1332,26 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const KB_CACHE_NAME = 'fieldstation-kb-v1';        // Cache Storage bucket for the JSON blobs (bundled + external share this bucket, keyed by URL)
         const BUNDLED_KB_URL = 'efdc-kb.json';             // same-origin, relative to index.html. NEVER index.json - that stays the crawler's default output so a user's own generated index can never collide with this one.
         const KB_CHOICE_KEY = 'fieldstation_kb_choice_v1'; // persisted user choice: 'off' | 'bundled' (external is never persisted - it only exists while ?kb= is on the URL)
+
+        // ---------- Hybrid retrieval (BM25 + vector, fused via RRF) ----------
+        // Classical rank-based Reciprocal Rank Fusion, k=60 (the standard
+        // constant from the literature). Read oramasearch/orama's own hybrid
+        // search as a design reference for structure/BM25 constants, but its
+        // actual fusion (max-normalized weighted score sum) is NOT used here
+        // - deliberately, since RRF is what was asked for.
+        const RRF_K = 60;
+        const KB_RRF_VECTOR_WEIGHT = 0.5;                 // trust split between the two ranked lists being fused
+        const KB_RRF_BM25_WEIGHT = 0.5;
+        // z-score margin against the crawler's per-corpus calibration
+        // stats (idx.calibration: mean/std of each sampled child's best
+        // match). Applied as a third term alongside KB_SCORE_MIN/
+        // KB_SCORE_MARGIN in diversifyHits, so an index without
+        // calibration stats still works via the relative median+margin test.
+        const KB_ZSCORE_MARGIN = 1.0;
+
+        // ---------- Cross-encoder reranker (always on, see kbRerankEnabled) ----------
+        const KB_RERANK_MODEL_ID = 'Xenova/ms-marco-MiniLM-L-6-v2';
+        const KB_RERANK_TOPN_INPUT = 10;                  // rerank only a small post-diversify shortlist, not the whole candidate pool
         // The model cites opaque [S#] tags only - never a URL or file name,
         // which it would otherwise reproduce imperfectly. JS resolves the
         // tags to real links. Deliberately kept SHORT: this suffix only
@@ -1620,6 +1702,24 @@ with this program. If not, see https://www.gnu.org/licenses/.
         ROUTER_MAX_TOKENS['kb-question'] = ROUTER_MAX_TOKENS['factual'];
         ROUTER_MAX_TOKENS['attachment-question'] = 384;
 
+        // First real consumer of the crawler's per-chunk `kind` field (see
+        // build-kb-index.py's chunk_kind) - hard-filters KB retrieval by
+        // facet for the two intents with a confident, unambiguous mapping.
+        // Every other intent (factual, data, summarize, creative,
+        // attachment-question, calculation, greeting) gets NO entry here on
+        // purpose - a missing facet means "no filter" (see kbFacetMatches).
+        // Facet filtering is a precision optimization, not a correctness
+        // gate; over-filtering would silently drop the real answer, the
+        // worse failure mode for a Q&A assistant, so the safe default under
+        // ambiguity is permissive. `host` is intentionally left unmapped -
+        // no existing router intent naturally maps to "restrict to this
+        // host," and inventing one with no real use behind it would invent
+        // a requirement (see AGENTS.md).
+        const ROUTER_KB_FACETS = {
+            'code': { kind: 'code' },
+            'kb-question': { kind: 'kb' }
+        };
+
         // Tuning knobs, named so they can be adjusted without touching logic.
         // ROUTER_CONFIDENCE_FLOOR: below this score (cosine for Tier 1, NLI
         // top score for Tier 2), the router uses the neutral base prompt with
@@ -1773,20 +1873,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const TAXONOMIES_KEY = 'fieldstation_taxonomies_v1';
         const BUCKETS_KEY = 'fieldstation_buckets_v1';
 
-        // Context window sizes (tokens) per model; unknown models fall back to 8192.
-        // TODO(review): CPU_FALLBACK_TJS_ID (HuggingFaceTB/SmolLM2-360M-Instruct)
-        // has no explicit entry here and relies on that 8192 default, which
-        // happens to match its real context - worth an explicit entry so
-        // that's documented rather than coincidental.
+        // Context window sizes (tokens) per model, keyed on the literal
+        // currentModelId string (webllm:-prefixed for chat models, bare repo
+        // id for the Transformers.js CPU-fallback id) - unknown models fall
+        // back to 8192. Previously carried 8 pre-WebLLM leftover entries
+        // (bare, unprefixed repo ids like 'onnx-community/Llama-3.2-1B-
+        // Instruct-q4f16') that could never match a live currentModelId -
+        // every chat model here runs through WebLLM today, so its id is
+        // always webllm:-prefixed. Removed rather than left as dead weight.
         const MODEL_CTX = {
-            'LiquidAI/LFM2.5-350M-ONNX': 32768,
-            'onnx-community/Qwen3-0.6B-ONNX': 32768,
-            'HuggingFaceTB/SmolLM2-1.7B-Instruct': 8192,
-            'onnx-community/Llama-3.2-1B-Instruct-q4f16': 131072,
-            'onnx-community/DeepSeek-R1-Distill-Qwen-1.5B-ONNX': 131072,
-            'onnx-community/gemma-3-1b-it-ONNX-GQA': 32768,
-            'onnx-community/Llama-3.2-3B-Instruct-onnx-web-gqa': 131072,
-            'HuggingFaceTB/SmolLM3-3B-ONNX': 65536,
+            // CPU-fallback path (WebGPU absent/failed): a fixed, explicit
+            // entry rather than relying on the 8192 default coinciding with
+            // this model's real context by chance.
+            'HuggingFaceTB/SmolLM2-360M-Instruct': 8192,
             // WebLLM (MLC) builds. Every prebuilt entry we offer compiles
             // its KV cache to a fixed context_window_size of 4096 (confirmed
             // against MLC's own prebuilt config, not guessed) - the wasm
@@ -1797,7 +1896,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // a prompt doomed to overflow the model's real context.
             'webllm:SmolLM2-360M-Instruct-q4f16_1-MLC': 4096,
             'webllm:Qwen3-0.6B-q4f16_1-MLC': 4096,
-            'webllm:gemma3-1b-it-q4f16_1-MLC': 4096,
             'webllm:Llama-3.2-1B-Instruct-q4f16_1-MLC': 4096,
             'webllm:SmolLM2-1.7B-Instruct-q4f16_1-MLC': 4096,
             'webllm:Llama-3.2-3B-Instruct-q4f16_1-MLC': 4096,
@@ -1986,8 +2084,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // it (separate token budget, prompt shape, citation UI, etc.).
         const kbState = {
             kind: 'off', mode: 'include', url: '', site: '',
-            chunks: null, vecs: null, dims: 0, builtAt: null, sourceCount: null,
-            embedder: null, embedderLoading: null
+            chunks: null, parents: null, vecs: null, dims: 0, builtAt: null, sourceCount: null,
+            bm25: null, calibration: null,
+            embedder: null, embedderLoading: null,
+            reranker: null, rerankerLoading: null
         };
         // Session-scoped fetch caches so switching Off/Bundled/External back
         // and forth doesn't re-fetch a (potentially 30+ MB) index every time.
@@ -3231,7 +3331,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // `sources` (optional): citation records this message's [S#] tags
         // resolve against - null/undefined for any message with no
         // retrieval this turn, in which case citation rendering/expansion is
-        // a no-op throughout.
+        // a no-op throughout. For a 'bot' message, `sources` also drives the
+        // below-bubble "Sources:"/"From your attachments:" row(s) - see
+        // setSourceRows. Rendering them HERE (tied to appendMessage's own
+        // lifecycle, from the SAME m.sources renderTranscript() already
+        // passes in) is what makes them survive a chat-tab-switch rebuild;
+        // they used to only ever be appended live, once, as a chatBox-level
+        // sibling that a renderTranscript() rebuild had no way to recreate.
         function appendMessage(role, text, ts, sources) {
             const div = document.createElement('div');
             div.className = `message ${role}`;
@@ -3254,6 +3360,25 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // (not the rendered DOM tree).
             div.setText = (t) => { text = t; renderRichText(inner, t, msgSources); };
             chatBox.appendChild(div);
+
+            // Sibling row(s) right after this message, kept in sync with it.
+            // Split by `.kind` since a turn's `sources` can carry both KB and
+            // attachment records (buildKbContextBlock/buildAttachmentContextBlock
+            // both feed the same merged `turnSources` array - see handleSend).
+            let sourceRowEls = [];
+            const renderSourceRows = (s) => {
+                for (const el of sourceRowEls) el.remove();
+                sourceRowEls = [];
+                if (!s || !s.length) return;
+                const kbRow = buildSourcesRow(s.filter(h => h && h.kind !== 'attachment'));
+                const attRow = buildAttachmentSourcesRow(s.filter(h => h && h.kind === 'attachment'));
+                for (const row of [kbRow, attRow]) {
+                    if (row) { chatBox.appendChild(row); sourceRowEls.push(row); }
+                }
+            };
+            if (role === 'bot') renderSourceRows(msgSources);
+            div.setSourceRows = (s) => { msgSources = s || null; renderSourceRows(msgSources); };
+
             chatBox.scrollTop = chatBox.scrollHeight;
             return div;
         }
@@ -3288,8 +3413,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // dropped hit's tag number missing from the row entirely - e.g.
         // "[1] ... [3] ..." with no [2] anywhere, which reads as a bug even
         // though it was just tag 2's page being a duplicate of tag 1's.
-        function appendSources(hits) {
-            if (!hits || !hits.length) return;
+        // Builds (but does not insert) the row - returns null when there's
+        // nothing to show so callers can skip appending it entirely.
+        function buildSourcesRow(hits) {
+            if (!hits || !hits.length) return null;
             const row = document.createElement('div');
             row.className = 'sources-row';
             const label = document.createElement('span');
@@ -3303,6 +3430,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (h.id) entry.nums.push(h.id.replace(/^S/, ''));
                 byUrl.set(h.u, entry);
             }
+            if (!byUrl.size) return null;
             for (const entry of byUrl.values()) {
                 const a = document.createElement('a');
                 a.href = entry.u;
@@ -3313,8 +3441,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 a.title = entry.u;
                 row.appendChild(a);
             }
-            chatBox.appendChild(row);
-            chatBox.scrollTop = chatBox.scrollHeight;
+            return row;
         }
 
         // enabled controls the input row (typing/sending). The model dropdown is
@@ -3537,6 +3664,29 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const cut = findRepetitionStart(raw);
             if (cut === -1) return raw;
             return cut > 0 ? raw.slice(0, cut).trim() : '';
+        }
+
+        // A weak/small model given a reference-excerpt block sometimes echoes
+        // the block's own HEADER sentence back verbatim as if it were the
+        // start of its answer, instead of actually answering - a
+        // completion-style failure (the header is the last thing before the
+        // real question, so a weak model just continues it) rather than a
+        // prompt-injection concern. `headers` is whichever exact header
+        // string(s) buildKbContextBlock/buildAttachmentContextBlock actually
+        // returned this turn (so this never drifts out of sync with the real
+        // prompt text). Exact-substring removal only - never touches a
+        // paraphrase, which is normal model behavior, not a leak. Same
+        // output-side-scrub philosophy as trimRepeatedTail/detectRepetition:
+        // fix the failure in code, not by growing the prompt (see this
+        // file's own history of an elaborate anti-repeat suffix that didn't
+        // clearly help and is suspected of destabilizing an unrelated model).
+        function stripLeakedReferenceHeader(text, headers) {
+            let out = text;
+            for (const h of headers) {
+                if (!h) continue;
+                out = out.split(h).join('');
+            }
+            return out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
         }
 
         // ---------- Context trimming ----------
@@ -3803,7 +3953,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // this, WebGPU/WASM memory accumulates across model switches and the
         // next load can Aborted() out of memory - especially when going from
         // a large model (or one that also loaded the router classifier) to
-        // one that itself needs a big buffer (Gemma-3-270M).
+        // one that itself needs a big buffer (e.g. the vision daisy-chain model).
         async function disposeOne(obj) {
             if (!obj) return;
             try {
@@ -4524,8 +4674,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // shape to plain text for the embedder). Used by createAttachment's
         // eager document embedding, the audio daisy-chain, and the Transcribe
         // skill, so all three embed exactly the same way under the engine
-        // lock. Returns true on success; caller decides the fallback
-        // behavior (segments: null - "pass whole text" - on failure).
+        // lock. Returns the built BM25 index (truthy) on success, so the
+        // caller does `attachment.bm25 = await embedAttachmentSegments(...)`;
+        // false on failure, in which case the caller falls back to
+        // `segments: null` - "pass whole text."
         // Browser-side counterpart to the crawler's drop_near_duplicates:
         // collapses near-identical segments (e.g. a repeated header/footer
         // boilerplate line in a document) in place.
@@ -4556,7 +4708,72 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return { segments: keptSegments, vecs: keptVecs };
         }
 
-        async function embedAttachmentSegments(id, segments) {
+        // Compacts `parents` (MUTATED in place, same style as
+        // dropNearDuplicateSegments mutating `segments`) to include only
+        // parents a surviving child's `pid` still points at, and rewrites
+        // each surviving child's `pid` to the new, compacted index. Mirrors
+        // build-kb-index.py's remap_parents_after_dedup exactly. No-op when
+        // `parents` is null/undefined (audio segments have no parent/child
+        // concept, so callers simply don't pass one).
+        function remapAttachmentParentsAfterDedup(parents, segments) {
+            if (!parents) return;
+            const livePids = new Set();
+            for (const seg of segments) {
+                if (seg && typeof seg === 'object' && seg.pid != null) livePids.add(seg.pid);
+            }
+            const oldToNew = new Map();
+            const newParents = [];
+            parents.forEach((p, oldPid) => {
+                if (livePids.has(oldPid)) {
+                    oldToNew.set(oldPid, newParents.length);
+                    newParents.push(p);
+                }
+            });
+            for (const seg of segments) {
+                if (seg && typeof seg === 'object' && seg.pid != null) seg.pid = oldToNew.get(seg.pid);
+            }
+            parents.length = 0;
+            parents.push(...newParents);
+        }
+
+        // Attachment-side mirror of build-kb-index.py's build_bm25_index /
+        // index.html's bm25ScoreCandidates - same formula and default
+        // constants (ATTACHMENT_BM25_K1/B/D), same tokenizer regex as
+        // queryTerms (index.html) and TOKEN_RE (build-kb-index.py) so
+        // postings built here are queryable the same way. Built ONCE, at
+        // embed time, over the FINAL (deduped, pid-remapped) segment list -
+        // mirrors the crawler's build_bm25_index ordering requirement
+        // exactly (must run after dedup, never before).
+        // `df`/`postings` are PLAIN objects, deliberately NOT Map (unlike
+        // the KB path's parseBm25Index) - this result is stored on
+        // attachment.bm25, which rides through saveStore()'s
+        // JSON.stringify(store)/JSON.parse round trip. A Map serializes to
+        // "{}" via JSON.stringify, silently discarding every posting on the
+        // very next save. attachmentBm25ScoreCandidates reads these via
+        // Object.hasOwn(...) guards rather than a bare `in`/bracket check,
+        // which is what actually protects against prototype pollution here
+        // (a plain object survives JSON round-trips; Object.hasOwn makes
+        // reading it safe regardless of what shape it comes back as).
+        function buildAttachmentBm25(segments) {
+            const docLen = [];
+            const df = {};
+            const postings = {};
+            segments.forEach((seg, i) => {
+                const tokens = (segmentText(seg) || '').toLowerCase().match(/[a-z0-9]{3,}/g) || [];
+                docLen.push(tokens.length);
+                const tf = new Map();
+                for (const t of tokens) tf.set(t, (tf.get(t) || 0) + 1);
+                for (const [term, count] of tf) {
+                    df[term] = (Object.hasOwn(df, term) ? df[term] : 0) + 1;
+                    if (!Object.hasOwn(postings, term)) postings[term] = [];
+                    postings[term].push([i, count]);
+                }
+            });
+            const avgDocLen = docLen.length ? docLen.reduce((a, b) => a + b, 0) / docLen.length : 0;
+            return { k: ATTACHMENT_BM25_K1, b: ATTACHMENT_BM25_B, d: ATTACHMENT_BM25_D, avgDocLen, docLen, df, postings };
+        }
+
+        async function embedAttachmentSegments(id, segments, parents) {
             if (!segments || !segments.length) return false;
             try {
                 const em = await ensureKbEmbedder();
@@ -4574,8 +4791,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     EngineLock.release();
                 }
                 const deduped = dropNearDuplicateSegments(segments, out.data, KB_DIMS);
+                // `parents` is optional (only document-kind callers pass one -
+                // audio has no parent/child concept) and is mutated IN PLACE,
+                // same as `segments` above, so the caller's own `parents`
+                // variable already reflects the compacted, pid-remapped
+                // result once this returns.
+                remapAttachmentParentsAfterDedup(parents, deduped.segments);
                 await AttachmentStore.putVectors(id, deduped.vecs.buffer);
-                return true;
+                // BM25 built over the FINAL (deduped) segment list, for every
+                // attachment kind - lexical/exact-term matching is just as
+                // useful in an audio transcript as in a document, and
+                // buildAttachmentBm25 has no dependency on the parent/child
+                // concept (it reads plain text via segmentText either way).
+                return buildAttachmentBm25(deduped.segments);
             } catch (e) {
                 console.error('Attachment embedding failed, falling back to whole-text:', e);
                 return false;
@@ -4617,7 +4845,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const addedAt = Date.now();
             await AttachmentStore.putBlob(id, buf);
 
-            const attachment = { id, kind, name, mimeType: file.type || '', sizeBytes: file.size, addedAt, derivedText, segments: null, phiFlagged: false };
+            const attachment = { id, kind, name, mimeType: file.type || '', sizeBytes: file.size, addedAt, derivedText, segments: null, parents: null, bm25: null, phiFlagged: false };
             if (replacing) chat.attachments.splice(existingIdx, 1, attachment);
             else chat.attachments.push(attachment);
             recordAttachmentIndex(id, chat.id, addedAt);
@@ -4628,10 +4856,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // segments: null - the generation-time logic treats "no
             // segments" as "pass whole" regardless of the reason, so a
             // failed embed degrades to the plain whole-text behavior rather
-            // than losing the attachment's content entirely.
+            // than losing the attachment's content entirely. Small-to-big:
+            // `parents` are chunkText's own output (full-section text, sent
+            // to the model); `children` (the embedded/searched unit) are
+            // smaller windows, each tagged with a `pid` back to its parent -
+            // see chunkTextParentChild/kbHitsFromSelected's KB-side analog.
             if (kind === 'document' && derivedText && derivedText.length >= ATTACHMENT_WHOLE_TEXT_CHAR_LIMIT) {
-                const chunks = chunkText(derivedText);
-                if (await embedAttachmentSegments(id, chunks)) attachment.segments = chunks;
+                const { parents, children } = chunkTextParentChild(derivedText);
+                const bm25 = await embedAttachmentSegments(id, children, parents);
+                if (bm25) {
+                    attachment.segments = children;
+                    attachment.parents = parents;
+                    attachment.bm25 = bm25;
+                }
             }
 
             appendAttachmentNote(chat, replacing
@@ -4700,7 +4937,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 attachment.derivedText = derivedText;
                 attachment.segments = null;
                 if (derivedText.length >= ATTACHMENT_WHOLE_TEXT_CHAR_LIMIT && segments.length) {
-                    if (await embedAttachmentSegments(attachment.id, segments)) attachment.segments = segments;
+                    // No `parents` arg - audio segments already carry real
+                    // timestamp boundaries (start/end) that serve as their
+                    // own natural citable unit; not restructured into a
+                    // separate parent/child split.
+                    const bm25 = await embedAttachmentSegments(attachment.id, segments);
+                    if (bm25) { attachment.segments = segments; attachment.bm25 = bm25; }
                 }
                 checkAttachmentForPHI(chat, attachment);
                 saveStore();
@@ -5381,28 +5623,23 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
         }
 
-        // Decode a base64 string of a Float32Array back into typed-array form.
-        // Length check happens against dims * chunks.length upstream.
-        function b64ToF32(str) {
-            const bin = atob(str);
-            const u8 = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-            return new Float32Array(u8.buffer);
-        }
-
-        // Shared index-guard + shape validation for BOTH bundled and external
-        // indexes: idx.model/idx.dims must match the embedder this build
-        // ships (KB_EMBED_ID/KB_DIMS - see the asymmetric query convention
-        // notes above), chunks/vecs must be present and consistent, and
-        // builtAt/sourceCount are read as OPTIONAL staleness-stamp fields
-        // (null when absent, e.g. an index built before this feature
-        // existed) rather than causing a hard failure.
-        // Decode a base64 string of an Int8Array back into typed-array form.
-        function b64ToI8(str) {
-            const bin = atob(str);
-            const u8 = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-            return new Int8Array(u8.buffer);
+        // Single self-describing binary container - avoids base64-in-JSON
+        // transport, which costs ~33% extra bytes plus a slow JSON.parse
+        // over one giant string, for no benefit once nothing else needs the
+        // vectors JSON-representable. Layout: [4-byte
+        // little-endian uint32 header length N][N bytes UTF-8 JSON
+        // header][raw int8/float32 vector bytes].
+        function parseKbContainer(buf) {
+            const dv = new DataView(buf);
+            const headerLen = dv.getUint32(0, true);
+            const idx = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(buf, 4, headerLen)));
+            // .slice() COPIES into a fresh, zero-offset ArrayBuffer. Required:
+            // 4 + headerLen is not guaranteed 4-byte aligned, and
+            // Float32Array/Int8Array construction over a raw ArrayBuffer at a
+            // non-multiple-of-4 byteOffset throws RangeError. Do not
+            // "optimize" this into a zero-copy view.
+            const vecBytes = buf.slice(4 + headerLen);
+            return { idx, vecBytes };
         }
 
         // Dequantize int8 vectors back into the same Float32Array layout
@@ -5418,24 +5655,62 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return out;
         }
 
-        function parseKbIndexBody(idx) {
-            if (!idx || idx.v !== 1) throw new Error('KB index version mismatch (expected v:1)');
+        // Parses the crawler's BM25 corpus statistics into Map-backed
+        // structures - NEVER plain objects. idx.bm25 comes from an
+        // externally-suppliable ?kb= index (untrusted input): a term
+        // literally named "__proto__" used as a plain-object key risks
+        // prototype pollution (AGENTS.md SS7). Returns null when the index
+        // predates hybrid retrieval or was built with --float32-vecs-only
+        // tooling that skipped it, so callers must treat a null bm25 as
+        // "fall back to vector-only," never as an error.
+        function parseBm25Index(bm25) {
+            if (!bm25 || !Array.isArray(bm25.docLen)) return null;
+            return {
+                k: Number.isFinite(bm25.k) ? bm25.k : 1.2,
+                b: Number.isFinite(bm25.b) ? bm25.b : 0.75,
+                d: Number.isFinite(bm25.d) ? bm25.d : 0.5,
+                avgDocLen: Number.isFinite(bm25.avgDocLen) ? bm25.avgDocLen : 0,
+                docLen: bm25.docLen,
+                df: new Map(Object.entries(bm25.df || {})),
+                postings: new Map(Object.entries(bm25.postings || {}))
+            };
+        }
+
+        // Shared index-guard + shape validation for BOTH bundled and external
+        // indexes: idx.model/idx.dims must match the embedder this build
+        // ships (KB_EMBED_ID/KB_DIMS - see the asymmetric query convention
+        // notes above), chunks/parents/vecs must be present and consistent,
+        // and builtAt/sourceCount are read as OPTIONAL staleness-stamp
+        // fields (null when absent, e.g. an index built before this feature
+        // existed) rather than causing a hard failure. bm25/calibration are
+        // likewise optional - hybrid retrieval and z-score calibration
+        // degrade gracefully, not hard-fail, against an index that
+        // predates them.
+        function parseKbIndexBody(idx, vecBytes) {
+            if (!idx || idx.v !== 2) throw new Error('KB index version mismatch (expected v:2)');
             if (idx.model !== KB_EMBED_ID) throw new Error('KB embedder mismatch (expected ' + KB_EMBED_ID + ')');
             if (idx.dims !== KB_DIMS) throw new Error('KB dims mismatch (expected ' + KB_DIMS + ')');
             if (!Array.isArray(idx.chunks) || !idx.chunks.length) throw new Error('KB has no chunks');
-            if (typeof idx.vecs !== 'string' || !idx.vecs) throw new Error('KB vecs missing');
-            const vecs = idx.vecsQ === 'i8' ? dequantizeI8(b64ToI8(idx.vecs), idx.vecsScale) : b64ToF32(idx.vecs);
+            if (!Array.isArray(idx.parents) || !idx.parents.length) throw new Error('KB has no parents');
+            if (!vecBytes || !vecBytes.byteLength) throw new Error('KB vecs missing');
+            const vecs = idx.vecsQ === 'i8' ? dequantizeI8(new Int8Array(vecBytes), idx.vecsScale) : new Float32Array(vecBytes);
             const expected = idx.dims * idx.chunks.length;
             if (vecs.length !== expected) {
                 throw new Error('KB vecs length mismatch (' + vecs.length + ' floats, expected ' + expected + ')');
             }
+            const calibration = (idx.calibration && Number.isFinite(idx.calibration.mean) && Number.isFinite(idx.calibration.std))
+                ? { mean: idx.calibration.mean, std: idx.calibration.std, sampleSize: idx.calibration.sampleSize || 0 }
+                : null;
             return {
                 site: idx.site || '',
                 chunks: idx.chunks,
+                parents: idx.parents,
                 dims: idx.dims,
                 vecs,
                 builtAt: (typeof idx.builtAt === 'string' && idx.builtAt) ? idx.builtAt : null,
-                sourceCount: Number.isFinite(idx.sourceCount) ? idx.sourceCount : null
+                sourceCount: Number.isFinite(idx.sourceCount) ? idx.sourceCount : null,
+                bm25: parseBm25Index(idx.bm25),
+                calibration
             };
         }
 
@@ -5471,14 +5746,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (!res.ok) throw new Error('Fetch failed: HTTP ' + res.status);
                 try { await cache.put(url, res.clone()); } catch {}
             }
-            const bodyText = await res.text();
-            if (bodyText.length > KB_MAX_BYTES) {
+            const buf = await res.arrayBuffer();
+            if (buf.byteLength > KB_MAX_BYTES) {
                 // Post-fetch belt-and-suspenders when HEAD did not report size.
                 throw new Error('KB index body exceeds ' + KB_MAX_BYTES + ' bytes');
             }
-            let idx;
-            try { idx = JSON.parse(bodyText); }
-            catch { throw new Error('KB index is not valid JSON'); }
+            let idx, vecBytes;
+            try { ({ idx, vecBytes } = parseKbContainer(buf)); }
+            catch { throw new Error('KB index is not a valid index container'); }
             const staleMismatch = !idx || idx.model !== KB_EMBED_ID || idx.dims !== KB_DIMS;
             if (staleMismatch && cameFromCache && !force) {
                 // Cache Storage is keyed only by URL, not by model, so a browser
@@ -5488,7 +5763,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 await purgeKbEntry(url);
                 return fetchKbIndex(url, true);
             }
-            const parsed = parseKbIndexBody(idx);
+            const parsed = parseKbIndexBody(idx, vecBytes);
             // Only stamp fetchedAt when we actually hit the network. Bumping it
             // on every cache-served load would reset the 7-day clock and the
             // entry would never expire.
@@ -5497,7 +5772,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     fetchedAt: Date.now(),
                     chunkCount: parsed.chunks.length,
                     site: parsed.site,
-                    byteLength: bodyText.length
+                    byteLength: buf.byteLength
                 });
             } else if (!readKbMeta(url)) {
                 // Defensive: cache had the body but LS meta was cleared. Stamp
@@ -5506,7 +5781,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     fetchedAt: Date.now(),
                     chunkCount: parsed.chunks.length,
                     site: parsed.site,
-                    byteLength: bodyText.length
+                    byteLength: buf.byteLength
                 });
             }
             return parsed;
@@ -5536,14 +5811,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 res = await cache.match(BUNDLED_KB_URL);
                 if (!res) throw networkErr;
             }
-            const bodyText = await res.text();
-            if (bodyText.length > KB_MAX_BYTES) {
+            const buf = await res.arrayBuffer();
+            if (buf.byteLength > KB_MAX_BYTES) {
                 throw new Error('Bundled KB body exceeds ' + KB_MAX_BYTES + ' bytes');
             }
-            let idx;
-            try { idx = JSON.parse(bodyText); }
-            catch { throw new Error('Bundled KB index is not valid JSON'); }
-            return parseKbIndexBody(idx);
+            let idx, vecBytes;
+            try { ({ idx, vecBytes } = parseKbContainer(buf)); }
+            catch { throw new Error('Bundled KB index is not a valid index container'); }
+            return parseKbIndexBody(idx, vecBytes);
         }
 
         // Lazy embedder load. Mirrors ensureRouterNli: single in-flight
@@ -5595,6 +5870,99 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // On success we intentionally leave embedderLoading resolved so
             // repeat callers hit the fast path via kbState.embedder above.
             return kbState.embedderLoading;
+        }
+
+        // Lazy cross-encoder reranker load, gated behind kbRerankEnabled()
+        // (always true - see that function) so it only loads once actually
+        // needed for a KB/attachment turn. Mirrors ensureKbEmbedder's
+        // lazy-load-once/fallback-ladder shape, but deliberately does NOT
+        // reuse its 'feature-extraction' pipeline task: ms-marco-MiniLM-L-6-v2
+        // is a cross-encoder (query/passage PAIR -> single relevance score),
+        // which Transformers.js exposes via the 'text-classification'
+        // pipeline task with a `text_pair` option, not feature-extraction's
+        // embedding-vector shape. Score is a relative ranking signal only,
+        // not a calibrated probability - rerankHits sorts by it, nothing
+        // compares it against an absolute cutoff.
+        function ensureKbReranker() {
+            if (kbState.reranker) return Promise.resolve(kbState.reranker);
+            if (kbState.rerankerLoading) return kbState.rerankerLoading;
+            kbState.rerankerLoading = (async () => {
+                const auto = (!forceQ4 && typeof Float16Array !== 'undefined') ? 'q4f16' : 'q4';
+                let ladder = [
+                    { device: 'webgpu', dtype: auto },
+                    { device: 'webgpu', dtype: 'q4' },
+                    { device: 'wasm', dtype: 'q4' },
+                    { device: 'wasm', dtype: 'fp32' }
+                ];
+                ladder = reorderLadderBySavedRung(ladder, loadModelRung(KB_RERANK_MODEL_ID));
+                const cachedRc = isCached(KB_RERANK_MODEL_ID);
+                let lastErr = 'unknown error';
+                for (const step of ladder) {
+                    try {
+                        const cb = makeCacheAwareProgress(cachedRc, 'Downloading reranker...');
+                        const rr = await pipeline('text-classification', KB_RERANK_MODEL_ID, {
+                            dtype: step.dtype,
+                            device: step.device,
+                            progress_callback: cb
+                        });
+                        kbState.reranker = rr;
+                        markCached(KB_RERANK_MODEL_ID);
+                        saveModelRung(KB_RERANK_MODEL_ID, step.device, step.dtype);
+                        requestPersistentStorageOnce();
+                        finishProgress();
+                        hideProgress();
+                        return rr;
+                    } catch (e) {
+                        lastErr = errMsg(e);
+                        console.error('KB reranker load failed [' + step.dtype + '/' + step.device + ']:', e);
+                        await new Promise(r => setTimeout(r, 50));
+                    }
+                }
+                hideProgress();
+                throw new Error(lastErr);
+            })().catch(e => {
+                kbState.rerankerLoading = null;
+                throw e;
+            });
+            return kbState.rerankerLoading;
+        }
+
+        // Reranks an already-diversified, already-resolved hit list (parent
+        // text, not raw child windows) - only ever called on a small
+        // shortlist (KB_RERANK_TOPN_INPUT), never the full candidate pool,
+        // since a cross-encoder pass is much more expensive per item than
+        // the dot-product scoring the rest of retrieval uses. Adds a
+        // SEPARATE `rerankS` field rather than overwriting `s` - keeps the
+        // original fused/cosine score visible for debugging and avoids
+        // silently changing what `s` means to every other reader of a hit
+        // object (citation numbering, diversifyHits, etc. never see this
+        // list - reranking happens strictly after those run).
+        async function rerankHits(query, hits) {
+            if (!hits.length) return hits;
+            const shortlist = hits.slice(0, KB_RERANK_TOPN_INPUT);
+            const rest = hits.slice(KB_RERANK_TOPN_INPUT);
+            let rr;
+            try {
+                rr = await ensureKbReranker();
+            } catch (e) {
+                console.error('Reranker unavailable, falling back to un-reranked order:', e);
+                return hits;
+            }
+            await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+            try {
+                for (const h of shortlist) {
+                    const out = await rr(query, { text_pair: h.x || '' });
+                    const rec = Array.isArray(out) ? out[0] : out;
+                    h.rerankS = (rec && Number.isFinite(rec.score)) ? rec.score : h.s;
+                }
+            } catch (e) {
+                console.error('Reranking failed, falling back to un-reranked order:', e);
+                return hits;
+            } finally {
+                EngineLock.release();
+            }
+            shortlist.sort((a, b) => b.rerankS - a.rerankS);
+            return shortlist.concat(rest);
         }
 
         // ---------- Whisper transcription ----------
@@ -5712,22 +6080,35 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // 1. Relative threshold: a hit must clear the absolute KB_SCORE_MIN
         //    floor AND beat the candidate pool's own median by KB_SCORE_MARGIN
         //    - self-normalizing across corpora instead of trusting one fixed
-        //    cutoff against an anisotropic embedding space. Skipped when
-        //    noThreshold is set (the lockdown-empty "closest excerpts" list).
+        //    cutoff against an anisotropic embedding space. When `calibration`
+        //    (crawler-emitted corpus mean/std) is present, a third z-score
+        //    term is OR'd in via Math.max. Skipped entirely when noThreshold
+        //    is set (the lockdown-empty "closest excerpts" list).
+        //    CAVEAT: when the caller passes RRF-fused scores (hybrid
+        //    BM25+vector retrieval), `c.s` is no longer a raw cosine
+        //    similarity - KB_SCORE_MIN and the calibration stats were both
+        //    derived from cosine scores, so this floor is a coarse
+        //    approximation on the fused scale until retuned against real
+        //    queries. The self-relative median+margin term stays
+        //    scale-invariant either way and remains the primary signal; the
+        //    absolute terms are safety nets only.
         // 2. Greedy MMR (lambda=KB_MMR_LAMBDA) over the surviving pool so k
         //    near-duplicate chunks from one page/section don't crowd out the
         //    whole context budget.
         // 3. Per-source cap (KB_SOURCE_CAP): sourceKeyFn identifies a
-        //    "source" as u + '#' + start, never bare u - so a long video
-        //    transcript (many timestamped segments, one URL) can't collapse
-        //    to a single citable unit.
-        function diversifyHits(candidates, dims, k, sourceKeyFn, noThreshold) {
+        //    "source" as u + '#p' + pid (a real per-parent id), so a
+        //    multi-section article or a long video transcript can't
+        //    collapse to a single citable unit.
+        function diversifyHits(candidates, dims, k, sourceKeyFn, noThreshold, calibration) {
             if (!candidates.length) return [];
             let filtered = candidates;
             if (!noThreshold) {
                 const scores = candidates.map(c => c.s).sort((a, b) => a - b);
                 const median = scores[Math.floor(scores.length / 2)];
-                const cutoff = Math.max(KB_SCORE_MIN, median + KB_SCORE_MARGIN);
+                const zScoreCutoff = (calibration && calibration.std)
+                    ? calibration.mean + KB_ZSCORE_MARGIN * calibration.std
+                    : -Infinity;
+                const cutoff = Math.max(KB_SCORE_MIN, median + KB_SCORE_MARGIN, zScoreCutoff);
                 filtered = candidates.filter(c => c.s >= cutoff);
             }
             if (!filtered.length) return [];
@@ -5757,14 +6138,112 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return selected;
         }
 
-        // Brute-force top-N candidate pool over pre-normalized vectors.
-        // Always embeds its own query vector (rather than reusing router Tier
-        // 1's) because retrieval needs the KB_QUERY_INSTRUCTION prefix and
-        // Tier 1's symmetric intent-classification vector must stay unprefixed.
-        // Factored out of retrieveKb so retrieveKbBoth can derive BOTH a
-        // threshold-filtered hit list and an unfiltered "closest" list from
-        // one embedding pass - see its own comment for why that matters.
-        async function retrieveKbCandidates(query) {
+        // Filters on the crawler's `kind`/`host` per-chunk fields. A facet is
+        // {kind?, host?}; a missing/null facet always matches (permissive
+        // default - see ROUTER_KB_FACETS for why over-filtering is the
+        // worse failure mode for a Q&A assistant).
+        function kbFacetMatches(chunk, facet) {
+            if (!chunk || !facet) return true;
+            if (facet.kind && chunk.kind !== facet.kind) return false;
+            if (facet.host && chunk.host !== facet.host) return false;
+            return true;
+        }
+
+        // Hybrid retrieval, BM25 half. True inverted-index walk: only terms
+        // present in the query ever touch a postings list, so cost scales
+        // with (query term count x average postings length), never with
+        // corpus size - this is what makes BM25 practical to run client-side
+        // per query instead of only at crawl time. Mirrors
+        // build-kb-index.py's build_bm25_index scoring formula exactly (k/b/d
+        // read from the index itself, not hardcoded, so a rebuilt index can
+        // ship different tuning without a browser code change).
+        function bm25ScoreCandidates(terms, facet) {
+            const bm25 = kbState.bm25;
+            if (!bm25 || !terms || !terms.size) return [];
+            const N = kbState.chunks.length;
+            const dims = kbState.dims;
+            const vecs = kbState.vecs;
+            const { k, b, d, avgDocLen, docLen, df, postings } = bm25;
+            const scores = new Map(); // docIdx -> summed BM25 score across matching query terms
+            for (const term of terms) {
+                const post = postings.get(term);
+                if (!post) continue;
+                const docFreq = df.get(term) || post.length;
+                const idf = Math.log(1 + (N - docFreq + 0.5) / (docFreq + 0.5));
+                for (const [docIdx, tf] of post) {
+                    if (facet && !kbFacetMatches(kbState.chunks[docIdx], facet)) continue;
+                    const dl = docLen[docIdx] || 0;
+                    const denom = tf + k * (1 - b + (b * dl) / (avgDocLen || 1));
+                    scores.set(docIdx, (scores.get(docIdx) || 0) + (idf * (d + tf * (k + 1))) / (denom || 1));
+                }
+            }
+            const out = [];
+            for (const [i, s] of scores) out.push({ i, s, off: i * dims, vecs });
+            out.sort((a, b) => b.s - a.s);
+            return out.slice(0, KB_CANDIDATE_POOL);
+        }
+
+        // Classical rank-based Reciprocal Rank Fusion (RRF_K=60, the
+        // standard literature constant). Each input list must already be
+        // sorted descending by its own score - only RANK within a list
+        // matters, not the raw score scale, which is what makes fusing a
+        // cosine-similarity list with a BM25 list valid with no score
+        // normalization step. (Contrast with oramasearch/orama's own hybrid
+        // search, which max-normalizes then linearly combines scores - read
+        // as a design/BM25-constants reference, not reused here, since RRF
+        // was explicitly asked for.) `weightFn(item)`, when given, applies
+        // the crawler's reserved per-chunk `weight` field as a POST-fusion
+        // per-document multiplier - a distinct knob from `listWeight` (how
+        // much to trust vector vs. lexical retrieval in general). `keyFn`
+        // identifies "the same candidate" across lists - defaults to
+        // item.i (valid for the KB path, one shared vector array indexed
+        // by a single integer); the attachment path passes a composite
+        // (attachment id + segment index) key since a bare segment index is
+        // not unique across a UNION of several attachments.
+        function rrfFuse(rankedLists, weightFn, keyFn) {
+            const key = keyFn || (item => item.i);
+            const fused = new Map(); // key -> { score, item }
+            for (const { items, listWeight } of rankedLists) {
+                items.forEach((item, rank) => {
+                    const contrib = listWeight * (RRF_K / (RRF_K + rank + 1));
+                    const k = key(item);
+                    const prev = fused.get(k);
+                    if (prev) prev.score += contrib;
+                    else fused.set(k, { score: contrib, item });
+                });
+            }
+            const out = [];
+            for (const entry of fused.values()) {
+                const w = weightFn ? weightFn(entry.item) : 1.0;
+                out.push(Object.assign({}, entry.item, { s: entry.score * w }));
+            }
+            out.sort((a, b) => b.s - a.s);
+            return out;
+        }
+
+        function kbChunkWeight(item) {
+            const c = kbState.chunks[item.i];
+            return (c && Number.isFinite(c.weight)) ? c.weight : 1.0;
+        }
+
+        // Brute-force top-N candidate pool over pre-normalized vectors,
+        // fused with a BM25 lexical pass via RRF when the loaded index ships
+        // BM25 statistics (older indexes retrieved vector-only). Always
+        // embeds its own query vector (rather than
+        // reusing router Tier 1's) because retrieval needs the
+        // KB_QUERY_INSTRUCTION prefix and Tier 1's symmetric
+        // intent-classification vector must stay unprefixed. Factored out of
+        // retrieveKb so retrieveKbBoth can derive BOTH a threshold-filtered
+        // hit list and an unfiltered "closest" list from one embedding pass
+        // - see its own comment for why that matters.
+        //
+        // `facet` ({kind?, host?} or null/undefined) hard-filters candidates
+        // before scoring. If a facet produces zero results (e.g. the router
+        // expected code content but the loaded KB has none), this retries
+        // ONCE unfiltered using the SAME already-computed query embedding -
+        // over-filtering must not make an otherwise-answerable question look
+        // unanswerable.
+        async function retrieveKbCandidates(query, facet) {
             if (kbState.kind === 'off' || !kbState.vecs || !kbState.chunks) return null;
             const em = await ensureKbEmbedder();
             await EngineLock.acquire('chat', chatLockWaitCtl.signal);
@@ -5776,52 +6255,81 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             const q = out.data; // Float32Array of length dims
             const dims = kbState.dims;
-            const N = kbState.chunks.length;
-            const vecs = kbState.vecs;
-            const poolSize = Math.min(N, KB_CANDIDATE_POOL);
-            const heap = []; // simple ascending-by-score keeping length <= poolSize
-            for (let i = 0; i < N; i++) {
-                const off = i * dims;
-                const s = cosineSim(q, 0, vecs, off, dims);
-                if (heap.length < poolSize) {
-                    heap.push({ i, s, off, vecs });
-                    heap.sort((a, b) => a.s - b.s);
-                } else if (s > heap[0].s) {
-                    heap[0] = { i, s, off, vecs };
-                    heap.sort((a, b) => a.s - b.s);
+            const terms = kbState.bm25 ? queryTerms(query) : null;
+
+            const gather = (f) => {
+                const N = kbState.chunks.length;
+                const vecs = kbState.vecs;
+                const poolSize = Math.min(N, KB_CANDIDATE_POOL);
+                const heap = []; // simple ascending-by-score keeping length <= poolSize
+                for (let i = 0; i < N; i++) {
+                    if (f && !kbFacetMatches(kbState.chunks[i], f)) continue;
+                    const off = i * dims;
+                    const s = cosineSim(q, 0, vecs, off, dims);
+                    if (heap.length < poolSize) {
+                        heap.push({ i, s, off, vecs });
+                        heap.sort((a, b) => a.s - b.s);
+                    } else if (s > heap[0].s) {
+                        heap[0] = { i, s, off, vecs };
+                        heap.sort((a, b) => a.s - b.s);
+                    }
                 }
-            }
-            return { candidates: heap.slice().sort((a, b) => b.s - a.s), dims };
+                const vectorRanked = heap.slice().sort((a, b) => b.s - a.s);
+                if (!(terms && terms.size)) return vectorRanked;
+                const bm25Ranked = bm25ScoreCandidates(terms, f);
+                if (!bm25Ranked.length) return vectorRanked;
+                return rrfFuse([
+                    { items: vectorRanked, listWeight: KB_RRF_VECTOR_WEIGHT },
+                    { items: bm25Ranked, listWeight: KB_RRF_BM25_WEIGHT }
+                ], kbChunkWeight);
+            };
+
+            let candidates = gather(facet);
+            if (facet && !candidates.length) candidates = gather(null); // soft facet fallback
+            return { candidates, dims };
         }
         function kbSourceKeyFn(c) {
             const chunk = kbState.chunks[c.i] || {};
-            return (chunk.u || '') + '#' + (chunk.start != null ? chunk.start : '');
+            return (chunk.u || '') + '#p' + (chunk.pid != null ? chunk.pid : '');
         }
+        // Resolves each selected CHILD hit's parent (small-to-big retrieval:
+        // search small, return big) - the model sees the full parent section
+        // text, not just the smaller window that happened to match the
+        // query. Falls back to the child itself if `parents`/`pid` are
+        // somehow absent so this degrades instead of throwing.
         function kbHitsFromSelected(selected) {
             return selected.map(h => {
                 const c = kbState.chunks[h.i] || {};
-                return { t: c.t || '', x: c.x || '', u: c.u || '', s: h.s, start: c.start != null ? c.start : null };
+                const parent = (kbState.parents && c.pid != null) ? kbState.parents[c.pid] : null;
+                const resolved = parent || c;
+                return { t: resolved.t || '', x: resolved.x || '', u: c.u || '', s: h.s, start: c.start != null ? c.start : null, pid: c.pid != null ? c.pid : null };
             });
         }
         // noThreshold=true is used only for the "closest URLs" list in the
         // lockdown-empty case (still diversified, just not threshold-filtered).
-        async function retrieveKb(query, k, noThreshold) {
-            const pool = await retrieveKbCandidates(query);
+        async function retrieveKb(query, k, noThreshold, facet) {
+            const pool = await retrieveKbCandidates(query, facet);
             if (!pool) return [];
-            const selected = diversifyHits(pool.candidates, pool.dims, k, kbSourceKeyFn, noThreshold);
-            return kbHitsFromSelected(selected);
+            const selected = diversifyHits(pool.candidates, pool.dims, k, kbSourceKeyFn, noThreshold, kbState.calibration);
+            let hits = kbHitsFromSelected(selected);
+            if (!noThreshold && kbRerankEnabled()) hits = await rerankHits(query, hits);
+            return hits;
         }
         // Single-embedding variant for handleSend's dual need: a real,
         // threshold-filtered hit list to cite AND an unfiltered "closest"
         // list to show when lockdown mode finds nothing to cite. Both views
         // come from the same candidate pool so this costs one embedding
-        // call, not two.
-        async function retrieveKbBoth(query, closestK) {
-            const pool = await retrieveKbCandidates(query);
+        // call, not two. Only `hits` (the real citation list) is ever
+        // reranked - `closest` is informational-only (lockdown-empty
+        // fallback links), not worth the extra cross-encoder passes.
+        async function retrieveKbBoth(query, closestK, facet) {
+            const pool = await retrieveKbCandidates(query, facet);
             if (!pool) return { hits: [], closest: [] };
-            const hitsSelected = diversifyHits(pool.candidates, pool.dims, KB_TOPK, kbSourceKeyFn, false);
-            const closestSelected = diversifyHits(pool.candidates, pool.dims, closestK, kbSourceKeyFn, true);
-            return { hits: kbHitsFromSelected(hitsSelected), closest: kbHitsFromSelected(closestSelected) };
+            const hitsSelected = diversifyHits(pool.candidates, pool.dims, KB_TOPK, kbSourceKeyFn, false, kbState.calibration);
+            const closestSelected = diversifyHits(pool.candidates, pool.dims, closestK, kbSourceKeyFn, true, kbState.calibration);
+            let hits = kbHitsFromSelected(hitsSelected);
+            if (kbRerankEnabled()) hits = await rerankHits(query, hits);
+            return { hits, closest: kbHitsFromSelected(closestSelected) };
         }
 
         // Per-chat-open vector cache: vectors decrypt once into memory when
@@ -5845,11 +6353,74 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return vecs;
         }
 
+        // Attachment-side mirror of bm25ScoreCandidates - scores a UNION of
+        // several attachments' independent BM25 postings against the same
+        // query terms. `vecsById` (built during retrieveAttachments' main
+        // per-attachment loop, so getAttachmentVectors is never called
+        // twice) resolves {vecs, off} for every candidate, including one
+        // that only ever matched lexically and never made the vector
+        // heap's top-K - same requirement as the KB path.
+        function attachmentBm25ScoreCandidates(chunked, terms, vecsById, dims) {
+            if (!terms || !terms.size) return [];
+            const out = [];
+            for (const att of chunked) {
+                const bm25 = att.bm25;
+                const vecs = vecsById.get(att.id);
+                if (!bm25 || !vecs) continue; // gracefully skips a pre-Stage-2 attachment with no bm25 index
+                const N = att.segments.length;
+                const { k, b, d, avgDocLen, docLen, df, postings } = bm25;
+                const scores = new Map();
+                for (const term of terms) {
+                    if (!Object.hasOwn(postings, term)) continue;
+                    const post = postings[term];
+                    const docFreq = Object.hasOwn(df, term) ? df[term] : post.length;
+                    const idf = Math.log(1 + (N - docFreq + 0.5) / (docFreq + 0.5));
+                    for (const [i, tf] of post) {
+                        const dl = docLen[i] || 0;
+                        const denom = tf + k * (1 - b + (b * dl) / (avgDocLen || 1));
+                        scores.set(i, (scores.get(i) || 0) + (idf * (d + tf * (k + 1))) / (denom || 1));
+                    }
+                }
+                for (const [i, s] of scores) out.push({ att, i, s, off: i * dims, vecs });
+            }
+            out.sort((a, b) => b.s - a.s);
+            return out.slice(0, KB_CANDIDATE_POOL);
+        }
+
+        // Attachment-side mirror of build-kb-index.py's
+        // compute_calibration_stats, computed FRESH at query time (never
+        // persisted) - an attachment corpus is a different, tiny union
+        // every turn (whichever documents/audio are attached to THIS
+        // chat), so there is nothing to cache between turns. Full
+        // pairwise, not sampled: CALIBRATION_SAMPLE_SIZE's cap in the
+        // crawler exists purely to bound a large KB's BUILD-time cost,
+        // which has no analog for a small, per-turn attachment union.
+        function computeAttachmentCalibration(points, dims) {
+            const n = points.length;
+            if (n < 2) return null;
+            let sum = 0, sumSq = 0;
+            for (let i = 0; i < n; i++) {
+                let best = -1;
+                for (let j = 0; j < n; j++) {
+                    if (j === i) continue;
+                    const sim = cosineSim(points[i].vecs, points[i].off, points[j].vecs, points[j].off, dims);
+                    if (sim > best) best = sim;
+                }
+                sum += best;
+                sumSq += best * best;
+            }
+            const mean = sum / n;
+            const variance = Math.max(0, sumSq / n - mean * mean);
+            return { mean, std: Math.sqrt(variance) };
+        }
+
         // Generalizes retrieveKb's single-source loop into a loop over every
-        // chunked (segments.length > 0) document attachment in the chat,
-        // merging candidates into one shared top-k list - multiple
-        // attachments are searched as a union. Hits carry the attachment
-        // name in place of a KB URL for the citation.
+        // chunked (segments.length > 0) document/audio attachment in the
+        // chat, merging candidates into one shared top-k list - multiple
+        // attachments are searched as a union, hybrid-fused (BM25 + vector
+        // via RRF, same as the KB path - see retrieveKbCandidates) when
+        // BM25 indexes are available. Hits carry the attachment name in
+        // place of a KB URL for the citation.
         async function retrieveAttachments(query, chat, k) {
             const chunked = (chat.attachments || []).filter(a => (a.kind === 'document' || a.kind === 'audio') && a.segments && a.segments.length);
             if (!chunked.length) return [];
@@ -5864,43 +6435,94 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const q = out.data;
             const dims = KB_DIMS;
             const heap = []; // ascending by score, length <= KB_CANDIDATE_POOL, same pattern as retrieveKb
+            const vecsById = new Map(); // attachment id -> its vecs array, reused below for BM25 candidates + calibration (avoids a second getAttachmentVectors round-trip)
+            const allPoints = []; // every {vecs, off} pair seen this turn, for lazy per-turn calibration
             for (const att of chunked) {
                 const vecs = await getAttachmentVectors(att);
                 if (!vecs) continue;
+                vecsById.set(att.id, vecs);
                 const N = att.segments.length;
                 for (let i = 0; i < N; i++) {
                     const off = i * dims;
+                    allPoints.push({ vecs, off });
                     const s = cosineSim(q, 0, vecs, off, dims);
                     if (heap.length < KB_CANDIDATE_POOL) { heap.push({ att, i, s, off, vecs }); heap.sort((a, b) => a.s - b.s); }
                     else if (s > heap[0].s) { heap[0] = { att, i, s, off, vecs }; heap.sort((a, b) => a.s - b.s); }
                 }
             }
-            const candidates = heap.slice().sort((a, b) => b.s - a.s);
-            // Identity is attachment id + '#' + start, never bare attachment
-            // id - keeps this ready for a long audio/video attachment with
-            // many timestamped segments.
+            const vectorRanked = heap.slice().sort((a, b) => b.s - a.s);
+
+            // Hybrid fusion, mirroring retrieveKbCandidates. Reuses the KB
+            // path's RRF_K/KB_RRF_VECTOR_WEIGHT/KB_RRF_BM25_WEIGHT constants
+            // deliberately rather than inventing separate attachment-tuned
+            // ones - there is no signal suggesting attachments need a
+            // different vector/lexical trust split. No `weightFn` - the
+            // reserved per-chunk `weight` field is a crawler/KB-provenance
+            // concept (e.g. down-weighting marketing pages by `kind`) with
+            // no attachment analog; inventing one here would have no real
+            // data behind it.
+            const terms = queryTerms(query);
+            let candidates = vectorRanked;
+            if (terms.size) {
+                const bm25Ranked = attachmentBm25ScoreCandidates(chunked, terms, vecsById, dims);
+                if (bm25Ranked.length) {
+                    // Composite key: a bare segment index (item.i) is NOT
+                    // unique across a union of several attachments, unlike
+                    // the KB path's single shared vector array.
+                    candidates = rrfFuse(
+                        [
+                            { items: vectorRanked, listWeight: KB_RRF_VECTOR_WEIGHT },
+                            { items: bm25Ranked, listWeight: KB_RRF_BM25_WEIGHT }
+                        ],
+                        null,
+                        item => item.att.id + '#' + item.i
+                    );
+                }
+            }
+
+            // Identity is attachment id + '#p' + pid for document CHILDREN
+            // (real per-parent identity, mirrors kbSourceKeyFn) - falls back
+            // to id + '#' + start/segment-index for audio or any chunk with
+            // no pid, so KB_SOURCE_CAP stays per-chunk instead of collapsing
+            // to per-document.
             const sourceKeyFn = c => {
                 const seg = c.att.segments[c.i];
-                const start = (seg && typeof seg === 'object' && seg.start != null) ? seg.start : '';
-                return c.att.id + '#' + start;
+                if (seg && typeof seg === 'object' && seg.pid != null) return c.att.id + '#p' + seg.pid;
+                const start = (seg && typeof seg === 'object' && seg.start != null) ? seg.start : null;
+                return c.att.id + '#' + (start != null ? start : c.i);
             };
-            const selected = diversifyHits(candidates, dims, k, sourceKeyFn, false);
-            return selected.map(h => {
+            const calibration = computeAttachmentCalibration(allPoints, dims);
+            const selected = diversifyHits(candidates, dims, k, sourceKeyFn, false, calibration);
+            let hits = selected.map(h => {
                 const seg = h.att.segments[h.i];
+                const hasPid = seg && typeof seg === 'object' && seg.pid != null;
+                // Small-to-big: resolve the CHILD hit's parent (full
+                // section text), same as kbHitsFromSelected on the KB side.
+                // Falls back to the child/segment text itself when there's
+                // no parent to resolve (audio, or a chunk with no pid).
+                const resolvedText = (hasPid && h.att.parents) ? h.att.parents[seg.pid] : null;
                 return {
-                    t: h.att.name, x: segmentText(seg), u: h.att.name, s: h.s, attachmentId: h.att.id,
-                    start: (seg && typeof seg === 'object') ? seg.start : null
+                    t: h.att.name, x: resolvedText != null ? resolvedText : segmentText(seg), u: h.att.name, s: h.s,
+                    attachmentId: h.att.id,
+                    start: (seg && typeof seg === 'object' && seg.start != null) ? seg.start : null
                 };
             });
+            // Same single global toggle as the KB path - a user turning on
+            // "more precise KB answers" reasonably expects it to also apply
+            // to attachment retrieval.
+            if (kbRerankEnabled()) hits = await rerankHits(query, hits);
+            return hits;
         }
 
-        // Same visual row as appendSources, but plain name badges rather than
-        // <a href> anchors - an attachment has no URL to link to. Groups by
-        // (name, start) the same way appendSources groups by URL - see its
-        // comment for why silently keeping only the first hit per key would
-        // leave gaps in the visible tag numbers.
-        function appendAttachmentSources(hits) {
-            if (!hits || !hits.length) return;
+        // Same visual row as buildSourcesRow, but plain name badges rather
+        // than <a href> anchors - an attachment has no URL to link to.
+        // Groups by (name, start) the same way buildSourcesRow groups by
+        // URL - see its comment for why silently keeping only the first hit
+        // per key would leave gaps in the visible tag numbers. Builds (but
+        // does not insert) the row - returns null when there's nothing to
+        // show.
+        function buildAttachmentSourcesRow(hits) {
+            if (!hits || !hits.length) return null;
             const row = document.createElement('div');
             row.className = 'sources-row';
             const label = document.createElement('span');
@@ -5915,6 +6537,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (h.id) entry.nums.push(h.id.replace(/^S/, ''));
                 byKey.set(key, entry);
             }
+            if (!byKey.size) return null;
             for (const entry of byKey.values()) {
                 const span = document.createElement('span');
                 span.className = 'attachment-source-badge';
@@ -5922,8 +6545,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 span.textContent = prefix + ((entry.start != null) ? `${entry.t} [${formatSegmentTime(entry.start)}]` : entry.t);
                 row.appendChild(span);
             }
-            chatBox.appendChild(row);
-            chatBox.scrollTop = chatBox.scrollHeight;
+            return row;
         }
 
         // ---------- Sentence-level truncation ----------
@@ -6025,7 +6647,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 id: it.id, kind: 'kb', u: it.u, t: it.t, start: it.start,
                 end: null, videoId: null, attachmentId: null
             }));
-            return { text: joined, sources };
+            // `header` is returned so the caller can strip a verbatim-leaked
+            // copy of it from the model's own answer afterward (see
+            // stripLeakedReferenceHeader) - kept as a single source of
+            // truth rather than a second, potentially-drifting copy of this
+            // string built at the call site.
+            return { text: joined, sources, header };
         }
 
         // Compose the effective system prompt for a KB-active turn. The base
@@ -6077,7 +6704,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 id: it.id, kind: 'attachment', u: it.name, t: it.name, start: it.start,
                 end: null, videoId: null, attachmentId: it.attachmentId
             }));
-            return { text: joined, sources };
+            // See buildKbContextBlock's matching comment on `header`.
+            return { text: joined, sources, header };
         }
 
         // Same idea as kbSystemPrompt, but worded for attachments rather than
@@ -6154,7 +6782,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             } else {
                 const label = kind === 'bundled' ? 'UMich Health Research Resource Library' : kbExternalLabel(kbState);
                 const provenance = kind === 'bundled'
-                    ? 'bundled with this app, works fully offline'
+                    ? 'bundled with this app; works offline'
                     : 'network-fetched from ' + kbState.url;
                 const modeWord = kbState.mode === 'lockdown' ? 'limited to' : 'enhanced with excerpts from';
                 const age = kbAgeText(kbState.builtAt);
@@ -6233,7 +6861,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 tt.appendChild(ttSite);
                 const ttUrl = document.createElement('span');
                 ttUrl.className = 'kb-tt-url';
-                ttUrl.textContent = kind === 'bundled' ? 'Bundled with this app - works fully offline' : 'Network-fetched: ' + kbState.url;
+                ttUrl.textContent = kind === 'bundled' ? 'Bundled with this app; works offline' : 'Network-fetched: ' + kbState.url;
                 tt.appendChild(ttUrl);
                 const ttAge = document.createElement('span');
                 ttAge.className = 'kb-tt-url';
@@ -6301,6 +6929,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
             modelSelect.parentNode.insertBefore(wrap, modelSelect.nextSibling);
         }
 
+        // Reranker: always on, no user toggle. rerankHits/ensureKbReranker
+        // still gate on this function rather than being called
+        // unconditionally, so re-adding a toggle later is a one-line change.
+        function kbRerankEnabled() { return true; }
+
         // Persisted badge choice: 'off' or 'bundled' only. 'external' is
         // never persisted - it only ever exists while ?kb= is on the URL, so
         // there is nothing to resurrect without the param on a later load.
@@ -6314,6 +6947,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             try { localStorage.setItem(KB_CHOICE_KEY, kind); } catch {}
         }
 
+
         // Copies an already-fetched index's fields onto kbState and marks it
         // active. Does not fetch anything itself - callers (bootKb/
         // switchKbTo) own the fetch and the session cache (kbBundledIndex/
@@ -6323,10 +6957,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
             kbState.url = idx.url || '';
             kbState.site = idx.site;
             kbState.chunks = idx.chunks;
+            kbState.parents = idx.parents;
             kbState.vecs = idx.vecs;
             kbState.dims = idx.dims;
             kbState.builtAt = idx.builtAt;
             kbState.sourceCount = idx.sourceCount;
+            kbState.bm25 = idx.bm25;
+            kbState.calibration = idx.calibration;
         }
 
         // Picker action handler - the only way kbState.kind changes after
@@ -6428,8 +7065,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 msgs[0] = { role: 'system', content: overrideSystem };
             }
             if (supportsNoThinkSwitch()) {
-                // Qwen3 soft switch: /no_think in the system prompt disables its
-                // long reasoning mode, which was eating the whole token budget
+                // Text-based soft switch. Qwen3 can still choose to reason
+                // anyway - see webllmRound's extra_body.enable_thinking for
+                // the hard switch that actually enforces this. Kept as a
+                // second layer for the non-WebLLM Ollama backend, which has
+                // no equivalent hard-switch wiring here.
                 msgs[0] = { role: 'system', content: msgs[0].content + ' /no_think' };
             }
             // Fold the system message into the first user message for models
@@ -6559,7 +7199,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 // OTHER backend already discourages loops this way, but a
                 // WebLLM model had nothing but temperature fighting
                 // repetition, which temperature alone is bad at.
-                repetition_penalty: 1.3
+                repetition_penalty: 1.3,
+                // Hard switch: unlike the "/no_think" text marker in
+                // buildGenMessages, this is a real engine-level flag Qwen3
+                // cannot choose to ignore. Without it, a small Qwen3 model
+                // can still open a <think> block and never close it before
+                // hitting `cap`, discarding the whole response (stripThink
+                // treats an unclosed block as "no visible output yet").
+                ...(supportsNoThinkSwitch() ? { extra_body: { enable_thinking: false } } : {})
             });
             let usage = null;
             for await (const chunk of chunks) {
@@ -7032,6 +7679,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 let attachmentBlock = null;
                 let attachmentHits = [];
                 let attachmentUsed = false;
+                let attachmentHeader = null; // exact header text buildAttachmentContextBlock used, for leak-stripping later
                 // Citation sources accumulated this turn. Attachment
                 // excerpts are numbered first, KB excerpts continue from
                 // there, so a turn that somehow used both never emits two
@@ -7059,6 +7707,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     const retrievedBlock = attResult ? attResult.text : null;
                     attachmentBlock = [wholeBlock, retrievedBlock].filter(Boolean).join('\n\n') || null;
                     attachmentUsed = !!attachmentBlock;
+                    if (attResult) attachmentHeader = attResult.header;
                 }
 
                 // Calculation dispatch: Tier 0 already computed the result for
@@ -7081,6 +7730,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 let kbBlock = null;
                 let kbUsed = false;
                 let kbSources = []; // citation records for kbHits, numbered after attachmentSources
+                let kbHeader = null; // exact header text buildKbContextBlock used, for leak-stripping later
                 // Skip KB retrieval on greetings/small-talk and calculation:
                 // prepending a wall of excerpts to "hello" or a math request
                 // (plus a small per-intent token cap) leaves the model no room
@@ -7097,7 +7747,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         // embedding pass (not reused from router Tier 1)
                         // since retrieval needs the KB_QUERY_INSTRUCTION
                         // prefix Tier 1 must not get.
-                        const both = await retrieveKbBoth(text, Math.max(KB_TOPK, 3));
+                        const kbFacet = (intent && ROUTER_KB_FACETS[intent]) || null;
+                        const both = await retrieveKbBoth(text, Math.max(KB_TOPK, 3), kbFacet);
                         kbHits = both.hits;
                         kbClosest = both.closest;
                     } catch (kbErr) {
@@ -7112,10 +7763,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
                             : 'No matching KB articles found.';
                         if (isMyTurn()) {
                             botDiv.setText(msg);
-                            chat.messages.push({ role: 'assistant', content: msg, ts: Date.now() });
+                            const closestForRow = kbClosest.slice(0, 3);
+                            // Persisted on the message (not just appended live)
+                            // so the "closest excerpts" row survives a
+                            // renderTranscript() rebuild - see setSourceRows.
+                            chat.messages.push({
+                                role: 'assistant', content: msg, ts: Date.now(),
+                                sources: closestForRow.length ? closestForRow : undefined
+                            });
                             chat.updated = Date.now();
                             saveStore();
-                            appendSources(kbClosest.slice(0, 3));
+                            botDiv.setSourceRows(closestForRow);
                             appendMeta(((performance.now() - start) / 1000).toFixed(1), msg);
                         }
                         clearInterval(timerId);
@@ -7132,6 +7790,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         const kbResult = buildKbContextBlock(kbHits, kbState.site, text, attachmentSources.length + 1, citationOk);
                         kbBlock = kbResult.text;
                         kbSources = kbResult.sources;
+                        kbHeader = kbResult.header;
                         kbUsed = true;
                     }
                 }
@@ -7215,7 +7874,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 // Cut the runaway loop back out before showing/storing anything -
                 // see trimRepeatedTail's own comment for why.
                 if (repStopped) raw = trimRepeatedTail(raw);
-                const visible = stripThink(raw).trim();
+                let visible = stripThink(raw).trim();
+                // A weak model can echo the reference-block header back
+                // verbatim instead of answering (see stripLeakedReferenceHeader) -
+                // scrub it before this ever reaches the transcript/storage.
+                if (visible && (kbUsed || attachmentUsed)) {
+                    visible = stripLeakedReferenceHeader(visible, [kbHeader, attachmentHeader]);
+                }
                 if (visible) {
                     if (isMyTurn()) botDiv.setText(visible);
                     chat.messages.push({
@@ -7225,12 +7890,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     chat.updated = Date.now();
                     saveStore();
                     if (isMyTurn()) {
-                        if (kbUsed) appendSources(kbSources);
-                        // Only the RETRIEVED (chunked) hits get a citation row -
-                        // whole-text inclusion isn't a similarity match, so
-                        // there's nothing meaningful to cite beyond the
-                        // attachment bar already showing which files exist.
-                        if (attachmentSources.length) appendAttachmentSources(attachmentSources);
+                        // Persisted via chat.messages above; setSourceRows
+                        // renders it now AND is what renderTranscript's own
+                        // appendMessage call regenerates from m.sources on a
+                        // rebuild (tab switch, reload) - the row is no longer
+                        // a one-off DOM append that a rebuild silently loses.
+                        botDiv.setSourceRows(turnSources);
                         appendMeta(((performance.now() - start) / 1000).toFixed(1), visible);
                     }
                 } else if (isMyTurn()) {
@@ -7692,12 +8357,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const addedAt = Date.now();
             const name = (transcript.name || 'transcript').replace(/\.[^.]+$/, '') + ' (transcript).txt';
             await AttachmentStore.putBlob(id, bytes);
-            const attachment = { id, kind: 'audio', name, mimeType: 'text/plain', sizeBytes: bytes.byteLength, addedAt, derivedText: transcript.text || '', segments: null, phiFlagged: false, noOriginal: true };
+            const attachment = { id, kind: 'audio', name, mimeType: 'text/plain', sizeBytes: bytes.byteLength, addedAt, derivedText: transcript.text || '', segments: null, parents: null, bm25: null, phiFlagged: false, noOriginal: true };
             chat.attachments.push(attachment);
             recordAttachmentIndex(id, chat.id, addedAt);
 
             if ((transcript.text || '').length >= ATTACHMENT_WHOLE_TEXT_CHAR_LIMIT && transcript.segments && transcript.segments.length) {
-                if (await embedAttachmentSegments(id, transcript.segments)) attachment.segments = transcript.segments;
+                // No `parents` arg - already-timestamped Whisper segments,
+                // same as the audio daisy-chain above.
+                const bm25 = await embedAttachmentSegments(id, transcript.segments);
+                if (bm25) { attachment.segments = transcript.segments; attachment.bm25 = bm25; }
             }
 
             appendAttachmentNote(chat, `Added ${name} (${formatBytes(bytes.byteLength)})`);
@@ -7708,23 +8376,33 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // ---------- Shared helpers: capability, redaction, Pyodide ----------
 
-        // Rough parameter counts for the models we know about, keyed on the
-        // BASE id (no router:/ollama: prefix). Anything not in the map falls
-        // back to a loose parse of a "1B"/"3B"/"1.5B" token in the id itself
-        // (see currentModelParams).
+        // Rough parameter counts (billions) for the models we know about,
+        // keyed on the literal currentModelId string - webllm:-prefixed for
+        // chat models, bare repo id for the Transformers.js CPU-fallback id
+        // (same convention as MODEL_CTX, immediately above). Previously
+        // keyed on bare, unprefixed ids left over from a pre-WebLLM model
+        // lineup, which meant this table matched ZERO live chat models: the
+        // lookup in currentModelParams() always missed and silently fell
+        // through to a regex guessing the param count from a "\dB" token in
+        // the id string (correct for e.g. "webllm:Llama-3.2-3B-...-MLC" ->
+        // "3B", silently null for e.g. "webllm:SmolLM2-360M-...-MLC" - no
+        // \dB token). That regex fallback stays as a safety net for any id
+        // not listed below (a future dropdown addition, or Ollama); this
+        // table now does the real, explicit work for every model the
+        // dropdown actually offers, rather than the regex doing it by luck.
         const MODEL_SIZES = {
-            'HuggingFaceTB/SmolLM2-135M-Instruct': 0.135,
-            'HuggingFaceTB/SmolLM2-360M-Instruct': 0.36,
-            'HuggingFaceTB/SmolLM3-3B-ONNX': 3,
-            'LiquidAI/LFM2.5-350M-ONNX': 0.35,
-            'onnx-community/Qwen2.5-0.5B-Instruct': 0.5,
-            'onnx-community/Qwen2.5-1.5B-Instruct': 1.5,
-            'onnx-community/Qwen3-0.6B-ONNX': 0.6,
-            'onnx-community/Llama-3.2-1B-Instruct-q4f16': 1,
-            'onnx-community/Llama-3.2-1B-Instruct': 1,
-            'onnx-community/DeepSeek-R1-Distill-Qwen-1.5B-ONNX': 1.5,
-            'onnx-community/gemma-3-270m-it-ONNX': 0.27,
-            'onnx-community/Phi-3.5-mini-instruct-onnx-web': 3.8
+            'HuggingFaceTB/SmolLM2-360M-Instruct': 0.36, // CPU_FALLBACK_TJS_ID - the WebGPU-absent substitute, not itself in the dropdown
+            'webllm:SmolLM2-360M-Instruct-q4f16_1-MLC': 0.36,
+            'webllm:Qwen3-0.6B-q4f16_1-MLC': 0.6,
+            'webllm:Llama-3.2-1B-Instruct-q4f16_1-MLC': 1,
+            'webllm:SmolLM2-1.7B-Instruct-q4f16_1-MLC': 1.7,
+            'webllm:Llama-3.2-3B-Instruct-q4f16_1-MLC': 3,
+            'webllm:Ministral-3-3B-Instruct-2512-BF16-q4f16_1-MLC': 3,
+            'webllm:Phi-4-mini-instruct-q4f16_1-MLC': 3.8,
+            'webllm:Qwen3.5-4B-q4f16_1-MLC': 4,
+            'webllm:gemma-2-2b-it-q4f32_1-MLC': 2,
+            'webllm:Hermes-3-Llama-3.1-8B-q4f16_1-MLC': 8,
+            'webllm:DeepSeek-R1-Distill-Qwen-7B-q4f16_1-MLC': 7
         };
         // Parameter-count estimate for the currently loaded chat model, in
         // billions - null when unknown (not in MODEL_SIZES, no parseable
