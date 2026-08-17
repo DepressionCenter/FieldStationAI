@@ -1860,6 +1860,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const SKILLS = [
             { id: 'taxonomy-classify', name: 'Sort text into categories', desc: 'Sort documents or spreadsheet rows into categories you choose. Useful for mapping expertise from publication abstracts.', icon: 'tags', engine: 'zeroshot', modelId: SKILL_ZEROSHOT_ID, modelSize: '~400 MB', status: 'ready' },
             { id: 'csv-combine',       name: 'Combine spreadsheets',     desc: 'Merge many CSV or Excel files into one, with help matching up columns that have different names.', icon: 'columns',   engine: 'llm',        heuristicOnly: true, status: 'ready' },
+            { id: 'ema-convert',       name: 'Convert EMA export',       desc: 'Reshape an ecological momentary assessment (EMA) survey export into the format the EMA-CleanR cleanup workflow expects.', icon: 'columns', engine: 'llm', heuristicOnly: true, status: 'ready' },
             { id: 'transcribe',        name: 'Transcribe audio',         desc: 'Turn interview recordings into text with timestamps, without sending audio to any cloud service.',   icon: 'mic',       engine: 'asr',        modelId: SKILL_TRANSCRIBE_ID, modelSize: '~800 MB', status: 'ready' },
             { id: 'summarize',         name: 'Summarize or find themes', desc: 'Shorten long text or pull out the main themes from a document.',                                   icon: 'file-text', engine: 'llm',        status: 'ready' },
             { id: 'emotions',          name: 'Emotions and sentiment',   desc: 'Detect emotions in text (joy, sadness, nervousness, and 25 more) and overall positive/negative tone.', icon: 'heart',   engine: 'classifier', modelId: SKILL_EMOTIONS_ID, modelSize: '~125 MB', status: 'ready' },
@@ -9518,6 +9519,116 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if ((dtype === 'date' || dtype === 'datetime') && /time|date|stamp/i.test(header)) return 'timestamp';
             return 'other';
         }
+
+        // ---------- EMA format converter: alias map + column planning ----------
+        // Sibling to CSV_ALIAS_MAP above, for the EMA format converter skill -
+        // deliberately NOT shared with it, since these canonicals
+        // (participantidentifier, surveyname, ...) are EMA-CleanR's own
+        // target column names, not CGM concepts. Patterns are written as
+        // pattern FAMILIES covering multiple plausible header spellings
+        // across different EMA export platforms, not any one vendor's exact
+        // header text, since exports vary widely - treat this as a
+        // best-effort starting point the mapping grid exists to correct.
+        // Only these eight named target fields get patterns; every other
+        // column defaults to 'item' (see emaRoleForHeader), never 'other',
+        // because EMA-CleanR's own script matches answer columns generically
+        // by name prefix (`select(starts_with("EMA_"))`) with no meaning
+        // tied to a specific slot - a survey question column wrongly dropped
+        // is worse than one wrongly numbered, and the mapping grid is the
+        // correction path either way.
+        const EMA_ALIAS_MAP = [
+            { canonical: 'participantidentifier', patterns: [/^participant[\s_\-]?id(entifier)?$/i, /^subject[\s_\-]?id$/i, /^pid$/i, /^record[\s_\-]?id$/i, /participant/i] },
+            { canonical: 'surveyname', patterns: [/^survey[\s_\-]?name$/i, /^survey$/i, /^questionnaire[\s_\-]?name$/i, /^questionnaire$/i, /^form[\s_\-]?name$/i] },
+            { canonical: 'start_datetime', patterns: [/^start[\s_\-]?date[\s_\-]?time$/i, /^start[\s_\-]?date$/i, /^start[\s_\-]?time$/i, /^begin[\s_\-]?date[\s_\-]?time$/i, /^response[\s_\-]?start/i] },
+            { canonical: 'end_datetime', patterns: [/^end[\s_\-]?date[\s_\-]?time$/i, /^end[\s_\-]?date$/i, /^end[\s_\-]?time$/i, /^complet(ed|ion)[\s_\-]?date[\s_\-]?time$/i, /^finish(ed)?[\s_\-]?date[\s_\-]?time$/i, /^response[\s_\-]?end/i] },
+            { canonical: 'deviceplatform', patterns: [/^device[\s_\-]?platform$/i, /^platform$/i, /^os$/i, /^operating[\s_\-]?system$/i, /^device[\s_\-]?type$/i] },
+            { canonical: 'surveykey', patterns: [/^survey[\s_\-]?key$/i] },
+            { canonical: 'surveyresultkey', patterns: [/^survey[\s_\-]?result[\s_\-]?key$/i, /^result[\s_\-]?key$/i, /^response[\s_\-]?id$/i] },
+            { canonical: 'surveytaskkey', patterns: [/^survey[\s_\-]?task[\s_\-]?key$/i, /^task[\s_\-]?key$/i] }
+        ];
+        // Ordered target-field roles that carry a literal 1:1 column (as
+        // opposed to 'item', which is renumbered, and 'other', which is
+        // dropped). Shared by emaRoleForHeader, planEmaColumns, and the
+        // config's buildTargetSchema/codegen so the column order is defined
+        // in exactly one place.
+        const EMA_NAMED_ROLES = ['participantidentifier', 'surveyname', 'start_datetime', 'end_datetime', 'deviceplatform', 'surveykey', 'surveyresultkey', 'surveytaskkey'];
+        // Zero-LLM role guess for one EMA export header. Unlike
+        // roleForHeader (CSV Combiner), there is no dtype tiebreak and the
+        // default is 'item', not 'other' - see the rationale in the comment
+        // above EMA_ALIAS_MAP. KNOWN LIMITATION: this only looks at header
+        // TEXT. An export can have the right column semantically but a
+        // header that does not say so - or an empty column under a
+        // plausible-looking header while the real value sits one column
+        // over under an unrelated-looking header. Header-text matching
+        // cannot catch that; it needs either the LLM sniff step (which sees
+        // real sampled values under Tier A, per the destination-aware
+        // redaction rule) or a human fixing the mapping grid by hand. This
+        // heuristic is the CPU-only/no-model fallback only, same role
+        // CSV_ALIAS_MAP plays for the combiner.
+        function emaRoleForHeader(header, dtype) {
+            for (const entry of EMA_ALIAS_MAP) {
+                if (entry.patterns.some(p => p.test(header))) return entry.canonical;
+            }
+            return 'item';
+        }
+        // Best-effort detection of a "Response Type" (or similarly-named)
+        // preamble row above the real header, and which columns it marks as
+        // instructional text rather than an answerable question. Some EMA
+        // export platforms include a multi-row preamble block (survey name,
+        // question text, response type, one row each) above the real header
+        // row; a "Response Type" row's "Instruction" values mark lead-in
+        // text shown to the participant with no answer captured, which must
+        // not be numbered as an EMA_NN item. Returns a Set of 0-based
+        // column indices to exclude. Returns an empty Set (a no-op) when no
+        // such row is found - the common case for platforms with a single
+        // clean header row and no preamble at all, which this must not
+        // break.
+        function findEmaInstructionColumns(f) {
+            const excluded = new Set();
+            const headerRow = (f.verdict && f.verdict.header_row != null) ? f.verdict.header_row : 0;
+            for (let r = 0; r < headerRow; r++) {
+                const row = f.rows[r] || [];
+                const labelCol = row.findIndex(cell => /^(response|question|item)[\s_\-]?type$/i.test(String(cell == null ? '' : cell).trim()));
+                if (labelCol === -1) continue;
+                for (let c = labelCol + 1; c < row.length; c++) {
+                    if (/instruction/i.test(String(row[c] == null ? '' : row[c]).trim())) excluded.add(c);
+                }
+                break; // first matching row wins - do not keep scanning past it
+            }
+            return excluded;
+        }
+        // Central column-mapping computation for one file, shared by
+        // buildTargetSchema, codegenInstructions, and buildTemplateCode so
+        // "which raw column becomes which target field" exists in exactly
+        // one place - mirrors the CSV Combiner's resolveUnifiedNames
+        // (see mountCsvCombineSkill) in spirit. Named roles collide
+        // last-one-wins (same convention as the combiner); item columns are
+        // numbered EMA_01, EMA_02, ... in source column order, uncapped -
+        // EMA-CleanR matches answer columns by name prefix with no per-slot
+        // meaning and no upper limit, so there is no reason to cap this
+        // side either - skipping any column findEmaInstructionColumns
+        // flagged. Returns { plan: [{sourceIndex, targetName}], itemCount }.
+        function planEmaColumns(f) {
+            const excluded = findEmaInstructionColumns(f);
+            const cols = (f.verdict && f.verdict.columns) || [];
+            const namedIndexByRole = new Map();
+            const itemIndices = [];
+            for (const c of cols) {
+                if (EMA_NAMED_ROLES.indexOf(c.role) !== -1) {
+                    namedIndexByRole.set(c.role, c.index); // last one wins on collision
+                } else if (c.role === 'item' && !excluded.has(c.index)) {
+                    itemIndices.push(c.index);
+                }
+                // role === 'other', or an excluded 'item' column: dropped, no plan entry
+            }
+            const plan = [];
+            for (const role of EMA_NAMED_ROLES) {
+                if (namedIndexByRole.has(role)) plan.push({ sourceIndex: namedIndexByRole.get(role), targetName: role });
+            }
+            itemIndices.forEach((idx, i) => plan.push({ sourceIndex: idx, targetName: 'EMA_' + String(i + 1).padStart(2, '0') }));
+            return { plan: plan, itemCount: itemIndices.length };
+        }
+
         // Normalize a header for cluster comparison.
         function normalizeHeader(h) {
             return String(h || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -9850,7 +9961,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         });
         // Skills that expose an in-header "Start over" button. All ready
         // skills should be here so the button isn't taxonomy-only.
-        const SKILL_HAS_RESET = new Set(['taxonomy-classify', 'csv-combine', 'transcribe', 'emotions', 'pain-level', 'buckets', 'ner', 'dedup', 'summarize']);
+        const SKILL_HAS_RESET = new Set(['taxonomy-classify', 'csv-combine', 'ema-convert', 'transcribe', 'emotions', 'pain-level', 'buckets', 'ner', 'dedup', 'summarize']);
         function enterSkill(skill) {
             if (pausedSkillRoot && skillsCurrentId === skill.id) {
                 // Resume: same skill the back arrow left paused. Reattach
@@ -9894,6 +10005,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 mountTaxonomySkill(skillsBody);
             } else if (skill.id === 'csv-combine') {
                 mountCsvCombineSkill(skillsBody);
+            } else if (skill.id === 'ema-convert') {
+                mountEmaConvertSkill(skillsBody);
             } else if (skill.id === 'transcribe') {
                 mountTranscribeSkill(skillsBody);
             } else if (skill.id === 'emotions') {
@@ -9944,6 +10057,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 skillsBody.innerHTML = '';
                 if (skill.id === 'taxonomy-classify') mountTaxonomySkill(skillsBody);
                 else if (skill.id === 'csv-combine') mountCsvCombineSkill(skillsBody);
+                else if (skill.id === 'ema-convert') mountEmaConvertSkill(skillsBody);
                 else if (skill.id === 'transcribe') mountTranscribeSkill(skillsBody);
                 else if (skill.id === 'emotions') mountEmotionsSkill(skillsBody);
                 else if (skill.id === 'pain-level') mountPainLevelSkill(skillsBody);
@@ -10836,6 +10950,10 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         //   filesTitle/filesHint/executingTitle (opt strings) - skill-flavored screen text
         //   ingestAccept/ingestMimeAttr/ingestMaxBytes (opt)  - file-picker constraints
         //   notebookFilename (opt string), chatBridgeInstruction (opt string)
+        //   liveTestUrl/liveTestLabel/liveTestInstructions (opt strings) - if
+        //     liveTestUrl is set, the Done screen renders a link (new tab)
+        //     to a downstream tool for this skill's output, e.g. a hosted
+        //     test runner. Unset = no such block rendered (csv-combine).
         // `ctx` passed to codegenInstructions/buildTemplateCode/buildSummary is
         // { files, targetSchema }; buildSummary's ctx also carries { result, mode }.
         function mountTransformScaffold(container, config) {
@@ -11938,6 +12056,30 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
                 sec.appendChild(btnRow);
 
+                // Optional "test it live" block - opt-in via config, so a
+                // skill can point at its own downstream tool (e.g. the EMA
+                // converter links to EMA-CleanR's hosted test runner) without
+                // this being combiner/EMA-specific. Unset for skills that
+                // have no such tool (csv-combine leaves this unset today).
+                if (config.liveTestUrl) {
+                    const testSec = document.createElement('div');
+                    testSec.className = 'skill-section';
+                    if (config.liveTestInstructions) {
+                        const p = document.createElement('p');
+                        p.className = 'skill-hint';
+                        p.textContent = config.liveTestInstructions;
+                        testSec.appendChild(p);
+                    }
+                    const link = document.createElement('a');
+                    link.href = config.liveTestUrl;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    link.className = 'skill-btn';
+                    link.textContent = config.liveTestLabel || 'Test this file live (opens in a new tab)';
+                    testSec.appendChild(link);
+                    sec.appendChild(testSec);
+                }
+
                 // TODO(sub-skill save): once we're confident the verdict + role
                 // map + planner code are stable per data source, add a "Save
                 // this setup" button here that stores the following in
@@ -12170,6 +12312,234 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             };
 
             mountTransformScaffold(container, csvCombineConfig);
+        }
+
+        // ----- EMA format converter: config for the transform scaffold -----
+        // Reshapes arbitrary EMA (ecological momentary assessment) survey
+        // exports into the fixed input schema the EMA-CleanR .Rmd workflow
+        // (github.com/DepressionCenter/EMA-CleanR) expects - see the
+        // comments on EMA_NAMED_ROLES / planEmaColumns above for the facts
+        // this design rests on. Targets EMA exports generally rather than
+        // any one export platform, so no platform name appears in any
+        // string a user sees.
+        function mountEmaConvertSkill(container) {
+            // Widest file's item count sets EMA_01..EMA_N for this run.
+            // Recomputed on each call since it depends on ingestedFiles'
+            // verdicts, which change as the user edits the mapping grid.
+            function emaItemColumnNames(files) {
+                let maxItems = 0;
+                for (const f of files) {
+                    if (!f.verdict) continue;
+                    maxItems = Math.max(maxItems, planEmaColumns(f).itemCount);
+                }
+                maxItems = Math.max(maxItems, 1); // always show at least EMA_01
+                const names = [];
+                for (let i = 1; i <= maxItems; i++) names.push('EMA_' + String(i).padStart(2, '0'));
+                return names;
+            }
+            function targetColumnOrder(files) {
+                return ['participantidentifier', 'surveyname', 'start_datetime', 'end_datetime']
+                    .concat(emaItemColumnNames(files))
+                    .concat(['deviceplatform', 'surveykey', 'surveyresultkey', 'surveytaskkey']);
+            }
+
+            const emaConvertConfig = {
+                id: 'ema-convert',
+                verb: 'convert',
+                roles: EMA_NAMED_ROLES.concat(['item', 'other']),
+                roleForHeader: emaRoleForHeader,
+                filesTitle: 'Load your EMA export(s)',
+                filesHint: 'Pick one or more survey export files - one per survey type is typical. Each file can have its own header row and its own set of question columns; the next screen will show what the AI found.',
+                executingTitle: 'Converting your EMA export',
+                notebookFilename: 'ema-convert.ipynb',
+                chatBridgeInstruction: 'Here is a summary of an EMA export conversion I just ran. Please help me review it before I use the converted file.',
+                liveTestUrl: 'https://code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR',
+                liveTestLabel: 'Open the EMA-CleanR live test tool',
+                liveTestInstructions: 'To try your converted file against the EMA-CleanR workflow: 1) download the converted file above, 2) open the live test tool below - it opens in a new tab and is an external site, so only use it with data your data governance approves sharing there, 3) on that page, click the sample data file and replace it with the file you just downloaded, 4) run the report.',
+
+                // Per-file survey-name source. Many EMA export platforms do
+                // not embed a "survey name" column at all - it is implied by
+                // which file you are looking at. Default to a humanized
+                // filename, editable per file; if the mapping grid assigns a
+                // real column to the surveyname role for a file, that
+                // column's own per-row values take precedence at codegen
+                // time (see codegenInstructions/buildTemplateCode) - this
+                // default is a fallback, never an override of real data.
+                extraFileUI(f, chipWrap) {
+                    if (f._surveyNameDefault == null) {
+                        f._surveyNameDefault = f.name
+                            .replace(/\.[a-z0-9]+$/i, '')
+                            .replace(/[_\-]+/g, ' ')
+                            .replace(/\b\w/g, ch => ch.toUpperCase())
+                            .trim() || 'Survey';
+                    }
+                    if (f._surveyNameOverride == null) f._surveyNameOverride = f._surveyNameDefault;
+                    const lbl = document.createElement('label');
+                    lbl.className = 'csvc-sheet-label';
+                    lbl.textContent = 'Survey name for this file: ';
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'skill-input';
+                    input.value = f._surveyNameOverride;
+                    input.addEventListener('change', () => {
+                        f._surveyNameOverride = input.value.trim() || f._surveyNameDefault;
+                    });
+                    lbl.appendChild(input);
+                    chipWrap.appendChild(lbl);
+                },
+
+                buildTargetSchema(files) {
+                    const columns = targetColumnOrder(files).map(name => ({ name: name }));
+                    return {
+                        outputs: [{
+                            key: 'ema_converted',
+                            filename: 'ema_converted.csv',
+                            format: 'csv',
+                            columns: columns,
+                            // Only these four are hard requirements, matching
+                            // EMA-CleanR's own behavior: it filters out any
+                            // row with a blank participantidentifier and
+                            // unconditionally parses both datetimes. Every
+                            // other column (all EMA_NN items, deviceplatform,
+                            // and the three key columns, which EMA-CleanR's
+                            // script never reads) is optional and filled
+                            // with the literal text "NA" when a source lacks
+                            // it.
+                            required: ['participantidentifier', 'surveyname', 'start_datetime', 'end_datetime']
+                        }]
+                    };
+                },
+
+                sniffPromptExtra(tier) {
+                    return 'This is an EMA (ecological momentary assessment) survey export. Look for a participant identifier column, a survey start time, a survey end time, and a device/platform column if present. Every other real-answer column should be tagged as a generic survey item, not guessed as anything more specific - do not invent a role for a question column just because it looks numeric or Likert-scaled. Some exports include a multi-row preamble above the real header with the literal question text and a "Response Type" row; columns marked "Instruction" there have no answer data and should be treated as not a real item.';
+                },
+
+                codegenInstructions(ctx) {
+                    const targetCols = targetColumnOrder(ctx.files);
+                    const lines = [];
+                    lines.push('- For each file, skip rows before the data starts (data_start_row is given below) and read the rest with NO header row - columns are positional integers 0, 1, 2, .... EMA exports often repeat or blank out header text across columns (e.g. multi-column checkbox groups), which breaks name-based column selection - always select columns by position, never by header text.');
+                    lines.push('- Build one output row per source row using the column plan below: source column position -> target field name.');
+                    lines.push('- If a file has no column mapped to surveyname, fill every row of that file with the literal text given as its "default survey name" below.');
+                    lines.push('- Convert start_datetime and end_datetime to the exact text shape M/D/YYYY H:MM - month, day, and hour WITHOUT a leading zero, minute always 2 digits, 24-hour time, no AM/PM suffix. Source times may be 12-hour with an AM/PM suffix or already close to the target shape - parse generously (try an explicit 12-hour format first, fall back to general parsing) and use the literal text "NA" for any value that cannot be parsed as a date/time.');
+                    lines.push('- Fill any cell that is missing, blank, or not present in a given file with the literal text "NA" - do not use an empty string and do not use a numeric placeholder like 0.');
+                    lines.push('- Every output row must have exactly these columns, in this order: ' + targetCols.join(', ') + '.');
+                    lines.push('- Concatenate all files\' rows into one DataFrame called df, in this column order.');
+                    lines.push('- End the script with writeOutput("ema_converted.csv", df).');
+                    lines.push('');
+                    lines.push('Per-file plan:');
+                    for (const f of ctx.files) {
+                        const v = f.verdict;
+                        const planned = planEmaColumns(f);
+                        lines.push('- ' + workerNameFor(f) + ':');
+                        lines.push('    data_start_row (0-based, rows before this are not data): ' + v.data_start_row);
+                        lines.push('    default survey name if no surveyname column is mapped: "' + (f._surveyNameOverride || f._surveyNameDefault || 'Survey').replace(/"/g, "'") + '"');
+                        lines.push('    item columns found: ' + planned.itemCount);
+                        lines.push('    column plan (source position -> target field):');
+                        for (const p of planned.plan) {
+                            lines.push('      ' + p.sourceIndex + ' -> ' + p.targetName);
+                        }
+                    }
+                    return lines.join('\n');
+                },
+
+                buildTemplateCode(ctx) {
+                    const targetCols = targetColumnOrder(ctx.files);
+                    const lines = [];
+                    lines.push('import pandas as pd');
+                    lines.push('import numpy as np');
+                    lines.push('');
+                    lines.push('def _ema_fmt_dt(series):');
+                    lines.push('    s = pd.to_datetime(series, format="%m/%d/%Y %I:%M%p", errors="coerce")');
+                    lines.push('    missing = s.isna()');
+                    lines.push('    if missing.any():');
+                    lines.push('        s.loc[missing] = pd.to_datetime(series[missing], errors="coerce")');
+                    lines.push('    def _fmt(v):');
+                    lines.push('        if pd.isna(v):');
+                    lines.push('            return "NA"');
+                    lines.push('        return str(v.month) + "/" + str(v.day) + "/" + str(v.year) + " " + str(v.hour) + ":" + str(v.minute).zfill(2)');
+                    lines.push('    return s.map(_fmt)');
+                    lines.push('');
+                    lines.push('target_cols = ' + JSON.stringify(targetCols));
+                    lines.push('parts = []');
+                    for (let i = 0; i < ctx.files.length; i++) {
+                        const f = ctx.files[i];
+                        const v = f.verdict;
+                        const wn = workerNameFor(f);
+                        const planned = planEmaColumns(f);
+                        const defaultSurveyName = f._surveyNameOverride || f._surveyNameDefault || 'Survey';
+                        const varName = 'df_' + i;
+                        lines.push(varName + '_raw = pd.read_csv(' + JSON.stringify('/mnt/' + wn) + ', skiprows=' + v.data_start_row + ', header=None, dtype=str, keep_default_na=False)');
+                        // Build on an index matching the raw read (not a
+                        // dict literal) so a file with zero mapped columns
+                        // still keeps its row count instead of silently
+                        // collapsing to zero rows.
+                        lines.push(varName + ' = pd.DataFrame(index=' + varName + '_raw.index)');
+                        for (const p of planned.plan) {
+                            lines.push(varName + '[' + JSON.stringify(p.targetName) + '] = ' + varName + '_raw[' + p.sourceIndex + '] if ' + p.sourceIndex + ' in ' + varName + '_raw.columns else "NA"');
+                        }
+                        lines.push('if "surveyname" not in ' + varName + '.columns:');
+                        lines.push('    ' + varName + '["surveyname"] = ' + JSON.stringify(defaultSurveyName));
+                        lines.push(varName + ' = ' + varName + '.reindex(columns=target_cols, fill_value="NA")');
+                        lines.push(varName + '["start_datetime"] = _ema_fmt_dt(' + varName + '["start_datetime"])');
+                        lines.push(varName + '["end_datetime"] = _ema_fmt_dt(' + varName + '["end_datetime"])');
+                        lines.push(varName + ' = ' + varName + '.replace("", "NA")');
+                        lines.push('parts.append(' + varName + ')');
+                    }
+                    lines.push('df = pd.concat(parts, ignore_index=True, sort=False)');
+                    lines.push('writeOutput("ema_converted.csv", df)');
+                    return lines.join('\n');
+                },
+
+                buildProvenanceMarkdown(files) {
+                    const lines = [
+                        '## EMA conversion run',
+                        'Started: ' + new Date().toISOString() + '. Model: ' + currentModelId + ' (' + ModelGateway.tier() + ' tier).',
+                        ''
+                    ];
+                    for (const f of files) {
+                        const v = f.verdict || {};
+                        const planned = planEmaColumns(f);
+                        const headerRow = (v.header_row != null ? v.header_row : 0) + 1;
+                        let blankIdCount = 0;
+                        const idPlan = planned.plan.find(p => p.targetName === 'participantidentifier');
+                        if (idPlan && f.rows) {
+                            const dataStart = v.data_start_row != null ? v.data_start_row : headerRow;
+                            for (let r = dataStart; r < f.rows.length; r++) {
+                                const cell = f.rows[r] ? f.rows[r][idPlan.sourceIndex] : null;
+                                if (!cell || !String(cell).trim()) blankIdCount++;
+                            }
+                        }
+                        const excludedCount = findEmaInstructionColumns(f).size;
+                        let flag;
+                        if (v.source === 'js') flag = 'column roles: text-matching fallback - AI unavailable';
+                        else if (f.forensics && f.forensics.method === 'llm') flag = 'header row: AI tiebreak, ' + (v.confidence || 'medium') + ' confidence';
+                        else flag = 'heuristic, ' + (v.confidence || 'unknown') + ' confidence';
+                        lines.push('- ' + f.name + ': ' + f.rows.length + ' rows, header row ' + headerRow + ', ' + planned.itemCount + ' item column(s) [' + flag + ']');
+                        if (excludedCount > 0) lines.push('  - ' + excludedCount + ' column(s) excluded as instructional text (no answer data)');
+                        if (blankIdCount > 0) lines.push('  - ' + blankIdCount + ' row(s) have a blank participant identifier - EMA-CleanR filters these out on its own');
+                    }
+                    return lines.join('\n');
+                },
+
+                buildSummary(ctx) {
+                    const lines = [];
+                    lines.push('EMA export conversion summary');
+                    lines.push('Files converted: ' + ctx.files.length);
+                    for (const f of ctx.files) {
+                        const planned = planEmaColumns(f);
+                        lines.push('  - ' + f.name + ': ' + planned.itemCount + ' item column(s), survey name "' + (f._surveyNameOverride || f._surveyNameDefault || 'Survey') + '"');
+                    }
+                    lines.push('Conversion mode: ' + (ctx.mode || 'unknown'));
+                    if (ctx.result && ctx.result.resultVars) {
+                        const rv = ctx.result.resultVars;
+                        if (rv['ema_converted.csv.rows']) lines.push('Converted rows: ' + rv['ema_converted.csv.rows']);
+                        if (rv['ema_converted.csv.cols']) lines.push('Converted columns: ' + rv['ema_converted.csv.cols']);
+                    }
+                    return lines.join('\n');
+                }
+            };
+
+            mountTransformScaffold(container, emaConvertConfig);
         }
         // Given a zero-shot result and the arrays that were passed in, remap
         // the returned labels to their display-label form. Called for both
