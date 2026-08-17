@@ -323,6 +323,13 @@ CACHE_DIR = ".kb_cache"
 CACHE_META_PATH = os.path.join(CACHE_DIR, "meta.json")
 CACHE_PAGES_DIR = os.path.join(CACHE_DIR, "pages")
 
+# How many successful fetches (200s or 304 cache hits) accumulate between
+# meta.json writes -- rewriting after every single page dominates wall-clock
+# time once caching makes per-page work otherwise cheap. crawl() also does
+# one unconditional final save so a normal exit never loses more than the
+# last partial batch.
+CACHE_SAVE_INTERVAL = 25
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -487,9 +494,13 @@ def load_cache_meta():
 
 
 def save_cache_meta(cache_meta):
+    """Atomically writes meta.json via a temp file + os.replace, so an
+    interrupted run (Ctrl+C mid-write) never leaves a truncated/corrupt file."""
     os.makedirs(CACHE_DIR, exist_ok=True)
-    with open(CACHE_META_PATH, "w", encoding="utf-8") as f:
+    tmp_path = CACHE_META_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(cache_meta, f)
+    os.replace(tmp_path, CACHE_META_PATH)
 
 
 def cache_page_path(url):
@@ -501,10 +512,54 @@ def cache_page_path(url):
 # Fetch + parse
 # ---------------------------------------------------------------------------
 
+def _flush_cache_meta_periodically(session, cache_meta):
+    """Saves meta.json every CACHE_SAVE_INTERVAL successful fetches. Call
+    once per fetch() call that mutates cache_meta (a fresh 200, or a 304
+    cache hit's fetched_at bump)."""
+    count = getattr(session, "_kb_fetch_save_counter", 0) + 1
+    session._kb_fetch_save_counter = count
+    if count % CACHE_SAVE_INTERVAL == 0:
+        save_cache_meta(cache_meta)
+
+
+def _store_fetched_page(r, url, session, cache_meta, expect_html):
+    """
+    Validates content-type, writes the cache file, and records fresh cache
+    metadata (etag/last_modified/fetched_at/sha256) for a 200 response.
+    sha256 is unused today -- reserved for a future delta-build feature.
+    Returns None (without writing anything) if content-type doesn't match
+    expect_html -- callers treat that as "nothing usable at this URL."
+    """
+    content_type = r.headers.get("content-type", "")
+    if expect_html and "text/html" not in content_type:
+        return None
+    if not expect_html and "text/plain" not in content_type:
+        return None
+    os.makedirs(CACHE_PAGES_DIR, exist_ok=True)
+    with open(cache_page_path(url), "w", encoding="utf-8") as f:
+        f.write(r.text)
+    cache_meta[url] = {
+        "etag": r.headers.get("ETag"),
+        "last_modified": r.headers.get("Last-Modified"),
+        "fetched_at": time.time(),
+        "sha256": hashlib.sha256(r.text.encode("utf-8")).hexdigest(),
+    }
+    _flush_cache_meta_periodically(session, cache_meta)
+    return BeautifulSoup(r.text, "html.parser") if expect_html else r.text
+
+
 def fetch(session, url, cache_meta, expect_html=True):
     """
-    Fetches one URL through the local page cache, revalidating via a HEAD
-    request's ETag/Last-Modified before falling back to a full GET.
+    Fetches one URL through the local page cache. If a cache entry exists,
+    sends a single conditional GET with If-None-Match / If-Modified-Since
+    built from the previously stored ETag/Last-Modified (sent verbatim --
+    never normalized, including any W/ weak-validator prefix). A 304 serves
+    the cached file from disk; a 200 overwrites the cache entry and file.
+
+    No HEAD request is issued: many servers (TDX included) omit
+    ETag/Last-Modified on HEAD responses even though they send them on GET,
+    and GitHub's raw CDN can return a different ETag representation on HEAD
+    vs GET -- HEAD-based revalidation both under- and over-invalidates.
 
     expect_html=True (default) requires a `text/html` response and returns
     a parsed BeautifulSoup document. expect_html=False requires
@@ -512,44 +567,32 @@ def fetch(session, url, cache_meta, expect_html=True):
     decoded text as-is, with no HTML parsing.
     """
     entry = cache_meta.get(url)
+    conditional_headers = {}
     if entry:
-        try:
-            head = session.head(url, headers=HEADERS, timeout=15, allow_redirects=True)
-            last_mod = head.headers.get("Last-Modified")
-            etag = head.headers.get("ETag")
-            unchanged = head.status_code == 200 and (
-                (last_mod and entry.get("last_modified") == last_mod)
-                or (etag and entry.get("etag") == etag)
-            )
-            if unchanged:
-                try:
-                    with open(cache_page_path(url), "r", encoding="utf-8") as f:
-                        cached_text = f.read()
-                    print("       (cached, not modified)")
-                    return BeautifulSoup(cached_text, "html.parser") if expect_html else cached_text
-                except OSError:
-                    pass  # cache file missing/corrupt -- fall through to a full GET
-        except Exception:
-            pass  # HEAD unsupported/failed -- fall through to a full GET
+        if entry.get("etag"):
+            conditional_headers["If-None-Match"] = entry["etag"]
+        if entry.get("last_modified"):
+            conditional_headers["If-Modified-Since"] = entry["last_modified"]
 
     try:
-        r = session.get(url, headers=HEADERS, timeout=15)
+        r = session.get(url, headers={**HEADERS, **conditional_headers}, timeout=15)
+
+        if conditional_headers and r.status_code == 304:
+            try:
+                with open(cache_page_path(url), "r", encoding="utf-8") as f:
+                    cached_text = f.read()
+            except OSError:
+                # Cache file missing/unreadable -- retry once as a plain GET.
+                r = session.get(url, headers=HEADERS, timeout=15)
+                r.raise_for_status()
+                return _store_fetched_page(r, url, session, cache_meta, expect_html)
+            entry["fetched_at"] = time.time()
+            _flush_cache_meta_periodically(session, cache_meta)
+            print("       (cached, not modified)")
+            return BeautifulSoup(cached_text, "html.parser") if expect_html else cached_text
+
         r.raise_for_status()
-        content_type = r.headers.get("content-type", "")
-        if expect_html and "text/html" not in content_type:
-            return None
-        if not expect_html and "text/plain" not in content_type:
-            return None
-        os.makedirs(CACHE_PAGES_DIR, exist_ok=True)
-        with open(cache_page_path(url), "w", encoding="utf-8") as f:
-            f.write(r.text)
-        cache_meta[url] = {
-            "etag": r.headers.get("ETag"),
-            "last_modified": r.headers.get("Last-Modified"),
-            "fetched_at": time.time(),
-        }
-        save_cache_meta(cache_meta)
-        return BeautifulSoup(r.text, "html.parser") if expect_html else r.text
+        return _store_fetched_page(r, url, session, cache_meta, expect_html)
     except Exception as e:
         print(f"  SKIP {url} -- {e}")
         return None
@@ -1002,6 +1045,8 @@ def crawl(seed_url, max_pages, delay, include_res, crawl_exclude_res, index_excl
 
         if delay > 0:
             time.sleep(delay)
+
+    save_cache_meta(cache_meta)  # final flush -- catches any partial batch below CACHE_SAVE_INTERVAL
 
     print(f"\nCrawled {len(visited)} pages, produced {len(all_parents)} section(s), {len(all_children)} chunk(s).")
     return all_parents, all_children, site_name
