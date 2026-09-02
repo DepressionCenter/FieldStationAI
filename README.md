@@ -25,13 +25,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 # Field Station AI™
 
 ## Description
-Field Station AI™ is a private, in-browser AI workspace for health and behavioral researchers.
+Field Station AI™ is an open-source, local-first AI workspace that runs in a web browser for health, behavioral, and digital-research workflows. It lets researchers use browser-based language and speech models without sending chats or study files to a cloud AI service by default.
 
 [![Field Station AI Preview](/images/FieldStationAI-preview.png)](https://code.depressioncenter.org/FieldStationAI/)
 
-Field Station AI™ runs from a single web page, `index.html`, and never sends chats or data anywhere. Researchers can chat with a local assistant, ask questions about attachments, transcribe audio, classify text, summarize documents, and combine messy spreadsheets without sending study data to a cloud AI service by default. Models and optional knowledge base indexes download the first time they are selected, then run locally from the user's browser cache when available. Chats can be protected with a built-in emoji/numeric PIN pad.
+From a single HTML page, users can chat with a local assistant, ask questions about attachments, transcribe audio, classify text, summarize documents, combine spreadsheets, and search an optional knowledge base. Models and indexes download on first use and can run from the browser cache afterward. A modern browser with WebGPU support and a high-end GPU (video card) are recommended for faster performance and larger models; smaller models may work on less powerful hardware.
 
-Field Station AI™ is designed for workflows where data may be sensitive or contain PHI. However, depending on the user's institutional policies, cybersecurity and IRB review may still be required before use with regulated data.
+Field Station AI™ is designed for workflows that may involve sensitive data or protected health information (PHI), but institutional cybersecurity and IRB review may still be required before it is used with regulated data.
 
 
 ## Quick Start Guide
