@@ -9,15 +9,8 @@ Notes: See README file for documentation and full license information.
 
 Copyright © 2026 The Regents of the University of Michigan
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-You should have received a copy of the GNU General Public License along
-with this program. If not, see <https://www.gnu.org/licenses/>.
+Licensed under the GNU Free Documentation License v1.3 or later.
+See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license information.
 
 -->
 ![Eisenberg Family Depression Center](https://code.depressioncenter.org/images/EFDCLogo_375w.png "depressioncenter.org")
@@ -41,7 +34,7 @@ index.html
 The script is organized by visible section comments. Preserve that structure when editing. Avoid broad reformatting; unrelated churn makes the file hard to review.
 
 ## AI Coding Assistants
-When using an AI coding assistant to help you write code, tell it to read [AGENTS.md](./AGENTS.md) first. Use the assistant to generate code, but review and edit the output carefully. Do not blindly accept generated code. Always test before submitting a pull request. Avoid sharing PHI, secrets, or participant identifiers with any code assistant.
+When using an AI coding assistant to help you write code, tell it to read [AGENTS.md](../AGENTS.md) first. Use the assistant to generate code, but review and edit the output carefully. Do not blindly accept generated code. Always test before submitting a pull request. Avoid sharing PHI, secrets, or participant identifiers with any code assistant.
 
 ## Editing Rules
 
@@ -183,7 +176,7 @@ Update docs in the same change when behavior changes:
 
 Use synthetic examples only.
 
-[⬅ Back to README](/README.md)
+[⬅ Back to Documentation](README.md) | [⬅ Back to project README](../README.md)
 
 ---
 

@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 """
-Summary: Crawls a website (or TDX KB portal) and produces a Field Station AI-compatible RAG index.json.
-
 This file is part of Field Station AI
 build-kb-index.py
-
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-20
+Last Modified: 2026-08-16
+Summary: Crawls a website (or TDX knowledge base portal) and produces a Field Station AI-compatible RAG index.json.
 Notes: See README file for documentation and full license information.
 
 Usage (edit USER CONFIG below, then just run):

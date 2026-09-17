@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 README.md: Provides an overview of the project, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-20
-Last Modified: 2026-07-27
+Last Modified: 2026-09-16
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This file provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -44,72 +44,13 @@ Field Station AI™ is a single, dependency-free HTML file — there is no build
  + To run on a web server, create a directory in your web root called FieldStationAI, and copy the `index.html` file there. Then visit your website and add /FieldStationAI/ at the end of the URL.
 3. Select a model from the dropdown and wait for it to download and compile. Once a model has been downloaded, you will not have to download it again, even if you close the application or refresh the page.
 4. Type a prompt, attach a file, or open **Field Kit** (in the top right) for task-specific tools.
-5. The knowledge-base (KB) badge next to the model dropdown has three states: **Off** (no knowledge base — answers come only from the model and any attachments), **UMich Health Research Resource Library** (answers take into account an index of our knowledge base, bundled in the included `efdc-kb.json` file), and **External** (answers prioritize an optional, custom knowledge base index loaded via the `?kb=` query parameter). Click the badge at any time to switch between whichever the different KB modes.
+5. Click the knowledge-base badge next to the model dropdown to choose whether answers use the bundled U-M Health Research Resource Library index, your own index, or no knowledge base at all. See [Data, Files, Attachments, and Knowledge Bases](docs/data-files-and-knowledge-bases.md) for the details, and for how to build your own index with `build-kb-index.py`.
 
-Optional: to point the app at your own knowledge base instead of (or in addition to) the bundled one, run `python build-kb-index.py <url>` to crawl a source site — it writes `index.json`. Pass it to the app via the `?kb=` query parameter, e.g. `/FieldStationAI/index.html?kb=index.json`; it shows up as "External" in the badge and, if it loads successfully, takes priority over the bundled KB and the models' own answers.
-	 
-### Documentation
 
-Start here:
-
-- [Quick Start](docs/quick-start.md)
-- [User Guide](docs/user-guide.md)
-- [Field Kit Guide](docs/field-kit.md)
-- [Data, Files, Attachments, and Knowledge Bases](docs/data-files-and-knowledge-bases.md)
-- [Security, Privacy, PHI, and Accessibility](docs/security-privacy-accessibility.md)
-
-Deevloper docs:
-
-- [Architecture Overview](docs/architecture.md)
-- [Models and Runtime](docs/models-and-runtime.md)
-- [Developer Guide](docs/developer-guide.md)
-- [Design Change Record](docs/design-change-record.md)
-
-Full EFDC documentation is available at: [EFDC Knowledge Base](https://michmed.org/efdc-kb)
-
-### Detailed Setup & Usage
-
-For local use:
-
-```bash
-git clone https://github.com/DepressionCenter/FieldStationAI.git
-cd FieldStationAI
-run-linux.sh # for Linux, or run-windows.ps1 for Windows, or run-mac.command for Mac
-# or alternatively, run with: python -m http.server 8010
-```
-Then open the local server URL shown (the default is http://localhost:8010/).
-
-For a custom knowledge base:
-
-```bash
-python build-kb-index.py --url "https://example.org/docs/" --out index.json --max-pages 10000 --delay 0.5
-```
-
-Then load:
-
-```text
-http://localhost:8010/index.html?kb=index.json
-```
-
-### Security, Privacy & Accessibility
-
-Field Station AI™ is local-first. Data entered into the browser-based app is intended to stay on the user's computer unless the user deliberately points the app to an external or network-accessible destination.
-
-Security expectations for contributors:
-
-- Do not commit PHI, secrets, local data exports, model caches, generated indexes with sensitive content, or generated research outputs.
-- Use synthetic examples in documentation and tests.
-- Do not claim HIPAA compliance from code behavior alone.
-- Review workflows with institutional privacy, IRB, and Information Assurance teams when required.
-- If using AI coding agents, point them to [`AGENTS.md`](agents.md). Always verify the output and test it before sending a pull request.
-
-Accessibility target for development:
-
-- WCAG 2.1 AA or WCAG 2.2 AA.
-- Keyboard-operable controls.
-- Visible focus states.
-- Labels for form fields.
-- Status updates that do not rely on color alone.
+## Documentation
++ **Complete documentation:** See the [`/docs`](./docs/README.md) folder in this repository for the quick start, user guide, Field Kit guide, data and knowledge base reference, security and accessibility notes, and the developer and architecture guides.
++ **Overview for researchers and developers:** Visit the [Health Research Resource Library](https://michmed.org/efdc-kb) for a high-level summary, key features, and important assumptions.
++ **For AI coding agents:** Start with [AGENTS.md](AGENTS.md) and the skills listed in [SKILLS.md](SKILLS.md). Always review and test generated code before opening a pull request.
 
 
 
