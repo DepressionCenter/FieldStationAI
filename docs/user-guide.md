@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 user-guide.md: Guide for users of Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-07-27
+Last Modified: 2026-09-17
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -21,7 +21,7 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 Field Station AI™ runs in your browser. Chat text, attached files, extracted text, transcripts, and generated outputs are intended to stay in browser storage unless you intentionally use a feature that reaches outside the page.
 
-Network activity may still occur when the app downloads model files, loads external JavaScript libraries or fonts, loads an external knowledge-base index, uses local Ollama, opens external links, or uses browser speech recognition.
+Network activity may still occur when the app downloads model files, loads external JavaScript libraries or fonts, loads an external compendium, uses local Ollama, opens external links, or uses browser speech recognition.
 
 Do not treat the app as a compliance certification. If your data may contain PHI or regulated information, follow your study, IRB, institutional privacy, and Information Assurance requirements.
 
@@ -76,21 +76,23 @@ What did this participant say about sleep?
 
 For text-bearing attachments, the app may search extracted attachment text before using other context. For images, the app may rerun a vision model rather than relying on a stored caption.
 
-## Use the Knowledge Base
+## Use a Compendium
 
-The knowledge-base badge shows the current retrieval state:
+A compendium is a bundle of knowledge from many sources, built with [Extractium™](https://code.depressioncenter.org/extractium) and indexed so the assistant can search it. The compendium badge shows the current retrieval state:
 
-- **Off**: no knowledge-base retrieval.
-- **Bundled**: bundled index, if shipped with the app.
-- **External**: prebuilt index loaded with `?kb=`.
+- **Off**: no compendium retrieval.
+- **Bundled**: the Depression Center Resource Library, if shipped with the app.
+- **External**: your own compendium loaded with `?compendium-url=`.
 
 Example:
 
 ```text
-index.html?kb=index.json
+index.html?compendium-url=compendium.json.gz
 ```
 
-Knowledge-base retrieval uses the loaded index. It should not be described as live browsing of the source site.
+Compendium retrieval uses the loaded file. It should not be described as live browsing of the source sites.
+
+See [Data, Files, Attachments, and Compendiums](data-files-and-compendiums.md) for the other address options and the file requirements.
 
 ## Export Data
 

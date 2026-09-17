@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 design-change-record.md: Summary of recent major design changes in Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-07-27
+Last Modified: 2026-09-17
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -128,7 +128,7 @@ When these areas change, update this file and the relevant user or developer doc
 
 - Runtime behavior.
 - Browser requirements.
-- Knowledge-base behavior.
+- Compendium behavior.
 - Field Kit state model.
 - Redaction behavior.
 - Data-cleaning workflow.

@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 developer-guide.md: Guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-07-27
+Last Modified: 2026-09-17
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -94,19 +94,25 @@ Update these areas together where they exist:
 - Attachment bar actions.
 - Deletion cleanup.
 - Retrieval behavior for text-bearing files.
-- Documentation in `docs/data-files-and-knowledge-bases.md`.
+- Documentation in `docs/data-files-and-compendiums.md`.
 
 Deletion must remove metadata, blob storage, vector storage, and index records where those records exist.
 
-## Add a Knowledge-Base Source or Change Retrieval
+## Change Compendium Loading or Retrieval
+
+A compendium is a bundle of knowledge from many sources, built by [Extractium™](https://code.depressioncenter.org/extractium). The app reads Extractium's container format, version 4, and never builds a compendium itself. The format is defined in Extractium's `docs/container-format.md`, which ends with a checklist for readers.
 
 Preserve these rules:
 
-- Validate index shape before use.
-- Do not send user prompts to the KB source URL.
-- Keep query and passage embedding conventions consistent.
-- Rebuild indexes after embedding convention changes.
-- Retune thresholds after embedding convention changes.
+- Follow the reader checklist. Check the format name, the version, and the vector byte count before use, and load the keyword statistics into `Map` objects.
+- Refuse a compendium whose `embedding.model` is not `BAAI/bge-small-en-v1.5` with 384 dimensions. The app embeds questions with the same model in its browser packaging, `Xenova/bge-small-en-v1.5`. Vectors from two models cannot be compared.
+- Prefix each question with the `embedding.queryPrefix` value the file records. Never prefix a passage.
+- Do not filter or branch on a section's `source_type` or `content_type`. Extractium adds values to both without a new format version.
+- Treat every field in a compendium as untrusted input, and keep the download and inflated-size limits.
+- Do not send user prompts to the compendium URL.
+- Retune `COMPENDIUM_COSINE_MIN` and the other thresholds if the embedding model ever changes.
+
+The file's `calibration` statistics are not used. They describe how similar indexed passages are to each other, which is about 0.93 for the bundled file. No question-to-passage score reaches that level, so a cutoff built from them rejects every hit. The app uses a fixed floor on the question-to-passage cosine similarity instead.
 
 ## Add Model Calls
 
@@ -170,7 +176,7 @@ Update docs in the same change when behavior changes:
 - `docs/quick-start.md` for startup flow.
 - `docs/user-guide.md` for everyday use.
 - `docs/field-kit.md` for skill behavior.
-- `docs/data-files-and-knowledge-bases.md` for file or retrieval behavior.
+- `docs/data-files-and-compendiums.md` for file or retrieval behavior.
 - `docs/models-and-runtime.md` for model/runtime changes.
 - `docs/security-privacy-accessibility.md` for privacy or accessibility changes.
 

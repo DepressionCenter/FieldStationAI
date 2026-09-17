@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 quick-start.md: Guide to installing and first-time use of Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-07-27
+Last Modified: 2026-09-17
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -100,31 +100,27 @@ Use **Field Kit** for structured research tasks, including:
 - Finding duplicate or near-duplicate text.
 - Summarizing text.
 
-## Knowledge Base
+## Compendium
 
-The knowledge-base badge can switch between available modes:
+A compendium is a bundle of knowledge from many sources, indexed so the assistant can search it. The compendium badge can switch between available modes:
 
-- **Off**: no knowledge-base retrieval.
-- **Bundled**: repository-provided knowledge-base file, if present.
-- **External**: custom index loaded with `?kb=`.
+- **Off**: no compendium retrieval.
+- **Bundled**: the Depression Center Resource Library that ships with the app, if present.
+- **External**: your own compendium loaded with `?compendium-url=`.
 
 Example:
 
 ```text
-http://localhost:8000/index.html?kb=index.json
+http://localhost:8000/index.html?compendium-url=compendium.json.gz
 ```
 
-## Optional Custom Knowledge Base
+## Optional Custom Compendium
 
-Build an index from an approved source:
+Build your own compendium with [Extractium™](https://code.depressioncenter.org/extractium). Its documentation explains how to pick sources and run a build. Save the result as `compendium.json.gz` next to `index.html`.
 
-```bash
-python build-kb-index.py --url "https://example.org/docs/" --out index.json --max-pages 500 --delay 0.5
-```
+Then load it with `?compendium-url=compendium.json.gz`.
 
-Then load it with `?kb=index.json`.
-
-Review generated index files before committing or sharing them. They may contain source text from crawled pages.
+Review a compendium before committing or sharing it. It contains source text from the pages it was built from.
 
 ## Safe Example Data
 

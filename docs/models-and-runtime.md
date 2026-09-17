@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 models-and-runtime.md: Documentation for models and runtime behavior in Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-07-27
+Last Modified: 2026-09-17
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -48,7 +48,7 @@ Do not silently fail when a selected model requires unavailable browser capabili
 
 Helper model areas may include:
 
-- Embeddings for knowledge-base and attachment retrieval.
+- Embeddings for compendium and attachment retrieval.
 - Router or intent classification.
 - Zero-shot classification.
 - Audio transcription.
@@ -60,7 +60,7 @@ Before documenting a specific model ID as active, verify it in `index.html`.
 
 ## Embedding Conventions
 
-Knowledge-base and attachment retrieval depend on consistent embedding conventions. Do not change query prefixes, passage prefixes, dimensions, or thresholds without rebuilding indexes and retuning retrieval behavior.
+Compendium and attachment retrieval depend on consistent embedding conventions. The embedding model is `Xenova/bge-small-en-v1.5`, the browser packaging of `BAAI/bge-small-en-v1.5`, which is the model [Extractium™](https://code.depressioncenter.org/extractium) builds compendiums with. Do not change the model, query prefixes, passage prefixes, dimensions, or thresholds without rebuilding compendiums and retuning retrieval behavior.
 
 Generated indexes must match the app's expected embedding model and vector dimensions.
 

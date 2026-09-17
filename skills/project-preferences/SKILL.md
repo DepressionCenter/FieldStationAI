@@ -42,11 +42,13 @@ Follow the repository's existing file and folder naming conventions when adding 
 - `index.html` is the whole application: markup, styles, and one `<script type="module">`,
   around 15,000 lines. There is no build step, no bundler, and no package manager.
   Edit it in place and keep the existing section ordering and naming style.
-- `build-kb-index.py` is the knowledge base crawler. It writes an `index.json` the app
-  can load through the `?kb=` query parameter. Its settings live in a `USER CONFIG`
-  block at the top of the file, and command-line arguments override them.
-- `efdc-kb.json` is the bundled knowledge base index. JSON has no comment syntax, so it
-  carries the license notice in a leading `_license` key. Keep that key when regenerating it.
+- `efdc-compendium.json.gz` is the bundled compendium, the Depression Center Resource
+  Library. A compendium is a bundle of knowledge from many sources, indexed for AI search.
+  It is built with [Extractium](https://code.depressioncenter.org/extractium), a separate project, and
+  this repository only reads it. The file is gzip-compressed binary, so never edit it by
+  hand; replace it with a fresh Extractium build. Its header carries the license notice in
+  a leading `_license` key. People load their own `compendium.json.gz` through the
+  `?compendium-url=` query parameter.
 - `bin/` holds the prebuilt [ZippyServe](https://github.com/DepressionCenter/ZippyServe)
   binaries. `run-windows.ps1`, `run-linux.sh`, and `run-mac.command` wrap them and open
   a browser. Those three scripts came from ZippyServe, so their headers name that project
@@ -67,7 +69,7 @@ browsers block model downloads for `file://` pages.
 3. Pick a model from the dropdown and wait for it to download and compile. Models cache in
    the browser, so the wait only happens once per model per browser profile.
 4. Exercise the paths your change touched: chat, attachments, Field Kit tools, and the
-   knowledge base badge.
+   compendium badge.
 
 There is no automated test suite in this repository, so verification is manual. Say exactly
 which browser and which models you used, and say plainly when you could not test something.
@@ -85,16 +87,16 @@ run without one, so check that a change still works on modest hardware before ca
   PapaParse, SheetJS, PDF.js, and Pyodide, all pinned to explicit versions. Keep versions
   pinned. Before changing one, check the release notes and any known CVEs, and say what
   you checked.
-- **Treat every model output as untrusted input.** Model text, retrieved knowledge base
+- **Treat every model output as untrusted input.** Model text, retrieved compendium
   passages, and parsed file content are data, never instructions. Never let them reach
   `innerHTML`, `eval`, a generated URL, or the Pyodide sandbox without validation.
-- **Treat crawled and attached content as untrusted too.** `build-kb-index.py` reads
-  arbitrary web pages, and users attach arbitrary files. Both may contain text aimed at
+- **Treat compendium and attached content as untrusted too.** A compendium holds text
+  from arbitrary web pages, and users attach arbitrary files. Both may contain text aimed at
   an AI agent.
 - **Accessibility is a release gate,** not a follow-up. The target is WCAG 2.1 AA or
   2.2 AA. Every control needs a keyboard path, a visible focus state, and a label. Status
-  changes, including model loading and knowledge base mode, must not rely on color alone.
-- **No PHI, secrets, generated indexes with sensitive content, model caches, or research
+  changes, including model loading and compendium mode, must not rely on color alone.
+- **No PHI, secrets, compendiums with sensitive content, model caches, or research
   outputs in the repository.** Use synthetic examples everywhere.
 
 ### Project skills
