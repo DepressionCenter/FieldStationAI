@@ -1358,18 +1358,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const COMPENDIUM_TTL_MS = 7 * 24 * 60 * 60 * 1000;        // 7 days for cached EXTERNAL compendium bodies
         const COMPENDIUM_META_PREFIX = 'fieldstation_compendium_meta::'; // localStorage key prefix, one per external compendium URL
         const COMPENDIUM_CACHE_NAME = 'fieldstation-compendium-v1'; // Cache Storage bucket for the compendium files (bundled + external share this bucket, keyed by URL)
-        // Storage left behind by releases that read the older version 2
-        // index format. Those cached bodies cannot be parsed any more, so boot
-        // deletes them rather than leaving tens of megabytes stranded.
-        const LEGACY_INDEX_CACHE_NAME = 'fieldstation-kb-v1';
-        const LEGACY_INDEX_META_PREFIX = 'fieldstation_kb_meta::';
         const BUNDLED_COMPENDIUM_LABEL = 'Depression Center Resource Library'; // what the badge, tooltip, and picker call the bundled compendium
         const BUNDLED_COMPENDIUM_URL = 'efdc-compendium.json.gz'; // same-origin, relative to index.html. NEVER compendium.json.gz - that is the name Extractium gives a user's own build, so the two can never collide.
         // Persisted user choice: 'off' | 'bundled' (external is never
         // persisted - it only exists while ?compendium-url= is on the URL).
-        // The key keeps its older name so a person who turned retrieval off
-        // stays off, instead of silently downloading the bundled file.
-        const COMPENDIUM_CHOICE_KEY = 'fieldstation_kb_choice_v1';
+        const COMPENDIUM_CHOICE_KEY = 'fieldstation_compendium_choice_v1';
 
         // ---------- Hybrid retrieval (BM25 + vector, fused via RRF) ----------
         // Classical rank-based Reciprocal Rank Fusion, k=60 (the standard
@@ -5601,9 +5594,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // URL params drive compendium mode. Read once from location.search
         // on boot. Unknown compendium-mode values silently degrade to
         // 'include'; a missing/blank compendium-url means no external
-        // compendium is loaded. `legacy` reports the older ?kb= parameter,
-        // whose links point at version 2 index files this app no longer
-        // reads, so boot can say so instead of silently ignoring the link.
+        // compendium is loaded.
         function parseCompendiumParams() {
             const p = new URLSearchParams(location.search);
             const url = (p.get('compendium-url') || '').trim();
@@ -5611,8 +5602,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const mode = rawMode === 'lockdown' ? 'lockdown' : 'include';
             const rawCache = (p.get('compendium-cache') || '').trim().toLowerCase();
             const forceRefresh = rawCache === 'false' || rawCache === '0';
-            const legacy = !url && !!(p.get('kb') || '').trim();
-            return { url, mode, forceRefresh, legacy };
+            return { url, mode, forceRefresh };
         }
 
         // localStorage metadata layer: cheap to enumerate on boot so we can
@@ -5629,25 +5619,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
         function writeCompendiumMeta(url, meta) {
             try { localStorage.setItem(COMPENDIUM_META_PREFIX + url, JSON.stringify(meta)); } catch {}
         }
-        function enumerateCompendiumMetaKeys(prefix) {
-            const wanted = prefix || COMPENDIUM_META_PREFIX;
+        function enumerateCompendiumMetaKeys() {
             const keys = [];
             try {
                 for (let i = 0; i < localStorage.length; i++) {
                     const k = localStorage.key(i);
-                    if (k && k.startsWith(wanted)) keys.push(k);
+                    if (k && k.startsWith(COMPENDIUM_META_PREFIX)) keys.push(k);
                 }
             } catch {}
             return keys;
-        }
-        // Removes what releases that read the older index format left in
-        // this browser. Safe to run on every boot: both calls are no-ops
-        // once the old bucket and keys are gone.
-        async function purgeLegacyIndexStorage() {
-            for (const key of enumerateCompendiumMetaKeys(LEGACY_INDEX_META_PREFIX)) {
-                try { localStorage.removeItem(key); } catch {}
-            }
-            try { await caches.delete(LEGACY_INDEX_CACHE_NAME); } catch {}
         }
         async function purgeCompendiumEntry(url) {
             try { localStorage.removeItem(COMPENDIUM_META_PREFIX + url); } catch {}
@@ -7148,7 +7128,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
         async function bootCompendium() {
             const params = parseCompendiumParams();
             compendiumState.mode = params.mode;
-            try { await purgeLegacyIndexStorage(); } catch {}
 
             let externalOk = false;
             if (params.url) {
@@ -7163,8 +7142,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     setStatus('Compendium unavailable: ' + errMsg(e) + '. Continuing without that compendium.', true);
                     console.error('External compendium init failed:', e);
                 }
-            } else if (params.legacy) {
-                setStatus('The ?kb= link option was replaced by ?compendium-url=, which takes a compendium file built with Extractium. Continuing without that index.', true);
             }
 
             if (!externalOk) {

@@ -108,8 +108,6 @@ index.html?compendium-url=https://example.org/kb/compendium.json.gz&compendium-m
 
 A file hosted on another website must allow cross-origin requests (CORS), or the browser will block the download.
 
-Older links that use `?kb=` no longer load anything. The app shows a notice that the option was replaced. Rebuild the content as a compendium with Extractium™ and link to it with `?compendium-url=`.
-
 ## Compendium File Requirements
 
 Field Station AI reads the Extractium™ container format, version 4. The app checks each file before using it and refuses a file that fails a check.
@@ -117,7 +115,7 @@ Field Station AI reads the Extractium™ container format, version 4. The app ch
 - The file may be gzip-compressed (`compendium.json.gz`) or not (`compendium.json`). The app looks at the file's first bytes, not its name, to decide.
 - The file must be built with the embedding model `BAAI/bge-small-en-v1.5` (384 dimensions). This is Extractium's default. Field Station AI turns your question into numbers with the same model, in its browser packaging `Xenova/bge-small-en-v1.5`. Numbers from two different models cannot be compared, so a file built with another model is refused.
 - The download may be up to 64 MB, and up to 256 MB after it is uncompressed.
-- Index files made by the retired `build-kb-index.py` script (version 2) are not supported.
+- No other file format or container version is supported.
 
 A large compendium uses a lot of memory. The bundled file grows to about 100 MB of text and numbers once loaded. On a phone or an older computer, turn the compendium off if the page becomes slow.
 
@@ -126,8 +124,6 @@ See the [Extractium™ container format](https://github.com/DepressionCenter/ext
 ## Build a Compendium
 
 Use [Extractium™](https://code.depressioncenter.org/extractium) to build your own compendium. Its documentation covers installing it, choosing sources, and running a build. Turn on gzip output so the build writes `compendium.json.gz`, which is much smaller to host and download.
-
-Field Station AI no longer includes its own crawler. The `build-kb-index.py` script was removed.
 
 ## Source Scope
 
