@@ -24,17 +24,27 @@ Thumbs.db
 log.txt
 logs.txt
 logs/*
+.coverage
+*-lint-report*
 
 # Ignore Editor cruft
 .vscode/
 .idea/
 *.swp
 
-# Ignore AI coding tool configuration files
+# Ignore AI coding tool configuration files, except AGENTS.md and SKILLS.md
 .claude
+.claude/*
+.claudecode/*
 .gemini
+.gemini/*
+.github/copilot-instructions.md
+.github-copilot
+.github-copilot/*
+.kimi
 CLAUDE.md
 CLAUDECODE.md
+CONVENTIONS.md
 GEMINI.md
 KIMI.md
 CODEX.md

@@ -9,15 +9,8 @@ Notes: See README file for documentation and full license information.
 
 Copyright © 2026 The Regents of the University of Michigan
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-You should have received a copy of the GNU General Public License along
-with this program. If not, see <https://www.gnu.org/licenses/>.
+Licensed under the GNU Free Documentation License v1.3 or later.
+See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license information.
 
 -->
 ![Eisenberg Family Depression Center](https://code.depressioncenter.org/images/EFDCLogo_375w.png "depressioncenter.org")
@@ -75,6 +68,8 @@ The KB badge supports these user-visible states:
 | Bundled | Loads the bundled index if shipped with the app |
 | External | Loads a prebuilt index from `?kb=` |
 
+Bundled is the default. When a `?kb=` index loads, the app searches it instead of the bundled `efdc-kb.json`. The External choice is not saved between visits; it lasts only while `?kb=` is in the address. Click the badge at any time to switch states.
+
 External KB indexes are content sources. Review them before committing or sharing.
 
 ## Load an External Index
@@ -131,7 +126,7 @@ A generated index may contain source page text. Before committing or sharing:
 
 If a lockdown-style KB mode is enabled, the assistant should answer from attachments or KB excerpts when available and say when no matching source was found. Do not let lockdown mode become a license to guess.
 
-[⬅ Back to README](/README.md)
+[⬅ Back to Documentation](README.md) | [⬅ Back to project README](../README.md)
 
 ---
 

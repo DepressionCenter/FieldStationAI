@@ -1,6 +1,6 @@
 <!--
 This file is part of Field Station AI.
-developer-guide.md: Guide for developers working on Field Station AI, in Markdown format.
+quick-start.md: Guide to installing and first-time use of Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
 Last Modified: 2026-07-27
@@ -9,15 +9,8 @@ Notes: See README file for documentation and full license information.
 
 Copyright © 2026 The Regents of the University of Michigan
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
-You should have received a copy of the GNU General Public License along
-with this program. If not, see <https://www.gnu.org/licenses/>.
+Licensed under the GNU Free Documentation License v1.3 or later.
+See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license information.
 
 -->
 ![Eisenberg Family Depression Center](https://code.depressioncenter.org/images/EFDCLogo_375w.png "depressioncenter.org")
@@ -26,7 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
 ## Purpose
 
-This guide gets Field Station AI™ running from a local copy of the repository. It merges the existing repository quick start, the prior draft, and the additional ChatGPT 5.5 startup notes into one short path.
+This guide gets Field Station AI™ running from a local copy of the repository, in the shortest path that works.
 
 ## Start the App
 
@@ -156,7 +149,7 @@ If a Field Kit workflow gives unexpected results:
 3. Use a small synthetic file to reproduce the issue.
 4. Avoid sharing PHI in bug reports.
 
-[⬅ Back to README](/README.md)
+[⬅ Back to Documentation](README.md) | [⬅ Back to project README](../README.md)
 
 ---
 

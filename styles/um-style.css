@@ -1,3 +1,30 @@
+/*
+This file is part of Field Station AI.
+um-style.css: a reusable CSS stylesheet for University of Michigan branding and styling.
+Author(s): Gabriel Mongefranco; Sarah Acree.
+Created: 2026-07-20
+Last Modified: 2026-07-20
+Summary: Reusable University of Michigan colors, typography, and component styles, derived
+         from the Eisenberg Family Depression Center's Knowledge Base styles. The Field
+         Station AI application keeps its own styles inline in index.html, so this file is
+         a shared reference for pages and tools built alongside it. See
+         https://github.com/DepressionCenter/EFDC-TDX-KB/ and
+         https://github.com/DepressionCenter/EFDC-Repo-Template/.
+Notes: See README file for documentation and full license information.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along
+with this program. If not, see https://www.gnu.org/licenses/.
+*/
+
 /* Re-usable colorset derived from the Depression Center's Knowledge Base styles */
 /* See https://github.com/DepressionCenter/EFDC-TDX-KB */
 
