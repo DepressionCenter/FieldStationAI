@@ -64,6 +64,8 @@ Compendium and attachment retrieval depend on consistent embedding conventions. 
 
 Generated indexes must match the app's expected embedding model and vector dimensions.
 
+The embedding model runs with 4-bit weights and 32-bit math (`q4`), on WebGPU when available and otherwise on WebAssembly. It never runs with 16-bit math (`q4f16` or `fp16`). Extractium builds passage vectors at full precision, so a question's vector must land very close to its full-precision value. On an Intel integrated GPU, 16-bit math moved the vectors far enough that a 0.88 match scored 0.63, and questions the library could answer found nothing. The `q4` files are a download of about 60 MB.
+
 ## Model Caching
 
 Browsers may store downloaded model files in Cache Storage or runtime-managed caches. These caches can be evicted by browser settings, storage pressure, private-browsing rules, or enterprise policy.

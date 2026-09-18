@@ -94,6 +94,23 @@ Compendium retrieval uses the loaded file. It should not be described as live br
 
 See [Data, Files, Attachments, and Compendiums](data-files-and-compendiums.md) for the other address options and the file requirements.
 
+## Advanced Settings
+
+Most people never need these. To open them, choose the menu button at the top right (three lines), then **Advanced settings**.
+
+Each setting shows a number with a minus button on its left and a plus button on its right. Each press changes the number by 0.01. You can also type a number. **Reset** puts the recommended value back. Changes save in this browser and apply to your next message.
+
+| Setting | What it does | Lower | Higher | Recommended |
+| --- | --- | --- | --- | --- |
+| Creativity (temperature) | How much the AI varies its wording | Steady, careful answers | More varied answers, but the AI makes things up more often | 0.25 |
+| Match strictness | How closely a compendium passage must match your question before the app gives it to the AI | More passages, some off topic | Only close matches, so some questions find nothing | 0.67, or the value the compendium recommends |
+
+The smallest model runs 0.15 below the creativity number shown, because small models make things up more easily.
+
+Some compendium files carry their own recommended match strictness, measured when the file was built. When such a file is loaded, the **Reset** button shows that value, and the app uses it until you change the setting yourself. A value you set yourself stays until you press **Reset**.
+
+If answers ignore the compendium, first look at the Sources row under the answer. If it lists the right pages, the model is the weak link, so try a larger model. If it lists nothing, try a slightly lower match strictness.
+
 ## Export Data
 
 Available exports depend on context:

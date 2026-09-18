@@ -540,7 +540,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             font-family: inherit; font-size: 0.85rem; cursor: pointer;
         }
         .pin-cancel:hover { border-color: var(--danger); color: var(--danger); }
-        .pin-sr {
+        .pin-sr, .settings-sr {
             position: absolute; width: 1px; height: 1px; overflow: hidden;
             clip: rect(0 0 0 0); white-space: nowrap;
         }
@@ -926,6 +926,73 @@ with this program. If not, see https://www.gnu.org/licenses/.
             font-family: inherit; font-size: 0.95rem; font-weight: 600; cursor: pointer;
         }
         .welcome-cta:hover { background: var(--accent); color: #fff; }
+
+        /* ============ Advanced settings dialog ============ */
+        /* Each setting is a small number field between a minus and a plus
+           button, not a slider: a drag on a phone can trigger the browser's
+           own swipe gestures, and a slider is hard to land on an exact 0.01
+           step. Control borders use --muted, not --line, to keep 3:1 contrast
+           against the white panel. */
+        #settings-modal {
+            position: fixed; inset: 0; z-index: 105;
+            background: rgba(23, 38, 59, 0.55);
+            display: none; align-items: center; justify-content: center; padding: 16px;
+        }
+        #settings-modal.open { display: flex; }
+        .settings-dialog {
+            position: relative;
+            background: var(--panel); border-radius: 14px; padding: 16px 18px 18px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+            width: 100%; max-width: 380px; max-height: 96vh; overflow-y: auto;
+        }
+        /* The dialog itself takes focus on open so its title is read first;
+           it is not a control, so it shows no focus ring. */
+        .settings-dialog:focus { outline: none; }
+        .settings-close {
+            position: absolute; top: 8px; right: 8px;
+            width: 30px; height: 30px; padding: 0; border-radius: 50%;
+            border: none; background: none; color: var(--muted);
+            font-size: 1rem; line-height: 1; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .settings-close:hover { color: var(--danger); background: var(--bg); }
+        .settings-title { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 1.05rem; margin: 0 34px 4px 0; }
+        .settings-intro, .setting-help { font-size: 0.8rem; line-height: 1.5; margin: 0; color: var(--muted); }
+        .setting-help { margin-bottom: 8px; }
+        .setting { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+        .setting-name { font-family: inherit; font-size: 0.9rem; font-weight: 600; margin: 0 0 2px; color: var(--ink); }
+        .setting-aka { font-weight: 400; font-size: 0.78rem; color: var(--muted); }
+        .stepper { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .stepper-btn {
+            flex: 0 0 32px; width: 32px; height: 32px; padding: 0; border-radius: 8px;
+            border: 1px solid var(--muted); background: var(--panel); color: var(--ink);
+            font-family: inherit; font-size: 1.15rem; line-height: 1; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            /* Stops a run of quick taps from being read as double-tap zoom. */
+            touch-action: manipulation; user-select: none; -webkit-tap-highlight-color: transparent;
+        }
+        @media (hover: hover) { .stepper-btn:hover { border-color: var(--accent); background: var(--bg); } }
+        .stepper-btn:active { background: var(--line); }
+        /* At the end of the range a button stays focusable (aria-disabled, not
+           disabled) so keyboard focus is never dropped mid-task. The dashed
+           border marks the state without relying on color. */
+        .stepper-btn[aria-disabled="true"] { color: var(--muted); border-style: dashed; cursor: not-allowed; background: var(--bg); }
+        .stepper-input {
+            flex: 0 0 64px; width: 64px; height: 32px; padding: 0 4px; text-align: center;
+            border: 1px solid var(--muted); border-radius: 8px; background: var(--panel); color: var(--ink);
+            font-family: 'IBM Plex Mono', monospace; font-size: 0.95rem; font-weight: 500;
+            -moz-appearance: textfield; appearance: textfield;
+        }
+        /* The minus and plus buttons replace the browser's own tiny spinner arrows. */
+        .stepper-input::-webkit-outer-spin-button, .stepper-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .stepper-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        .stepper-word { font-size: 0.8rem; color: var(--muted); margin-left: 4px; }
+        .setting-reset {
+            margin-left: auto; min-height: 28px; padding: 3px 10px; border-radius: 999px;
+            border: 1px solid var(--muted); background: none; color: var(--ink);
+            font-family: inherit; font-size: 0.75rem; cursor: pointer;
+        }
+        .setting-reset:hover { border-color: var(--accent); color: var(--accent); }
     </style>
 </head>
 <body>
@@ -1061,6 +1128,42 @@ with this program. If not, see https://www.gnu.org/licenses/.
         </div>
     </div>
 
+    <!-- Advanced settings dialog. Wired up in the "Advanced settings dialog"
+         script section; each data-setting value names a SETTING_DEFS key. -->
+    <div id="settings-modal">
+        <div class="settings-dialog" id="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" aria-describedby="settings-intro" tabindex="-1">
+            <button type="button" class="settings-close" id="settings-close" aria-label="Close">✕</button>
+            <h2 class="settings-title" id="settings-title">Advanced settings</h2>
+            <p class="settings-intro" id="settings-intro">The starting values suit most people. Changes save in this browser and apply to your next message.</p>
+
+            <section class="setting" data-setting="globalTemp" aria-labelledby="set-temp-name">
+                <h3 class="setting-name" id="set-temp-name">Creativity <span class="setting-aka">(temperature)</span></h3>
+                <p class="setting-help" id="set-temp-help">Lower gives steady, careful answers. Higher gives more varied answers, but the AI makes things up more often.</p>
+                <div class="stepper" role="group" aria-labelledby="set-temp-name">
+                    <button type="button" class="stepper-btn" data-step="-1" aria-label="Lower creativity by 0.01"><span aria-hidden="true">&minus;</span></button>
+                    <input class="stepper-input" type="number" inputmode="decimal" step="0.01" aria-labelledby="set-temp-name" aria-describedby="set-temp-help">
+                    <button type="button" class="stepper-btn" data-step="1" aria-label="Raise creativity by 0.01"><span aria-hidden="true">+</span></button>
+                    <span class="stepper-word"></span>
+                    <button type="button" class="setting-reset" aria-describedby="set-temp-name"></button>
+                </div>
+            </section>
+
+            <section class="setting" data-setting="compendiumCosineMin" aria-labelledby="set-match-name">
+                <h3 class="setting-name" id="set-match-name">Match strictness <span class="setting-aka">(compendium search)</span></h3>
+                <p class="setting-help" id="set-match-help">How closely a compendium (reference library) passage must match your question. Lower uses more passages, some off topic. Higher uses only close matches.</p>
+                <div class="stepper" role="group" aria-labelledby="set-match-name">
+                    <button type="button" class="stepper-btn" data-step="-1" aria-label="Lower match strictness by 0.01"><span aria-hidden="true">&minus;</span></button>
+                    <input class="stepper-input" type="number" inputmode="decimal" step="0.01" aria-labelledby="set-match-name" aria-describedby="set-match-help">
+                    <button type="button" class="stepper-btn" data-step="1" aria-label="Raise match strictness by 0.01"><span aria-hidden="true">+</span></button>
+                    <span class="stepper-word"></span>
+                    <button type="button" class="setting-reset" aria-describedby="set-match-name"></button>
+                </div>
+            </section>
+
+            <div class="settings-sr" id="settings-live" aria-live="polite" aria-atomic="true"></div>
+        </div>
+    </div>
+
     <footer id="app-footer">© 2026 The Regents of the University of Michigan &nbsp;|&nbsp; <a href="https://depressioncenter.org" target="_blank" rel="noopener noreferrer">Eisenberg Family Depression Center</a></footer>
 
     <script type="module">
@@ -1129,17 +1232,158 @@ with this program. If not, see https://www.gnu.org/licenses/.
             'print(fib(10))', '```'
         ].join('\n');
 
+        // Two system prompts, because one text cannot serve both kinds of turn
+        // on the small models this app runs (the lineup starts well under 1B
+        // parameters).
+        //
+        // SYSTEM_PROMPT is for a turn the model answers from its own
+        // knowledge. Its strict brevity is deliberate: on a small model a
+        // longer answer is mostly more room to make things up. Its last
+        // sentence limits answers to the conversation, which a literal-minded
+        // model can read as "set the reference excerpts aside", so it is never
+        // sent on a turn that carries compendium excerpts.
+        //
+        // SYSTEM_PROMPT_COMPENDIUM is the base for a turn that does carry
+        // compendium excerpts; a COMPENDIUM_*_SUFFIX rule follows it and says
+        // how to use them. It allows a short list, because "as few words as
+        // possible" makes a small model drop the steps or items the excerpts
+        // supply, which are usually the answer.
+        //
+        // Rules for editing either: short sentences, one rule each, concrete
+        // words, and no rule that pulls against another. Try a change on the
+        // smallest model in the dropdown and on a 1B model, with a compendium
+        // on and off, before keeping it.
+        const SYSTEM_PROMPT_COMPENDIUM = 'You are a precise, professional assistant. Answer directly and keep it short: one or two sentences for most questions, or a short list when steps are needed. Do not restate the question or add filler. Stop when the point is made.';
         const SYSTEM_PROMPT = { role: 'system', content: 'You are a precise, professional assistant. Reply in as few words as possible while remaining accurate. Never restate the question, never add filler, and stop as soon as the point is made. For most questions, one or two short sentences is enough. Answer only based on what was actually said in this conversation - never invent topics, numbers, or exchanges that did not happen.' };
 
-        // Sampling temperature is centralized here so a future settings slider
-        // only has to update settings.globalTemp. Router mode sits
-        // SMALLEST_TEMP_DELTA below the global value: the router option pairs
-        // a small base model with an intent classifier, and small models are
-        // the most confabulation-prone in the lineup, so we keep them more
-        // literal even as the slider moves everything else up or down.
+        // ---------- User-adjustable settings ----------
+        // Edited in the Advanced settings dialog and saved per browser in
+        // localStorage. SETTING_DEFS is the single source for each setting's
+        // fixed recommended value and allowed range: the dialog reads its
+        // limits and its "Reset to" text from here, and every value that
+        // comes from storage or from the dialog passes through
+        // clampSetting(), since both are untrusted input.
+        //
+        // A setting is either the person's own (they changed it, and it is
+        // saved) or recommended (nothing is saved, and it follows whatever
+        // recommendedSetting() returns now). Only the person's own values
+        // are written to storage, so a recommendation that changes later,
+        // such as a new compendium's floor, still reaches everyone who never
+        // touched the setting.
+        //
+        // globalTemp is the sampling temperature. Router mode sits
+        // SMALLEST_TEMP_DELTA below it: the router option pairs a small base
+        // model with an intent classifier, and small models are the most
+        // confabulation-prone in the lineup, so we keep them more literal
+        // even as the setting moves everything else up or down.
+        //
+        // compendiumCosineMin is a floor on the RAW cosine between the query
+        // and a compendium search window, checked whatever scale the ranking
+        // score is on. Hybrid retrieval ranks by a fused rank score, which
+        // says how two lists agree and nothing about how close a window
+        // actually is, so an off-topic question still produces
+        // confident-looking ranks. The right floor depends on the embedding
+        // model AND on the file: the best score an unrelated question
+        // reaches rises with the number of windows (about 0.55 at 300
+        // windows, 0.62 at 60,000), and a file that indexes page
+        // descriptions instead of full text scores about 0.05 lower. So the
+        // recommended value comes from the file itself when Extractium
+        // measured one (compendiumState.cosineFloor). The fixed 0.67 here is
+        // the fallback for a file without that figure: with
+        // bge-small-en-v1.5 and its query prefix, against a full-text library
+        // of tens of thousands of windows, it kept excerpts for every test
+        // question the library could answer, while lower floors added no
+        // answers and let loosely related sections through on unrelated
+        // questions (at 0.63, on half of them).
         const SMALLEST_TEMP_DELTA = 0.15;
         const MIN_TEMP = 0.05;
-        const settings = { globalTemp: 0.30 };
+        const SETTINGS_KEY = 'fieldstation_settings_v1';
+        const SETTING_STEP = 0.01; // one press of a minus or plus button in the dialog
+        const SETTING_DEFS = {
+            globalTemp:          { recommended: 0.25, min: MIN_TEMP, max: 1.00 },
+            compendiumCosineMin: { recommended: 0.67, min: 0.50, max: 0.90 }
+        };
+
+        /**
+         * Returns the value recommended for one setting right now.
+         *
+         * @param {string} key A SETTING_DEFS key.
+         * @returns {number} For compendiumCosineMin, the active compendium's
+         *     own floor when its file records one; otherwise the fixed
+         *     recommended value from SETTING_DEFS.
+         */
+        function recommendedSetting(key) {
+            if (key === 'compendiumCosineMin' && compendiumState.kind !== 'off' && Number.isFinite(compendiumState.cosineFloor)) {
+                return clampSetting(key, compendiumState.cosineFloor);
+            }
+            return SETTING_DEFS[key].recommended;
+        }
+
+        /**
+         * Returns a usable value for one setting.
+         *
+         * @param {string} key A SETTING_DEFS key.
+         * @param {*} value Anything: a stored value, typed text, or a number.
+         * @returns {number} The value rounded to two decimals and held inside
+         *     the setting's range, or the fixed recommended value when
+         *     `value` is not a finite number.
+         */
+        function clampSetting(key, value) {
+            const def = SETTING_DEFS[key];
+            const n = typeof value === 'number' ? value : parseFloat(value);
+            if (!Number.isFinite(n)) return def.recommended;
+            return Math.round(Math.min(def.max, Math.max(def.min, n)) * 100) / 100;
+        }
+        // Keys the person set themselves. Every other key follows
+        // recommendedSetting().
+        const settingsOwn = new Set();
+        // Missing, unreadable, or out-of-range stored values fall back to the
+        // recommended ones, so a damaged entry can never break generation or
+        // retrieval. Any stored number counts as the person's own value.
+        function loadSettings() {
+            let stored = null;
+            try { stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); } catch { stored = null; }
+            const out = {};
+            for (const key of Object.keys(SETTING_DEFS)) {
+                const raw = stored && typeof stored === 'object' ? stored[key] : undefined;
+                out[key] = clampSetting(key, raw);
+                if (typeof raw === 'number' && Number.isFinite(raw)) settingsOwn.add(key);
+            }
+            return out;
+        }
+        // Storage can be full or blocked (private browsing); the setting then
+        // still applies for this page load. Only the person's own values are
+        // stored.
+        function saveSettings() {
+            const own = {};
+            for (const key of settingsOwn) own[key] = settings[key];
+            try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(own)); } catch {}
+        }
+        /**
+         * Records one setting as chosen by the person, or as recommended when
+         * the value equals the current recommendation, then saves. This is
+         * the only write path for a setting.
+         *
+         * @param {string} key A SETTING_DEFS key.
+         * @param {*} requested Anything; clampSetting() makes it safe.
+         * @returns {number} The value kept.
+         */
+        function setSetting(key, requested) {
+            const value = clampSetting(key, requested);
+            settings[key] = value;
+            if (value === recommendedSetting(key)) settingsOwn.delete(key); else settingsOwn.add(key);
+            saveSettings();
+            return value;
+        }
+        // Brings every setting the person has not set to its current
+        // recommendation. Called when the recommendation may have changed,
+        // such as after a compendium loads or is switched off.
+        function applyRecommendedSettings() {
+            for (const key of Object.keys(SETTING_DEFS)) {
+                if (!settingsOwn.has(key)) settings[key] = recommendedSetting(key);
+            }
+        }
+        const settings = loadSettings();
         function currentTemperature() {
             return routerActive
                 ? Math.max(MIN_TEMP, settings.globalTemp - SMALLEST_TEMP_DELTA)
@@ -1302,8 +1546,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // A compendium is a bundle of knowledge from many sources, indexed by
         // Extractium (https://code.depressioncenter.org/extractium) into one
         // file this app can search. Static-RAG mode, three states
-        // (compendiumState.kind): 'bundled' loads the same-origin
-        // efdc-compendium.json.gz shipped with this app (the default);
+        // (compendiumState.kind): 'bundled' loads the same-origin file shipped
+        // with this app, one of BUNDLED_COMPENDIUM_URLS (the default);
         // 'external' loads a compendium from ?compendium-url=<url> instead;
         // 'off' disables retrieval entirely. See bootCompendium()/
         // switchCompendiumTo() below.
@@ -1323,8 +1567,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // compendium retrieval uses; this constant serves attachment
         // retrieval, which has no file to read one from.
         const COMPENDIUM_QUERY_INSTRUCTION = 'Represent this sentence for searching relevant passages: ';
-        const COMPENDIUM_MAX_BYTES = 64 * 1024 * 1024;            // hard ceiling for a downloaded compendium file, as served (usually gzip-compressed)
-        const COMPENDIUM_MAX_INFLATED_BYTES = 256 * 1024 * 1024;  // hard ceiling after gzip inflation; the bundled file inflates to about 100 MB
+        // One ceiling for the container bytes, whether they arrive as a plain
+        // .json file or come out of gzip inflation. A gzip download is also
+        // held to it, since a compressed file larger than its own inflated
+        // limit cannot be a real compendium. A full-text library of about
+        // 60,000 windows inflates to about 90 MB.
+        const COMPENDIUM_MAX_BYTES = 256 * 1024 * 1024;
         const COMPENDIUM_SCORE_MIN = 0.44;                        // absolute floor, dot product below this = never relevant regardless of the relative test below (raised from 0.25 - bge-small cosine sim runs high, even for unrelated text, due to embedding-space anisotropy; tune empirically if still over/under-triggering)
         // Absolute COMPENDIUM_SCORE_MIN alone is invalid the moment the corpus
         // changes. A hit must also clear the median of its own candidate
@@ -1332,17 +1580,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // across the bundled compendium, a ?compendium-url= external one, and
         // chat attachments without a per-corpus retune.
         const COMPENDIUM_SCORE_MARGIN = 0.03;
-        // Floor on the RAW cosine between the query and a compendium search
-        // window, checked whatever scale the ranking score is on. Hybrid
-        // retrieval ranks by a fused rank score, which says how two lists
-        // agree and nothing about how close a window actually is, so an
-        // off-topic question still produces confident-looking ranks. With
-        // bge-small-en-v1.5 and its query prefix, windows that answered test
-        // questions scored about 0.68 and up, and the best windows for
-        // unrelated questions stayed at about 0.66 and below. The value
-        // belongs to the embedding model, which the compendium format fixes,
-        // not to one corpus; retune it if the model ever changes.
-        const COMPENDIUM_COSINE_MIN = 0.67;
+        // The third relevance test, a floor on the raw query-to-window cosine,
+        // is a user setting rather than a constant here: see
+        // settings.compendiumCosineMin and SETTING_DEFS. Its default comes
+        // from the file when Extractium recorded what unrelated questions
+        // score in it (calibration.unrelatedMedian and unrelatedSpread): the
+        // median plus this many spreads, held inside the range below. These
+        // four values match Extractium's reference clients, so the app and
+        // those clients draw the line in the same place for the same file.
+        const COMPENDIUM_FLOOR_MARGIN = 1.5;
+        const COMPENDIUM_FLOOR_LOWEST = 0.50;
+        const COMPENDIUM_FLOOR_HIGHEST = 0.80;
+        const COMPENDIUM_FLOOR_MIN_PROBES = 16;                   // fewer probe questions than this and the figures are too noisy to trust
         const COMPENDIUM_CANDIDATE_POOL = 50;                     // top-N raw candidates pulled per query, before diversity/threshold
         // MMR diversity so k near-copies of one page/section don't crowd out
         // the whole context budget.
@@ -1354,12 +1603,28 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // collapse to one citable unit.
         const COMPENDIUM_SOURCE_CAP = 2;                          // max hits kept per source identity
         const COMPENDIUM_TOPK = 4;                                // hits per turn fed into the prompt
-        const COMPENDIUM_CTX_TOKEN_BUDGET = 1500;                 // rough cap for the reference block
+        const COMPENDIUM_CTX_TOKEN_BUDGET = 1800;                 // rough cap for the reference block
         const COMPENDIUM_TTL_MS = 7 * 24 * 60 * 60 * 1000;        // 7 days for cached EXTERNAL compendium bodies
         const COMPENDIUM_META_PREFIX = 'fieldstation_compendium_meta::'; // localStorage key prefix, one per external compendium URL
         const COMPENDIUM_CACHE_NAME = 'fieldstation-compendium-v1'; // Cache Storage bucket for the compendium files (bundled + external share this bucket, keyed by URL)
         const BUNDLED_COMPENDIUM_LABEL = 'Depression Center Resource Library'; // what the badge, tooltip, and picker call the bundled compendium
-        const BUNDLED_COMPENDIUM_URL = 'efdc-compendium.json.gz'; // same-origin, relative to index.html. NEVER compendium.json.gz - that is the name Extractium gives a user's own build, so the two can never collide.
+        // File names the bundled compendium may have, same-origin and
+        // relative to index.html, tried in this order; the first one the
+        // server has is used. Extractium writes two files per build: the
+        // light one (page descriptions only, small) as <slug>.json.gz and the
+        // full one (every section's text) as <slug>-full.json.gz, each also
+        // possible uncompressed. Which one ships is decided by which file is
+        // placed next to index.html, so this list never needs editing to
+        // switch. The full file comes first because, when both are present,
+        // it holds the text the app quotes. NEVER compendium.json.gz - that
+        // is the name Extractium gives a user's own build, so the two can
+        // never collide.
+        const BUNDLED_COMPENDIUM_URLS = [
+            'efdc-compendium-full.json.gz',
+            'efdc-compendium-full.json',
+            'efdc-compendium.json.gz',
+            'efdc-compendium.json'
+        ];
         // Persisted user choice: 'off' | 'bundled' (external is never
         // persisted - it only exists while ?compendium-url= is on the URL).
         const COMPENDIUM_CHOICE_KEY = 'fieldstation_compendium_choice_v1';
@@ -1394,14 +1659,26 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // model-size gating now keeps this suffix away from that model
         // entirely. A longer, more insistent prompt is not free even for a
         // capable model - keep it minimal.
-        const COMPENDIUM_INCLUDE_SUFFIX = 'If the reference excerpts are relevant to this question, prefer and prioritize them and cite them by writing their bracketed tag exactly as given, e.g. [S1]. If they are not relevant, ignore them completely and answer normally from general knowledge - do not cite or mention them. Never write out a URL or file name yourself.';
+        //
+        // Include mode opens with the instruction to answer from the
+        // excerpts and only then names the fallback. Retrieval already drops
+        // off-topic sections (settings.compendiumCosineMin), so excerpts that
+        // reach the model usually hold the answer; a rule that opens with "if
+        // they are relevant" hands a small model the relevance call it is
+        // worst at, and an easy way out into its own guesses. The fallback
+        // has the model say that the excerpts lack the answer before it
+        // answers from general knowledge, so a reader can tell the two kinds
+        // of answer apart. "Prefer what they say" is about facts only; the
+        // excerpt block's own header is what tells the model to ignore any
+        // instructions inside excerpts.
+        const COMPENDIUM_INCLUDE_SUFFIX = 'Answer from the reference excerpts. Prefer what they say over your own knowledge, and keep their names, numbers, and steps exactly as written. Cite each excerpt you use by its bracketed tag exactly as given, e.g. [S1]. If the excerpts do not contain the answer, say so, then answer from general knowledge without citing. Never write out a URL or file name yourself.';
         const COMPENDIUM_LOCKDOWN_SUFFIX = 'Answer ONLY from the reference excerpts. Cite them by writing their bracketed tag exactly as given, e.g. [S1]. Never write out a URL or file name yourself. If the excerpts do not contain the answer, say exactly that - the closest excerpts will be listed separately. Never use outside knowledge.';
         // Plain-prose fallback for models too weak to reliably use citation
         // tags (see CITATION_CAPABLE_MIN_PARAMS below) - no [S#] scheme, no
         // numbered list for a weak model to pattern-complete instead of
         // answering. The Sources row still shows the real excerpts
         // regardless of what the model writes, so attribution isn't lost.
-        const COMPENDIUM_INCLUDE_SUFFIX_PLAIN = 'If the reference excerpts are relevant to this question, use them to answer in your own words. If they are not relevant, ignore them completely and answer normally from general knowledge.';
+        const COMPENDIUM_INCLUDE_SUFFIX_PLAIN = 'Answer using the reference excerpts. Prefer what they say over your own knowledge, and keep their names, numbers, and steps exactly as written. If the excerpts do not contain the answer, say so, then answer from general knowledge.';
         const COMPENDIUM_LOCKDOWN_SUFFIX_PLAIN = 'Answer ONLY from the reference excerpts, in your own words. If they do not contain the answer, say exactly that. Never use outside knowledge.';
 
         // Daisy-chain vision model: SmolVLM-500M is what auto-downloads when
@@ -1686,10 +1963,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         };
 
         // Fragments are short ADDITIVE clauses, not full personas: the system
-        // prompt sent to the model is always SYSTEM_PROMPT.content (the
-        // neutral, anti-fabrication base) plus up to two of these appended -
-        // never a wholesale replacement. This is what makes "floor confidence"
-        // behave identically to router-off (composeFragments() below).
+        // prompt sent to the model is always a base prompt (SYSTEM_PROMPT, or
+        // SYSTEM_PROMPT_COMPENDIUM on a turn that carries compendium
+        // excerpts) plus up to two of these appended - never a wholesale
+        // replacement. This is what makes "floor confidence" behave
+        // identically to router-off (composeFragments() below).
         const ROUTER_FRAGMENTS = {
             'greeting': 'Reply with a single short, friendly sentence. Do not ask follow-up questions.',
             'summarize': 'Give a short faithful summary using only what was provided. Never add outside information.',
@@ -1713,7 +1991,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
             'code': '[Reply with the code and at most one short line of explanation.]',
             'data': '[Reply with the analysis directly - numbers first, then a one-sentence takeaway.]',
             'creative': '[Keep it brief and vivid. No preamble.]',
-            'factual': '[Answer in one or two sentences. Say "I am not sure" if unsure.]',
+            // No quoted reply here: given the literal words "I am not sure" as
+            // the last thing it reads, a very small model answers every
+            // question with them, including ones it knows.
+            'factual': '[Answer in one or two sentences. If you do not know, say so.]',
             'calculation': '[Reply with the number first, then at most one short sentence.]'
         };
         ROUTER_ENHANCEMENTS['kb-question'] = ROUTER_ENHANCEMENTS['factual'];
@@ -2107,7 +2388,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const compendiumState = {
             kind: 'off', mode: 'include', url: '', site: '',
             parents: null, childPids: null, vecs: null, dims: 0, queryPrefix: '',
-            builtAt: null, sourceCount: null,
+            builtAt: null, sourceCount: null, variant: null,
+            cosineFloor: null, // the active file's own recommended match floor, or null (see relevanceFloorOf)
             bm25: null,
             embedder: null, embedderLoading: null,
             reranker: null, rerankerLoading: null
@@ -5455,11 +5737,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         // --- Fragment composition + hint text ---
-        // Base is ALWAYS the neutral SYSTEM_PROMPT; fragments are short
-        // additive clauses on top. This is what makes floor-confidence
+        // Base is the neutral SYSTEM_PROMPT unless the caller passes another
+        // (a compendium turn passes SYSTEM_PROMPT_COMPENDIUM); fragments are
+        // short additive clauses on top. This is what makes floor-confidence
         // behavior identical to router-off.
-        function composeFragments(intent, secondaryIntent, hintSkillId) {
-            let text = SYSTEM_PROMPT.content;
+        function composeFragments(intent, secondaryIntent, hintSkillId, baseText) {
+            let text = baseText || SYSTEM_PROMPT.content;
             if (ROUTER_FRAGMENTS[intent]) text += ' ' + ROUTER_FRAGMENTS[intent];
             if (secondaryIntent && secondaryIntent !== intent && ROUTER_FRAGMENTS[secondaryIntent]) {
                 text += ' ' + ROUTER_FRAGMENTS[secondaryIntent];
@@ -5661,8 +5944,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // Inflates a gzip-compressed compendium; returns other bytes
         // unchanged. The stream is read chunk by chunk and abandoned once it
-        // passes COMPENDIUM_MAX_INFLATED_BYTES, so a small hostile download
-        // (a "zip bomb" behind ?compendium-url=) cannot exhaust memory.
+        // passes COMPENDIUM_MAX_BYTES, so a small hostile download (a "zip
+        // bomb" behind ?compendium-url=) cannot exhaust memory.
         async function inflateCompendium(buf) {
             const bytes = new Uint8Array(buf);
             if (!isGzipBytes(bytes)) return buf;
@@ -5678,7 +5961,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     const { done, value } = await reader.read();
                     if (done) break;
                     total += value.byteLength;
-                    if (total > COMPENDIUM_MAX_INFLATED_BYTES) { tooLarge = true; break; }
+                    if (total > COMPENDIUM_MAX_BYTES) { tooLarge = true; break; }
                     parts.push(value);
                 }
             } catch {
@@ -5686,7 +5969,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             if (tooLarge) {
                 try { await reader.cancel(); } catch {}
-                throw new Error('Compendium inflates past ' + COMPENDIUM_MAX_INFLATED_BYTES + ' bytes');
+                throw new Error('Compendium inflates past ' + COMPENDIUM_MAX_BYTES + ' bytes');
             }
             const out = new Uint8Array(total);
             let offset = 0;
@@ -5755,17 +6038,37 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return !!embedding && embedding.model === COMPENDIUM_EMBED_MODEL && embedding.dims === COMPENDIUM_DIMS;
         }
 
+        // The cosine floor a compendium recommends for itself, or null when
+        // the file does not carry the figures. Extractium's builder embeds a
+        // fixed list of everyday, off-topic questions and records the median
+        // of the best score each reached in this file, plus a spread. Any
+        // window must beat that to count as relevant. Files built before the
+        // figures existed, and files with too few probes, get null, and the
+        // caller falls back to the fixed recommended value. Everything here
+        // is untrusted input from a ?compendium-url= file, so each figure is
+        // checked to be a finite number and the result is held in range.
+        function relevanceFloorOf(calibration) {
+            if (!calibration || typeof calibration !== 'object') return null;
+            const { unrelatedMedian: median, unrelatedSpread: spread, unrelatedProbes: probes } = calibration;
+            for (const value of [median, spread, probes]) {
+                if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+            }
+            if (probes < COMPENDIUM_FLOOR_MIN_PROBES || spread < 0) return null;
+            const floor = Math.min(COMPENDIUM_FLOOR_HIGHEST, Math.max(COMPENDIUM_FLOOR_LOWEST, median + COMPENDIUM_FLOOR_MARGIN * spread));
+            return Math.round(floor * 100) / 100;
+        }
+
         // Shared guard + shape validation for BOTH the bundled and an
         // external compendium, following the reader checklist in
         // Extractium's docs/container-format.md: format and version, the
         // embedder, the parent/child shape, and the vector byte count.
-        // builtAt/sourceCount/bm25 are optional - the badge and hybrid
-        // retrieval degrade gracefully against a file without them. Unknown
-        // header fields are ignored, which includes `calibration`: it
-        // describes how similar indexed windows are to EACH OTHER (about
-        // 0.93 for the bundled file), a level no query-to-window cosine or
-        // fused rank score reaches, so a cutoff built from it rejects every
-        // hit. COMPENDIUM_COSINE_MIN gates relevance instead. Likewise,
+        // builtAt/sourceCount/bm25/variant are optional - the badge and
+        // hybrid retrieval degrade gracefully against a file without them.
+        // Of `calibration`, only the unrelated-question figures are read
+        // (see relevanceFloorOf). Its `mean` and `std` describe how similar
+        // indexed windows are to EACH OTHER (about 0.93 for a large file), a
+        // level no query-to-window cosine or fused rank score reaches, so a
+        // cutoff built from them rejects every hit. Likewise,
         // source_type/content_type are never branched on, because
         // Extractium adds values to both without a new format version.
         function parseCompendiumBody(header, vecBytes) {
@@ -5807,6 +6110,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 queryPrefix: typeof embedding.queryPrefix === 'string' ? embedding.queryPrefix : '',
                 builtAt: (typeof header.builtAt === 'string' && header.builtAt) ? header.builtAt : null,
                 sourceCount: Number.isFinite(header.sourceCount) ? header.sourceCount : null,
+                // 'light' (page descriptions only) or 'full' (every
+                // section's text); null for a file written before the two
+                // kinds existed, which holds every section.
+                variant: (header.variant === 'light' || header.variant === 'full') ? header.variant : null,
+                cosineFloor: relevanceFloorOf(header.calibration),
                 bm25: parseBm25Index(header.bm25)
             };
         }
@@ -5887,33 +6195,51 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         // Fetch + validate the BUNDLED compendium shipped alongside
-        // index.html. Network-first (not cache-first like the external path
+        // index.html, under the first name in BUNDLED_COMPENDIUM_URLS the
+        // server has. Network-first (not cache-first like the external path
         // above): a new app release means a new file at the same same-origin
         // URL, so we always try the network first (normal HTTP revalidation
-        // avoids re-downloading the ~33 MB body when it hasn't changed) and
+        // avoids re-downloading a ~30 MB body when it hasn't changed) and
         // only fall back to the Cache Storage copy when offline or the
-        // request otherwise fails. There is no service worker anywhere in
-        // this app; this reuses the exact same direct-from-page-JS Cache
-        // Storage bucket (COMPENDIUM_CACHE_NAME) the external path already
-        // uses, just keyed by the bundled file's own relative URL instead of
-        // a third-party one - that is the entirety of "cached... fully
-        // offline after first load" for this file. Throws when neither the
-        // network nor the cache has it, which the caller treats as "not
-        // shipped -> Off".
+        // request otherwise fails. A name the server answers 404 for is
+        // skipped, and its cache entry dropped, so a file that was shipped
+        // under another name in an earlier release cannot resurface from the
+        // cache. There is no service worker anywhere in this app; this
+        // reuses the exact same direct-from-page-JS Cache Storage bucket
+        // (COMPENDIUM_CACHE_NAME) the external path already uses, just keyed
+        // by the bundled file's own relative URL instead of a third-party one
+        // - that is the entirety of "cached... fully offline after first
+        // load" for this file. Throws when neither the network nor the cache
+        // has any of the names, which the caller treats as "not shipped ->
+        // Off". The result carries `url`, the name that loaded.
         async function fetchBundledCompendium() {
             const cache = await caches.open(COMPENDIUM_CACHE_NAME);
-            let res;
-            try {
-                res = await fetch(BUNDLED_COMPENDIUM_URL, { cache: 'no-cache' });
-                if (!res.ok) throw new Error('Bundled compendium fetch failed: HTTP ' + res.status);
-                try { await cache.put(BUNDLED_COMPENDIUM_URL, res.clone()); } catch {}
-            } catch (networkErr) {
-                res = await cache.match(BUNDLED_COMPENDIUM_URL);
-                if (!res) throw networkErr;
+            let res = null, url = null, firstError = null;
+            for (const candidate of BUNDLED_COMPENDIUM_URLS) {
+                try {
+                    const attempt = await fetch(candidate, { cache: 'no-cache' });
+                    if (attempt.status === 404) {
+                        try { await cache.delete(candidate); } catch {}
+                        continue;
+                    }
+                    if (!attempt.ok) throw new Error('Bundled compendium fetch failed: HTTP ' + attempt.status);
+                    try { await cache.put(candidate, attempt.clone()); } catch {}
+                    res = attempt; url = candidate;
+                    break;
+                } catch (networkErr) {
+                    if (!firstError) firstError = networkErr;
+                }
             }
+            if (!res) {
+                for (const candidate of BUNDLED_COMPENDIUM_URLS) {
+                    const cached = await cache.match(candidate);
+                    if (cached) { res = cached; url = candidate; break; }
+                }
+            }
+            if (!res) throw firstError || new Error('No bundled compendium file found (tried ' + BUNDLED_COMPENDIUM_URLS.join(', ') + ')');
             const buf = await res.arrayBuffer();
             const { header, vecBytes } = await readCompendiumBytes(buf, 'Bundled compendium');
-            return parseCompendiumBody(header, vecBytes);
+            return { ...parseCompendiumBody(header, vecBytes), url };
         }
 
         // Lazy embedder load. Mirrors ensureRouterNli: single in-flight
@@ -5925,9 +6251,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (compendiumState.embedder) return Promise.resolve(compendiumState.embedder);
             if (compendiumState.embedderLoading) return compendiumState.embedderLoading;
             compendiumState.embedderLoading = (async () => {
-                const auto = (!forceQ4 && typeof Float16Array !== 'undefined') ? 'q4f16' : 'q4';
+                // No 16-bit rung (q4f16 or fp16) here, unlike the other helper
+                // models. A compendium's passage vectors come from
+                // Extractium's full-precision build of this model, so a query
+                // vector must land very close to its full-precision self or
+                // the cosine scores stop meaning anything. With 16-bit math
+                // on WebGPU this model's vectors agreed with the
+                // full-precision ones at only 0.56 to 0.77 cosine on an Intel
+                // integrated GPU, which pulled a 0.88 match down to 0.63 and
+                // scrambled the ranking. q4 (4-bit weights, 32-bit math)
+                // agrees at 0.98 or better and runs as fast; the cost is a
+                // download of about 60 MB instead of about 36 MB.
                 let ladder = [
-                    { device: 'webgpu', dtype: auto },
                     { device: 'webgpu', dtype: 'q4' },
                     { device: 'wasm', dtype: 'q4' },
                     { device: 'wasm', dtype: 'fp32' }
@@ -6180,7 +6515,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         //    Math.max; the attachment path passes one, the compendium path
         //    does not (see retrieveCompendiumBoth). A candidate that carries
         //    its raw query cosine in `cos` must also reach
-        //    COMPENDIUM_COSINE_MIN; only compendium candidates carry one.
+        //    settings.compendiumCosineMin; only compendium candidates carry one.
         //    Skipped entirely when noThreshold is set (the lockdown-empty
         //    "closest excerpts" list).
         //    CAVEAT: when the caller passes RRF-fused scores (hybrid
@@ -6208,7 +6543,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     ? calibration.mean + COMPENDIUM_ZSCORE_MARGIN * calibration.std
                     : -Infinity;
                 const cutoff = Math.max(COMPENDIUM_SCORE_MIN, median + COMPENDIUM_SCORE_MARGIN, zScoreCutoff);
-                filtered = candidates.filter(c => c.s >= cutoff && (c.cos == null || c.cos >= COMPENDIUM_COSINE_MIN));
+                filtered = candidates.filter(c => c.s >= cutoff && (c.cos == null || c.cos >= settings.compendiumCosineMin));
             }
             if (!filtered.length) return [];
             const remaining = filtered.slice(0, COMPENDIUM_MMR_POOL_CAP);
@@ -6767,8 +7102,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         // Compose the effective system prompt for a compendium-active turn. The base
-        // is whichever system content is in effect (router persona or the
-        // default SYSTEM_PROMPT); the compendium suffix is appended, not replaced.
+        // is SYSTEM_PROMPT_COMPENDIUM plus any router fragments; the compendium
+        // suffix is appended as the turn's rule for using the excerpts.
         // `tagged` picks the citation-tag suffix or the plain-prose fallback
         // - must match whatever buildCompendiumContextBlock was called with this
         // turn, so the instruction always matches the excerpt block's shape.
@@ -7064,7 +7399,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Copies an already-fetched compendium's fields onto compendiumState
         // and marks it active. Does not fetch anything itself - callers
         // (bootCompendium/switchCompendiumTo) own the fetch and the session
-        // cache (bundledCompendium/externalCompendium).
+        // cache (bundledCompendium/externalCompendium). The file's own match
+        // floor becomes the recommended Match strictness, unless the person
+        // has set their own.
         function applyCompendiumSource(kind, compendium) {
             compendiumState.kind = kind;
             compendiumState.url = compendium.url || '';
@@ -7076,7 +7413,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
             compendiumState.queryPrefix = compendium.queryPrefix;
             compendiumState.builtAt = compendium.builtAt;
             compendiumState.sourceCount = compendium.sourceCount;
+            compendiumState.variant = compendium.variant;
+            compendiumState.cosineFloor = compendium.cosineFloor;
             compendiumState.bm25 = compendium.bm25;
+            applyRecommendedSettings();
         }
 
         // Picker action handler - the only way compendiumState.kind changes
@@ -7086,6 +7426,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
         async function switchCompendiumTo(kind) {
             if (kind === 'off') {
                 compendiumState.kind = 'off';
+                compendiumState.cosineFloor = null;
+                applyRecommendedSettings();
                 writeCompendiumChoice('off');
                 mountCompendiumBadge();
                 return;
@@ -7100,7 +7442,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         return;
                     }
                 }
-                applyCompendiumSource('bundled', { ...bundledCompendium, url: BUNDLED_COMPENDIUM_URL });
+                applyCompendiumSource('bundled', bundledCompendium);
                 writeCompendiumChoice('bundled');
                 mountCompendiumBadge();
                 return;
@@ -7150,7 +7492,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 } else {
                     try {
                         bundledCompendium = await fetchBundledCompendium();
-                        applyCompendiumSource('bundled', { ...bundledCompendium, url: BUNDLED_COMPENDIUM_URL });
+                        applyCompendiumSource('bundled', bundledCompendium);
                     } catch (e) {
                         compendiumState.kind = 'off';
                         console.warn('Bundled compendium not available (this is a normal configuration if the file was not shipped):', errMsg(e));
@@ -7921,8 +8263,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 // URLs so it never reads as compendium-specific even when no compendium is
                 // loaded at all.
                 let finalSysRaw = routedSystem;
-                if (compendiumUsed) finalSysRaw = compendiumSystemPrompt(baseSys, compendiumState.mode, citationOk);
-                else if (attachmentUsed) finalSysRaw = attachmentSystemPrompt(baseSys, compendiumState.mode, citationOk);
+                if (compendiumUsed) {
+                    // Built on SYSTEM_PROMPT_COMPENDIUM, never on baseSys: the
+                    // general prompt tells the model to answer only from the
+                    // conversation, which pulls against using the excerpts.
+                    const compendiumBaseSys = intent
+                        ? composeFragments(intent, route.secondaryIntent, route.hintSkillId, SYSTEM_PROMPT_COMPENDIUM)
+                        : SYSTEM_PROMPT_COMPENDIUM;
+                    finalSysRaw = compendiumSystemPrompt(compendiumBaseSys, compendiumState.mode, citationOk);
+                } else if (attachmentUsed) {
+                    finalSysRaw = attachmentSystemPrompt(baseSys, compendiumState.mode, citationOk);
+                }
                 const finalSys = withLanguageLock(finalSysRaw);
                 // Merge every extra-context block (attachment excerpts, compendium
                 // excerpts, calculation result) into the single user-message
@@ -14853,6 +15204,7 @@ Feeling anxious about work."></textarea>
         const MENU_ITEMS = [
             { label: 'Field Kit', action: () => openSkills() },
             { label: 'Load models from local Ollama server', action: () => detectOllama(true) },
+            { label: 'Advanced settings', action: () => openSettings() },
             { label: 'Clear all chats', action: () => wipeAllChats() },
             { label: 'About Field Station AI', action: () => showWelcome() }
         ];
@@ -14892,6 +15244,130 @@ Feeling anxious about work."></textarea>
             e.stopPropagation();
             menuPopup.classList.contains('open') ? closeMenu() : openMenu();
         });
+
+        // ---------- Advanced settings dialog ----------
+        // One row per SETTING_DEFS key, found by its data-setting attribute in
+        // the #settings-modal markup. A change applies and saves at once -
+        // there is no Save/Cancel step to forget - and is read on the next
+        // message (temperature at generation, the match floor at retrieval).
+        // Every change is also written to the polite live region, because
+        // pressing a button does not move focus to the number it changed, so
+        // a screen reader would otherwise say nothing.
+
+        // Plain-language name for where a value sits in its range, shown
+        // under the number so the scale means something without reading the
+        // help text. Each entry is [highest value the word covers, word].
+        const SETTING_WORDS = {
+            globalTemp: [[0.15, 'Very careful'], [0.40, 'Careful'], [0.70, 'Balanced'], [1.00, 'Creative']],
+            compendiumCosineMin: [[0.59, 'Very loose'], [0.64, 'Loose'], [0.69, 'Balanced'], [0.79, 'Strict'], [0.90, 'Very strict']]
+        };
+        const SETTING_LABELS = { globalTemp: 'Creativity', compendiumCosineMin: 'Match strictness' };
+        const settingsModal = document.getElementById('settings-modal');
+        const settingsDialog = document.getElementById('settings-dialog');
+        const settingsLive = document.getElementById('settings-live');
+
+        function settingWord(key, value) {
+            for (const [upTo, word] of SETTING_WORDS[key]) if (value <= upTo) return word;
+            return '';
+        }
+        function announceSetting(text) {
+            // Cleared first so repeating the same sentence is still announced.
+            settingsLive.textContent = '';
+            setTimeout(() => { settingsLive.textContent = text; }, 30);
+        }
+        // Redraws one row from settings[key]: the number, its word, whether
+        // each button still has room to move, and the reset button's text.
+        // The reset button is also where the recommended value is shown, so
+        // that text can never drift from recommendedSetting(), which for the
+        // match floor may change with the compendium that is loaded.
+        function renderSetting(row) {
+            const key = row.dataset.setting;
+            const def = SETTING_DEFS[key];
+            const value = settings[key];
+            row.querySelector('.stepper-input').value = value.toFixed(2);
+            row.querySelector('.stepper-word').textContent = settingWord(key, value);
+            row.querySelector('[data-step="-1"]').setAttribute('aria-disabled', String(value <= def.min));
+            row.querySelector('[data-step="1"]').setAttribute('aria-disabled', String(value >= def.max));
+            row.querySelector('.setting-reset').textContent = `Reset to ${recommendedSetting(key).toFixed(2)}`;
+        }
+        // The dialog's write path for a setting: setSetting() keeps and saves
+        // the value, then the row and the live region catch up. Returns the
+        // value kept.
+        function applySetting(row, requested) {
+            const key = row.dataset.setting;
+            const def = SETTING_DEFS[key];
+            const value = setSetting(key, requested);
+            renderSetting(row);
+            let message = `${SETTING_LABELS[key]} ${value.toFixed(2)}, ${settingWord(key, value)}.`;
+            if (value <= def.min) message += ' This is the lowest value.';
+            else if (value >= def.max) message += ' This is the highest value.';
+            announceSetting(message);
+            return value;
+        }
+        function wireSettingRow(row) {
+            const key = row.dataset.setting;
+            const def = SETTING_DEFS[key];
+            const field = row.querySelector('.stepper-input');
+            field.min = def.min.toFixed(2);
+            field.max = def.max.toFixed(2);
+            for (const stepBtn of row.querySelectorAll('.stepper-btn')) {
+                // click fires on pointer-up, so a mis-press can still be
+                // abandoned by sliding off the button.
+                stepBtn.addEventListener('click', () => {
+                    if (stepBtn.getAttribute('aria-disabled') === 'true') {
+                        announceSetting(stepBtn.dataset.step === '1' ? 'This is already the highest value.' : 'This is already the lowest value.');
+                        return;
+                    }
+                    applySetting(row, settings[key] + Number(stepBtn.dataset.step) * SETTING_STEP);
+                });
+            }
+            // 'change' fires when typing is finished (Enter or leaving the
+            // field), and on the field's own arrow-key steps.
+            field.addEventListener('change', () => {
+                const typed = parseFloat(field.value);
+                if (!Number.isFinite(typed)) {
+                    renderSetting(row);
+                    announceSetting(`Please enter a number from ${def.min.toFixed(2)} to ${def.max.toFixed(2)}. ${SETTING_LABELS[key]} is still ${settings[key].toFixed(2)}.`);
+                    return;
+                }
+                applySetting(row, typed);
+            });
+            row.querySelector('.setting-reset').addEventListener('click', () => applySetting(row, recommendedSetting(key)));
+            renderSetting(row);
+        }
+        for (const row of settingsModal.querySelectorAll('.setting')) wireSettingRow(row);
+
+        function settingsFocusables() {
+            return Array.from(settingsDialog.querySelectorAll('button, input'));
+        }
+        function onSettingsKey(e) {
+            if (e.key === 'Escape') { e.preventDefault(); closeSettings(); return; }
+            if (e.key !== 'Tab') return;
+            // Keeps Tab inside the dialog while it is open (aria-modal only
+            // hides the page behind it from assistive technology).
+            const items = settingsFocusables();
+            const first = items[0], last = items[items.length - 1];
+            if (e.shiftKey && (document.activeElement === first || document.activeElement === settingsDialog)) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+        function onSettingsBackdrop(e) { if (e.target === settingsModal) closeSettings(); }
+        function openSettings() {
+            for (const row of settingsModal.querySelectorAll('.setting')) renderSetting(row);
+            settingsLive.textContent = '';
+            settingsModal.classList.add('open');
+            document.addEventListener('keydown', onSettingsKey);
+            settingsModal.addEventListener('click', onSettingsBackdrop);
+            // Focus lands on the dialog itself, so its title and intro are
+            // read before any control.
+            settingsDialog.focus();
+        }
+        function closeSettings() {
+            settingsModal.classList.remove('open');
+            document.removeEventListener('keydown', onSettingsKey);
+            settingsModal.removeEventListener('click', onSettingsBackdrop);
+            menuBtn.focus(); // back to the control that opened the dialog
+        }
+        document.getElementById('settings-close').addEventListener('click', closeSettings);
 
         // ---------- Model cache cleanup ----------
 

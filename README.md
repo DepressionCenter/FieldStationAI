@@ -92,7 +92,7 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 + [SheetJS (xlsx)](https://github.com/SheetJS/sheetjs) - Reads and writes Excel spreadsheet files entirely client-side.
 + [PDF.js](https://github.com/mozilla/pdf.js) - Renders and extracts text from PDF documents in the browser.
 + [Ollama](https://github.com/ollama/ollama) - Optional, locally-run backend the app auto-detects to offer larger language models beyond what runs directly in-browser.
-+ [Extractium™](https://code.depressioncenter.org/extractium) - Builds the compendium file (`efdc-compendium.json.gz`) that the app searches, and defines the container format the app reads.
++ [Extractium™](https://code.depressioncenter.org/extractium) - Builds the compendium file (`efdc-compendium.json.gz` or `efdc-compendium-full.json.gz`) that the app searches, and defines the container format the app reads.
 + [ZippyServe](https://github.com/DepressionCenter/ZippyServe) - A zero-dependency local web server. It lets you test single-page apps quickly. It serves directories, zips, HTML, and Markdown. It provides the run-* scripts to allow starting Field Station AI locally without installing a full web server. DOI: [10.5281/zenodo.21613944](https://doi.org/10.5281/zenodo.21613944).
 
 

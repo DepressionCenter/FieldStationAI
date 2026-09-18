@@ -107,12 +107,38 @@ Preserve these rules:
 - Follow the reader checklist. Check the format name, the version, and the vector byte count before use, and load the keyword statistics into `Map` objects.
 - Refuse a compendium whose `embedding.model` is not `BAAI/bge-small-en-v1.5` with 384 dimensions. The app embeds questions with the same model in its browser packaging, `Xenova/bge-small-en-v1.5`. Vectors from two models cannot be compared.
 - Prefix each question with the `embedding.queryPrefix` value the file records. Never prefix a passage.
+- Do not load the embedding model with 16-bit math (`q4f16` or `fp16`). Passage vectors are built at full precision, and 16-bit math on WebGPU can move a question's vector far from its true value. Check a new setting by comparing its vectors with `fp32` ones. The cosine between the two should be 0.98 or higher.
 - Do not filter or branch on a section's `source_type` or `content_type`. Extractium adds values to both without a new format version.
-- Treat every field in a compendium as untrusted input, and keep the download and inflated-size limits.
+- Treat every field in a compendium as untrusted input, and keep the size limit (`COMPENDIUM_MAX_BYTES`, applied to the container bytes whether they arrive plain or come out of gzip).
 - Do not send user prompts to the compendium URL.
-- Retune `COMPENDIUM_COSINE_MIN` and the other thresholds if the embedding model ever changes.
+- Retune the fallback `compendiumCosineMin` in `SETTING_DEFS`, and the other thresholds, if the embedding model ever changes.
 
-The file's `calibration` statistics are not used. They describe how similar indexed passages are to each other, which is about 0.93 for the bundled file. No question-to-passage score reaches that level, so a cutoff built from them rejects every hit. The app uses a fixed floor on the question-to-passage cosine similarity instead.
+The bundled file is found by name. `BUNDLED_COMPENDIUM_URLS` lists the names tried, full file first and `.gz` before `.json`, and `fetchBundledCompendium()` uses the first one the server does not answer 404 for. Extractium writes a light file (`<slug>.json.gz`, page descriptions only) and a full file (`<slug>-full.json.gz`, every section's text). To ship the other one, change the file next to `index.html`, not the list. A `?compendium-url=` file is read the same way, and gzip is detected from the first two bytes, never from the name.
+
+Of the file's `calibration` statistics, only the unrelated-question figures are used. `relevanceFloorOf()` turns `unrelatedMedian`, `unrelatedSpread`, and `unrelatedProbes` into the file's own match floor, with the same margin and range as Extractium's reference clients (`COMPENDIUM_FLOOR_*`), so the app and those clients agree on a file. A file without the figures gets the fallback from `SETTING_DEFS`. `calibration.mean` and `calibration.std` are never used. They describe how similar indexed passages are to each other, which is about 0.93 for a large file. No question-to-passage score reaches that level, so a cutoff built from them rejects every hit.
+
+## Change the Assistant's Instructions
+
+The standing instructions are short text constants near the top of the script in `index.html`. They are written for very small models, so keep them short. Use one rule per sentence, plain words, and no rule that pulls against another.
+
+- `SYSTEM_PROMPT` is sent when the model answers from its own knowledge. Its strict brevity is deliberate. On a small model, a longer answer is mostly more room to make things up.
+- `SYSTEM_PROMPT_COMPENDIUM` replaces it on a turn that carries compendium excerpts. A `COMPENDIUM_*_SUFFIX` rule follows it. Include mode tells the model to answer from the excerpts first. Lockdown mode tells it to answer only from them.
+- Never send `SYSTEM_PROMPT` on a compendium turn. Its last sentence limits answers to the conversation, and a literal-minded model can read that as a reason to ignore the excerpts.
+- The sentence that marks excerpts as reference data, not instructions, lives in the excerpt block header. Do not remove it.
+- Router closing hints (`ROUTER_ENHANCEMENTS`) are the last thing a routed model reads, so they outweigh the system prompt on the smallest model. Do not put a quoted reply in one. Given the words "I am not sure" there, a 360M model answered every question with them.
+
+Test a wording change on the smallest model in the dropdown and on a 1B model, with a compendium on and off, before keeping it.
+
+## Add a User Setting
+
+User settings live in `SETTING_DEFS`, which holds each setting's fixed recommended value and range. The Advanced settings dialog reads its limits from there and its reset text from `recommendedSetting()`, which may return something else for a setting whose recommendation depends on context. The match floor is the example: it follows the loaded compendium's own floor when the file has one.
+
+- Pass every value from storage or from the dialog through `clampSetting()`. Both are untrusted input.
+- Write a setting only through `setSetting()`. It records whether the value is the person's own or the recommendation. Only the person's own values are stored, so a recommendation that changes later still reaches everyone who never touched the setting. `applyRecommendedSettings()` brings the others up to date; call it when a recommendation may have changed.
+- Add one `<section class="setting" data-setting="...">` to the `#settings-modal` markup. The script wires any section it finds.
+- Keep the dialog short. Aim for one or two plain sentences per setting.
+- Use the minus and plus buttons, not a slider. A drag on a phone can trigger the browser's own swipe gestures.
+- Update `docs/user-guide.md`.
 
 ## Add Model Calls
 

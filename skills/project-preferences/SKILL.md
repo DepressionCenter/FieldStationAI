@@ -47,8 +47,10 @@ Follow the repository's existing file and folder naming conventions when adding 
   It is built with [Extractium](https://code.depressioncenter.org/extractium), a separate project, and
   this repository only reads it. The file is gzip-compressed binary, so never edit it by
   hand; replace it with a fresh Extractium build. Its header carries the license notice in
-  a leading `_license` key. People load their own `compendium.json.gz` through the
-  `?compendium-url=` query parameter.
+  a leading `_license` key. The app also accepts the full-text build under
+  `efdc-compendium-full.json.gz`, and either name without `.gz`; the names it tries, in
+  order, are in `BUNDLED_COMPENDIUM_URLS`. People load their own `compendium.json.gz`
+  through the `?compendium-url=` query parameter.
 - `bin/` holds the prebuilt [ZippyServe](https://github.com/DepressionCenter/ZippyServe)
   binaries. `run-windows.ps1`, `run-linux.sh`, and `run-mac.command` wrap them and open
   a browser. Those three scripts came from ZippyServe, so their headers name that project

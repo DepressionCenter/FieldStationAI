@@ -64,7 +64,24 @@ A compendium is a bundle of knowledge from many sources, indexed in a format tha
 
 Compendiums are built with [Extractium™](https://code.depressioncenter.org/extractium), a separate open-source tool from the Eisenberg Family Depression Center. Field Station AI only reads compendiums. It does not build them.
 
-Field Station AI ships with one compendium, the **Depression Center Resource Library**, in the file `efdc-compendium.json.gz`. The file is about 33 MB. It downloads the first time the compendium is used and is kept in the browser cache afterward, so it works offline.
+Field Station AI ships with one compendium, the **Depression Center Resource Library**. The file is about 33 MB. It downloads the first time the compendium is used and is kept in the browser cache afterward, so it works offline.
+
+### Light and Full Files
+
+An Extractium™ build writes two files. The **light** file (`<name>.json.gz`) holds one short entry per page: its description and keywords. It is small, about 1 MB for the Resource Library. The **full** file (`<name>-full.json.gz`) holds the text of every section of every page, so the assistant can quote it. It is about 28 MB. Both files can also be saved without compression, as `.json`.
+
+The app reads either kind. A light file tells you which page answers a question; a full file lets the assistant answer from the page's text.
+
+### Which File Is Bundled
+
+The app looks for the bundled file next to `index.html` under these names, in this order, and uses the first one it finds:
+
+1. `efdc-compendium-full.json.gz`
+2. `efdc-compendium-full.json`
+3. `efdc-compendium.json.gz`
+4. `efdc-compendium.json`
+
+To switch between the light and the full file, place the one you want next to `index.html` and remove the other. No code changes are needed. If both are present, the full file wins.
 
 ## Compendium States
 
@@ -112,12 +129,13 @@ A file hosted on another website must allow cross-origin requests (CORS), or the
 
 Field Station AI reads the Extractium™ container format, version 4. The app checks each file before using it and refuses a file that fails a check.
 
-- The file may be gzip-compressed (`compendium.json.gz`) or not (`compendium.json`). The app looks at the file's first bytes, not its name, to decide.
+- The file may be gzip-compressed (`compendium.json.gz`) or not (`compendium.json`). The app looks at the file's first bytes, not its name, to decide. This applies to the bundled file and to a `?compendium-url=` file alike.
+- The file may be a light file or a full file. See [Light and Full Files](#light-and-full-files).
 - The file must be built with the embedding model `BAAI/bge-small-en-v1.5` (384 dimensions). This is Extractium's default. Field Station AI turns your question into numbers with the same model, in its browser packaging `Xenova/bge-small-en-v1.5`. Numbers from two different models cannot be compared, so a file built with another model is refused.
-- The download may be up to 64 MB, and up to 256 MB after it is uncompressed.
+- The file may be up to 256 MB once uncompressed. A compressed download is held to the same limit.
 - No other file format or container version is supported.
 
-A large compendium uses a lot of memory. The bundled file grows to about 100 MB of text and numbers once loaded. On a phone or an older computer, turn the compendium off if the page becomes slow.
+A large compendium uses a lot of memory. A full file grows to about 90 MB of text and numbers once loaded. On a phone or an older computer, use a light file, or turn the compendium off if the page becomes slow.
 
 See the [Extractium™ container format](https://github.com/DepressionCenter/extractium/blob/main/docs/container-format.md) for the full file layout.
 
@@ -149,6 +167,10 @@ A compendium contains the text of its source pages. Before committing or sharing
 ## How Excerpts Are Chosen
 
 The app searches a compendium two ways at once: by meaning, using the embedding model, and by keywords. It combines the two rankings. A passage is used only if it is close enough in meaning to the question, so an unrelated question gets no excerpts instead of poor ones. The app then shows the model the whole section around each matching passage.
+
+How close is close enough is the **Match strictness** setting under **Advanced settings** in the menu. The right value depends on the file. A big file gives unrelated questions higher scores than a small one, and a light file scores about 0.05 lower than a full file. So a compendium can carry its own recommended value: Extractium™ measures what unrelated questions score in the file and records it. When the loaded file has that figure, the app uses it as the recommended value, and the **Reset** button in the dialog shows it. When the file has no figure, the recommended value is 0.67. In tests against a full-text library of tens of thousands of passages, 0.67 kept excerpts for every question the library could answer. Lower values added no answers, and they let unrelated pages through on about half of the off-topic questions. See the [User Guide](user-guide.md) for how to change it.
+
+When excerpts are found, the assistant is told to answer from them first and to prefer them over its own knowledge. If they do not hold the answer, it is told to say so before answering from general knowledge.
 
 Text from a compendium is treated as reference material, never as instructions to the assistant.
 
