@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 security-privacy-accessibility.md: Security and accessibility guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-07-27
+Last Modified: 2026-09-17
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -25,7 +25,7 @@ Network activity can still occur for:
 
 - Downloading JavaScript libraries and fonts.
 - Downloading model files.
-- Fetching bundled or external knowledge-base index JSON.
+- Fetching the bundled compendium file or an external one.
 - Loading or using local Ollama if configured.
 - Browser speech recognition, which may be browser/vendor serviced depending on browser.
 - Opening external links.
@@ -64,7 +64,7 @@ Do not commit:
 - Generated research outputs.
 - Local cache folders.
 - Model or embedding cache artifacts.
-- Generated knowledge-base indexes containing sensitive content.
+- Generated compendiums containing sensitive content.
 
 Use environment variables, local config files excluded by `.gitignore`, or institution-approved secret storage for sensitive values.
 
@@ -122,12 +122,13 @@ No formal accessibility audit result is included in the provided documentation s
 Before release, test:
 
 1. Navigate all chat controls with keyboard only.
-2. Open and close menu, KB picker, PIN dialog, and Field Kit by keyboard.
-3. Confirm focus is visible and logical.
-4. Confirm dialogs do not trap focus permanently.
-5. Test screen-reader announcement of status and progress messages.
-6. Confirm color is not the only state cue.
-7. Test reduced-motion mode.
+2. Open and close menu, compendium picker, PIN dialog, Advanced settings dialog, and Field Kit by keyboard.
+3. In Advanced settings, change each number with the minus and plus buttons and by typing, and confirm a screen reader announces the new value.
+4. Confirm focus is visible and logical.
+5. Confirm dialogs do not trap focus permanently.
+6. Test screen-reader announcement of status and progress messages.
+7. Confirm color is not the only state cue.
+8. Test reduced-motion mode.
 
 Automated check:
 

@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 docs/README.md: Index page for the Field Station AI documentation folder, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-09-16
-Last Modified: 2026-09-16
+Last Modified: 2026-09-17
 Summary: Lists every page in the Field Station AI knowledge base and points readers to the right guide for their task.
 Notes: See README file for documentation and full license information.
 
@@ -29,7 +29,7 @@ Start with the guide that matches what you are trying to do.
 - [Quick Start](quick-start.md): get the app running and ask your first question.
 - [User Guide](user-guide.md): the everyday features, from chat to attachments.
 - [Field Kit Guide](field-kit.md): the task-specific tools for transcription, classification, summarizing, and spreadsheets.
-- [Data, Files, Attachments, and Knowledge Bases](data-files-and-knowledge-bases.md): what the app reads, where it stores things, and how the knowledge base works.
+- [Data, Files, Attachments, and Compendiums](data-files-and-compendiums.md): what the app reads, where it stores things, and how compendiums (searchable bundles of knowledge built with Extractium™) work.
 - [Security, Privacy, PHI, and Accessibility](security-privacy-accessibility.md): where your data goes, what to review before using regulated data, and the accessibility target.
 
 ### For developers and maintainers

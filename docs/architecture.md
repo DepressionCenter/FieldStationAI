@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 architecture.md: Documentation of the architecture of Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-07-27
+Last Modified: 2026-09-17
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -35,7 +35,7 @@ index.html
 ├── Model Gateway
 ├── Shared engine lock
 ├── Attachment storage and retrieval
-├── Knowledge-base retrieval
+├── Compendium retrieval
 ├── Field Kit skills
 ├── Pyodide worker source
 └── Startup and event handlers
@@ -79,7 +79,7 @@ Expected chat flow:
 1. User sends a message.
 2. Router or intent logic may classify the request.
 3. Attachment retrieval may run when relevant.
-4. KB retrieval may run when active and relevant.
+4. Compendium retrieval may run when active and relevant.
 5. Prompt messages are built without permanently storing injected retrieval context.
 6. Model generation runs through the shared gateway or runtime path.
 7. Response renders and saves.

@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 README.md: Provides an overview of the project, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-20
-Last Modified: 2026-09-16
+Last Modified: 2026-09-17
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This file provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -29,13 +29,13 @@ Field Station AI™ is an open-source, local-first AI workspace that runs in a w
 
 [![Field Station AI Preview](/images/FieldStationAI-preview.png)](https://code.depressioncenter.org/FieldStationAI/)
 
-From a single HTML page, users can chat with a local assistant, ask questions about attachments, transcribe audio, classify text, summarize documents, combine spreadsheets, and search an optional knowledge base. Models and indexes download on first use and can run from the browser cache afterward. A modern browser with WebGPU support and a high-end GPU (video card) are recommended for faster performance and larger models; smaller models may work on less powerful hardware.
+From a single HTML page, users can chat with a local assistant, ask questions about attachments, transcribe audio, classify text, summarize documents, combine spreadsheets, and search an optional compendium (a bundle of knowledge from many sources, indexed for AI search). Models and compendiums download on first use and can run from the browser cache afterward. A modern browser with WebGPU support and a high-end GPU (video card) are recommended for faster performance and larger models; smaller models may work on less powerful hardware.
 
 Field Station AI™ is designed for workflows that may involve sensitive data or protected health information (PHI), but institutional cybersecurity and IRB review may still be required before it is used with regulated data.
 
 
 ## Quick Start Guide
-**Want to try it first?** Check out the **[live demo](https://code.depressioncenter.org/FieldStationAI/)** — it ships with the U-M Health Research Resource Library knowledge base bundled in (works best with Llama or larger models).
+**Want to try it first?** Check out the **[live demo](https://code.depressioncenter.org/FieldStationAI/)** — it ships with the Depression Center Resource Library compendium bundled in (works best with Llama or larger models).
 
 Field Station AI™ is a single, dependency-free HTML file — there is no build step, so setup is just a matter of getting hosting that file with a web server and opening it in your browser. Note: you can't just double-click `index.html` to open it — browsers block AI model downloads for pages opened directly from disk, so it needs to be served over HTTP (localhost is fine). Follow these simple steps to run it:
 1. Download or clone this repository.
@@ -44,11 +44,11 @@ Field Station AI™ is a single, dependency-free HTML file — there is no build
  + To run on a web server, create a directory in your web root called FieldStationAI, and copy the `index.html` file there. Then visit your website and add /FieldStationAI/ at the end of the URL.
 3. Select a model from the dropdown and wait for it to download and compile. Once a model has been downloaded, you will not have to download it again, even if you close the application or refresh the page.
 4. Type a prompt, attach a file, or open **Field Kit** (in the top right) for task-specific tools.
-5. Click the knowledge-base badge next to the model dropdown to choose whether answers use the bundled U-M Health Research Resource Library index, your own index, or no knowledge base at all. See [Data, Files, Attachments, and Knowledge Bases](docs/data-files-and-knowledge-bases.md) for the details, and for how to build your own index with `build-kb-index.py`.
+5. Click the compendium badge next to the model dropdown to choose whether answers use the bundled Depression Center Resource Library, your own compendium, or no compendium at all. See [Data, Files, Attachments, and Compendiums](docs/data-files-and-compendiums.md) for the details. To create your own compendium, see [Extractium™](https://code.depressioncenter.org/extractium).
 
 
 ## Documentation
-+ **Complete documentation:** See the [`/docs`](./docs/README.md) folder in this repository for the quick start, user guide, Field Kit guide, data and knowledge base reference, security and accessibility notes, and the developer and architecture guides.
++ **Complete documentation:** See the [`/docs`](./docs/README.md) folder in this repository for the quick start, user guide, Field Kit guide, data and compendium reference, security and accessibility notes, and the developer and architecture guides.
 + **Overview for researchers and developers:** Visit the [Health Research Resource Library](https://michmed.org/efdc-kb) for a high-level summary, key features, and important assumptions.
 + **For AI coding agents:** Start with [AGENTS.md](AGENTS.md) and the skills listed in [SKILLS.md](SKILLS.md). Always review and test generated code before opening a pull request.
 
@@ -56,7 +56,8 @@ Field Station AI™ is a single, dependency-free HTML file — there is no build
 
 ## Additional Resources
 + [Mobile Technologies Core](https://depressioncenter.org/mobiletech) — the group that develops and maintains Field Station AI.
-+ [EFDC Knowledge Base](https://michmed.org/efdc-kb) — documentation site referenced above and used as source content for the app's optional knowledge-base feature.
++ [EFDC Knowledge Base](https://michmed.org/efdc-kb) — documentation site referenced above, and one of the sources in the app's bundled compendium.
++ [Extractium™](https://code.depressioncenter.org/extractium) — the tool that builds compendiums, including the one bundled with Field Station AI. Use it to create your own.
 
 
 
@@ -91,14 +92,8 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 + [SheetJS (xlsx)](https://github.com/SheetJS/sheetjs) - Reads and writes Excel spreadsheet files entirely client-side.
 + [PDF.js](https://github.com/mozilla/pdf.js) - Renders and extracts text from PDF documents in the browser.
 + [Ollama](https://github.com/ollama/ollama) - Optional, locally-run backend the app auto-detects to offer larger language models beyond what runs directly in-browser.
++ [Extractium™](https://code.depressioncenter.org/extractium) - Builds the compendium file (`efdc-compendium.json.gz` or `efdc-compendium-full.json.gz`) that the app searches, and defines the container format the app reads.
 + [ZippyServe](https://github.com/DepressionCenter/ZippyServe) - A zero-dependency local web server. It lets you test single-page apps quickly. It serves directories, zips, HTML, and Markdown. It provides the run-* scripts to allow starting Field Station AI locally without installing a full web server. DOI: [10.5281/zenodo.21613944](https://doi.org/10.5281/zenodo.21613944).
-
-**Used by the knowledge-base crawler:**
-+ [Requests](https://github.com/psf/requests) - A simple and elegant HTTP library for making web requests in Python.
-+ [Beautiful Soup (bs4)](https://github.com/beautifulsoup/beautifulsoup) - A Python library for parsing HTML and XML documents.
-+ [Sentence Transformers](https://github.com/UKPLab/sentence-transformers) - A Python framework for generating semantic embeddings and sentence-level vector representations.
-+ [NumPy](https://github.com/numpy/numpy) - A foundational numerical computing library for Python, used for array and vector operations.
-+ [typing_extensions](https://github.com/python/typing_extensions) - Backports and extensions for Python typing features to support compatibility across Python versions.
 
 
 
