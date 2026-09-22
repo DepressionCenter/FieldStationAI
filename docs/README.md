@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 docs/README.md: Index page for the Field Station AI documentation folder, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-09-16
-Last Modified: 2026-09-17
+Last Modified: 2026-09-22
 Summary: Lists every page in the Field Station AI knowledge base and points readers to the right guide for their task.
 Notes: See README file for documentation and full license information.
 
@@ -38,6 +38,7 @@ Start with the guide that matches what you are trying to do.
 - [Models and Runtime](models-and-runtime.md): which models run where, and what the browser needs.
 - [Developer Guide](developer-guide.md): how to make changes and verify them.
 - [Design Change Record](design-change-record.md): the major design decisions and when they changed.
+- [Issues Implementation Plan](issues-implementation-plan.md): the order, branch, scope, and status for each open GitHub issue.
 
 ### Authoring guides
 

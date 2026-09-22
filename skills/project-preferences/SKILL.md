@@ -103,7 +103,7 @@ run without one, so check that a change still works on modest hardware before ca
 
 ### Project skills
 
-This repository uses the four shared skills listed in [SKILLS.md](../../SKILLS.md) and adds
+This repository uses the five shared skills listed in [SKILLS.md](../../SKILLS.md) and adds
 none of its own yet. If a recurring task here needs its own recipe, copy
 [skill-template.md](../skill-template.md) into `skills/<skill-name>/SKILL.md` and add it to
 the index.
