@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 architecture.md: Documentation of the architecture of Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-17
+Last Modified: 2026-09-23
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -77,12 +77,13 @@ This prevents chat and Field Kit from using the same runtime at the same time.
 Expected chat flow:
 
 1. User sends a message.
-2. Router or intent logic may classify the request.
-3. Attachment retrieval may run when relevant.
-4. Compendium retrieval may run when active and relevant.
-5. Prompt messages are built without permanently storing injected retrieval context.
-6. Model generation runs through the shared gateway or runtime path.
-7. Response renders and saves.
+2. The crisis check runs on the prompt. A hit shows the fixed 988 notice and ends the turn without generation.
+3. Router or intent logic may classify the request.
+4. Attachment retrieval may run when relevant.
+5. Compendium retrieval may run when active and relevant.
+6. Prompt messages are built without permanently storing injected retrieval context.
+7. Model generation runs through the shared gateway or runtime path.
+8. Response renders and saves.
 
 PHI warnings and system notes should not be treated as user-authored model input unless deliberately designed.
 

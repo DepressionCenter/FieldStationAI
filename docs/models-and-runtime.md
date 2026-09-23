@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 models-and-runtime.md: Documentation for models and runtime behavior in Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-17
+Last Modified: 2026-09-23
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -50,6 +50,7 @@ Helper model areas may include:
 
 - Embeddings for compendium and attachment retrieval.
 - Router or intent classification.
+- The crisis check, which shares the embedding model and the router's tiebreak model.
 - Zero-shot classification.
 - Audio transcription.
 - Named entity recognition.

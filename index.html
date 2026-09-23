@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 index.html: Main HTML file for the Field Station AI application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-18
-Last Modified: 2026-09-17
+Last Modified: 2026-09-23
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This is the main HTML file for the Field Station AI application.
 Notes: See README file for documentation and full license information.
 
@@ -312,6 +312,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
             cursor: pointer; font-family: inherit;
         }
         .phi-warning-pin-btn:hover { filter: brightness(0.95); }
+        /* Crisis notice: fixed safety text shown instead of a reply. Reads
+           as a card rather than a muted status line, and the border color
+           is never the only cue: the text says what it is. */
+        .message.crisis-notice {
+            font-style: normal; text-align: left; max-width: 85%; color: var(--ink);
+            background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--danger);
+            font-size: 0.92rem; line-height: 1.5;
+        }
+        .crisis-notice p { margin: 0 0 8px; }
+        .crisis-notice p:last-child { margin-bottom: 0; }
+        .crisis-notice a { color: var(--accent); text-decoration: underline; font-weight: 600; }
+        .crisis-notice a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .crisis-continue { font-size: 0.82rem; color: var(--muted); }
 
         .meta {
             display: flex; gap: 10px; align-items: center; align-self: flex-start;
@@ -540,7 +553,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             font-family: inherit; font-size: 0.85rem; cursor: pointer;
         }
         .pin-cancel:hover { border-color: var(--danger); color: var(--danger); }
-        .pin-sr, .settings-sr {
+        .pin-sr, .settings-sr, .chat-sr {
             position: absolute; width: 1px; height: 1px; overflow: hidden;
             clip: rect(0 0 0 0); white-space: nowrap;
         }
@@ -1039,6 +1052,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     </div>
 
     <div id="status-line" aria-live="polite"></div>
+    <div class="chat-sr" id="chat-live" aria-live="assertive" aria-atomic="true"></div>
 
     <div id="chat-box"></div>
 
@@ -1185,6 +1199,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const btn = document.getElementById('send-btn');
         const stopBtn = document.getElementById('stop-btn');
         const status = document.getElementById('status-line');
+        const chatLive = document.getElementById('chat-live'); // screen-reader-only live region for chat notices
         const modelSelect = document.getElementById('model-select');
         const newChatBtn = document.getElementById('new-chat-btn');
         const pinBtn = document.getElementById('pin-btn');
@@ -1255,6 +1270,22 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // on and off, before keeping it.
         const SYSTEM_PROMPT_COMPENDIUM = 'You are a precise, professional assistant. Answer directly and keep it short: one or two sentences for most questions, or a short list when steps are needed. Do not restate the question or add filler. Stop when the point is made.';
         const SYSTEM_PROMPT = { role: 'system', content: 'You are a precise, professional assistant. Reply in as few words as possible while remaining accurate. Never restate the question, never add filler, and stop as soon as the point is made. For most questions, one or two short sentences is enough. Answer only based on what was actually said in this conversation - never invent topics, numbers, or exchanges that did not happen.' };
+
+        // Crisis notice, shown instead of a reply when a prompt appears to
+        // describe the writer's own current mental health crisis (see
+        // promptSignalsCrisis). Fixed text on purpose: a model never writes
+        // or rewords it, so a small model cannot soften it or add advice.
+        // Follows the policy of the Depression Center Resources agent in
+        // Microsoft Copilot: do not engage clinically, assess risk, or ask
+        // safety questions; point the person to help.
+        const CRISIS_NOTICE_TEXT = 'It sounds like you may be struggling. Call or text 988 to reach the 988 Lifeline, or use the 988 Lifeline chat. 988 is confidential, available 24/7, and connects people experiencing a mental health, substance use, or suicidal crisis with trained crisis counselors.';
+        // Rendered as a link on the words "988 Lifeline chat" in the text above.
+        const CRISIS_CHAT_URL = 'https://chat.988lifeline.org/';
+        // 988 answers in Spanish by phone (option 2) and by text (the word AYUDA).
+        const CRISIS_NOTICE_SPANISH = 'Si hablas español, llama al 988 y oprime 2, o envía la palabra AYUDA al 988.';
+        // The notice replaces the reply for that turn and shows once per
+        // chat, so the person needs to know how to go on.
+        const CRISIS_NOTICE_CONTINUE = 'To continue chatting, send your message again.';
 
         // ---------- User-adjustable settings ----------
         // Edited in the Advanced settings dialog and saved per browser in
@@ -2039,6 +2070,126 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const URL_RE = /https?:\/\/\S+/i;
         const SUMMARIZE_KEYWORD_RE = /\b(summar(y|ize|ise)|tl;?dr|key points|main points)\b/i;
         const CODE_HINT_RE = /```|^\s*(function|def|class|import|from|const|let|var)\b/m;
+
+        // ### Crisis check: data and pure helpers (start) ###
+        // A parallel check, separate from the routing intents above. It
+        // decides only whether the fixed crisis notice is shown; it never
+        // changes the system prompt. Everything between these two markers
+        // is evaluated on its own by the tests under tests/ in a bare
+        // JavaScript context, so keep it to constants and pure functions:
+        // no DOM, no app state, no other constants from this file.
+        //
+        // The regex tier is the fast, deterministic tier, and the only tier
+        // that reads Spanish reliably, because the embedding and tiebreak
+        // models are English-only. It judges short prompts only; a pasted
+        // transcript is longer than this limit and goes to the embedding
+        // tier, where research phrasing has a contrast list to lose to.
+        const CRISIS_TIER0_MAX_CHARS = 300;
+        // Explicit first-person, present-tense statements, English then
+        // Spanish. One alternative per line so each can be read on its own.
+        const CRISIS_TIER0_RE = new RegExp([
+            // "I want to die", "I'm going to kill myself", "I have a plan to end it all"
+            "\\bi\\s*(?:want|wanna|need|would like|'?m going|am going|'?m gonna|am gonna|plan|'?m planning|am planning|'?m ready|am ready|have a plan)\\s+(?:to\\s+)?(?:kill myself|die|end (?:my (?:own )?life|it all|it|everything)|hurt myself|leave this (?:earth|world)|not (?:be alive|exist|wake up)|disappear)\\b",
+            // "I don't want to live", "I no longer want to be here"
+            "\\bi (?:don'?t|do not|no longer) want to (?:live|be alive|be here|exist|wake up|go on)\\b",
+            // "killing myself", "end my life", "take my own life"
+            "\\b(?:kill(?:ing)? myself|end(?:ing)? my (?:own )?life|tak(?:e|ing) my (?:own )?life|hurt(?:ing)? myself)\\b",
+            // "thinking about suicide", "thinking of ending my life"
+            "\\bthinking (?:about|of) (?:suicide|killing myself|ending (?:it all|my life))\\b",
+            // "I am suicidal", "I feel so suicidal"
+            "\\bi(?:'?m| am| feel)\\s+(?:so\\s+)?suicidal\\b",
+            // "everyone would be better off without me"
+            "\\b(?:everyone|everybody|they|the world|my family) (?:would|will) be better off without me\\b",
+            // "quiero morirme", "voy a matarme", "estoy pensando en suicidarme"
+            "\\b(?:quiero|quisiera|voy a|pienso|estoy pensando en) (?:morir(?:me)?|matarme|suicidarme|quitarme la vida|acabar con (?:mi vida|todo)|irme de este mundo|dejar este mundo|desaparecer)\\b",
+            // "me quiero morir", "me voy a matar"
+            "\\bme (?:quiero|voy a) (?:morir|matar|suicidar)\\b",
+            // "no quiero vivir", "ya no quiero seguir viviendo"
+            "\\b(?:ya )?no quiero (?:vivir|seguir viviendo|seguir aqu[ií]|estar viv[oa]|despertar|existir)\\b"
+        ].join('|'), 'i');
+        // Words that mark a research, clinical, or data task, in both
+        // languages. When one is present the regex tier stays silent and
+        // the embedding tier decides, so a quoted line inside a transcript
+        // or a question about a participant does not fire on its own.
+        const CRISIS_TIER0_TOPIC_RE = /\b(?:participants?|patients?|respondents?|interviews?|transcripts?|surveys?|stud(?:y|ies)|research|literature|prevalence|screening|questionnaires?|scales?|dataset|codebook|classify|categori[sz]e|summari[sz]e|prevention|hotline|policy|protocol|participantes?|pacientes?|entrevistas?|transcripci[oó]n|encuestas?|estudios?|investigaci[oó]n|resumir|clasificar)\b/i;
+        // True when the regex tier alone is sure. Curly apostrophes are
+        // folded to straight ones first, since phones type the curly kind.
+        function crisisTier0(text) {
+            const t = String(text || '').replace(/’/g, "'");
+            if (t.length > CRISIS_TIER0_MAX_CHARS) return false;
+            return CRISIS_TIER0_RE.test(t) && !CRISIS_TIER0_TOPIC_RE.test(t);
+        }
+        // Embedding tier exemplars, scored with the shared bge-small model
+        // the same way the router's exemplars are: a prompt's score for a
+        // list is its highest cosine to any entry. Crisis entries are
+        // first-person and present-tense. Contrast entries are the research,
+        // clinical, and data tasks that mention the same subject, so that
+        // topic overlap alone cannot show the notice. Data, not logic.
+        const CRISIS_EXEMPLARS = [
+            'I want to kill myself', "I don't want to be alive anymore",
+            'I am going to end my life tonight', "I can't do this anymore, I just want to die",
+            'I have been thinking about suicide a lot lately', 'everyone would be better off without me',
+            'I have the pills next to me and I am thinking of taking them all', 'I want to hurt myself',
+            'I am planning to end it all this week', 'nothing matters anymore and I want it all to stop',
+            'I want to leave this earth', 'I am having thoughts of suicide right now and I am scared',
+            'quiero morirme', 'ya no quiero seguir viviendo', 'quiero quitarme la vida',
+            'ya no aguanto más, quiero acabar con todo', 'estoy pensando en suicidarme'
+        ];
+        const CRISIS_CONTRAST_EXEMPLARS = [
+            'what are the risk factors for suicide among veterans',
+            'summarize this interview transcript where the participant talks about self-harm',
+            'write survey items that screen for suicidal ideation',
+            'what does the literature say about suicide prevention programs in schools',
+            'how is the Columbia suicide severity rating scale scored',
+            'classify these participant responses by level of distress',
+            'what is the suicide rate in the united states by age group',
+            'draft a safety protocol for a depression study when a participant reports suicidal thoughts',
+            'explain the difference between suicidal ideation and non-suicidal self-injury',
+            'how do I code interview transcripts about hopelessness and despair',
+            'summarize the evaluation study of the 988 lifeline',
+            'detect emotions such as sadness, grief, and fear in this text',
+            'cuáles son los factores de riesgo de suicidio en adolescentes',
+            'resume esta entrevista donde el participante habla de autolesiones',
+            'qué dice la literatura sobre la prevención del suicidio'
+        ];
+        // Tiebreak hypotheses for the NLI model, used only when the
+        // embedding scores land between the two margins below.
+        const CRISIS_NLI_HYPOTHESES = {
+            crisis: 'the writer says they are in a mental health crisis or thinking about suicide right now',
+            topic: 'a question or task about mental health as a subject'
+        };
+        // Thresholds, tuned against tests/fixtures/crisis-prompts.json.
+        // CRISIS_COSINE_MIN: below this crisis score, no notice.
+        // CRISIS_MARGIN_MIN: the crisis score must beat the contrast score
+        // by at least this much, or the overlap is only the subject matter.
+        // CRISIS_CLEAR_MARGIN: at or above this margin the notice shows
+        // without a tiebreak; between the two margins the NLI model decides.
+        const CRISIS_COSINE_MIN = 0.60;
+        const CRISIS_MARGIN_MIN = 0.03;
+        const CRISIS_CLEAR_MARGIN = 0.12;
+        // Returns 'crisis', 'none', or 'ambiguous' from the two list scores.
+        function crisisVerdictFromScores(crisisScore, contrastScore) {
+            if (!(crisisScore >= CRISIS_COSINE_MIN)) return 'none';
+            const margin = crisisScore - contrastScore;
+            if (margin < CRISIS_MARGIN_MIN) return 'none';
+            return margin >= CRISIS_CLEAR_MARGIN ? 'crisis' : 'ambiguous';
+        }
+        // After the first notice the person is invited to send the message
+        // again, so that many flagged prompts are answered. A further
+        // flagged prompt in the same chat is a strong signal that the
+        // crisis is real, so from then on every flagged prompt gets the
+        // notice again, without the line about continuing. Unflagged
+        // prompts are always answered, and the chat is never locked.
+        const CRISIS_ANSWERED_AFTER_NOTICE = 1;
+        // What a flagged prompt gets: 'notice-continue' (the chat's first
+        // notice), 'answer' (the invited re-send), or 'notice-only'
+        // (escalated). `noticed` says whether the chat has shown the notice
+        // and `flagsAfterNotice` counts flagged prompts since it did.
+        function crisisTurnAction(noticed, flagsAfterNotice) {
+            if (!noticed) return 'notice-continue';
+            return (flagsAfterNotice || 0) < CRISIS_ANSWERED_AFTER_NOTICE ? 'answer' : 'notice-only';
+        }
+        // ### Crisis check: data and pure helpers (end) ###
 
         // PHI detection: local regex over an attachment's derived text for
         // structured identifiers. This may
@@ -2909,6 +3060,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (typeof c.draft !== 'string') c.draft = '';
                 if (!Array.isArray(c.attachments)) c.attachments = [];
                 if (typeof c.phiWarned !== 'boolean') c.phiWarned = false;
+                if (typeof c.crisisNoticed !== 'boolean') c.crisisNoticed = false;
+                if (typeof c.crisisFlagsAfterNotice !== 'number') c.crisisFlagsAfterNotice = 0;
             }
         }
 
@@ -3065,7 +3218,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 draft: '',
                 hintedSkills: [], // skill ids already hinted this chat, so a hint fires at most once per skill per chat
                 attachments: [], // { id, kind, name, mimeType, sizeBytes, addedAt, derivedText?, segments?, phiFlagged }
-                phiWarned: false // has the PHI notice already fired once for this chat
+                phiWarned: false, // has the PHI notice already fired once for this chat
+                crisisNoticed: false, // has the crisis notice already shown once for this chat
+                crisisFlagsAfterNotice: 0 // flagged prompts since that notice, for crisisTurnAction
             };
             store.chats.push(chat);
             store.activeId = chat.id;
@@ -3351,6 +3506,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (m.role === 'system') continue;
                 if (m.role === 'note') { appendMessage('system', m.content, m.ts); continue; }
                 if (m.role === 'phi-warning') { appendPhiWarning(m.content, m.ts); continue; }
+                if (m.role === 'crisis-notice') { appendCrisisNotice(m.ts, false, m.continueShown !== false); continue; }
                 appendMessage(m.role === 'assistant' ? 'bot' : 'user', m.content, m.ts, m.sources);
             }
             chatBox.scrollTop = chatBox.scrollHeight;
@@ -3767,7 +3923,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const lines = [`FieldStationAI chat: ${chat.name}`, `Exported: ${new Date().toLocaleString()}`, ''];
             for (const m of chat.messages) {
                 if (m.role === 'system') continue;
-                if (m.role === 'note' || m.role === 'phi-warning') { lines.push('[' + m.content + ']', ''); continue; }
+                if (m.role === 'note' || m.role === 'phi-warning' || m.role === 'crisis-notice') { lines.push('[' + m.content + ']', ''); continue; }
                 // expandCitations resolves [S#] tags to real URLs/file
                 // names - a no-op when m.sources is unset.
                 lines.push((m.role === 'user' ? 'You: ' : 'FieldStationAI: ') + expandCitations(m.content, m.sources), '');
@@ -4955,6 +5111,53 @@ with this program. If not, see https://www.gnu.org/licenses/.
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
+        // Crisis notice bubble: fixed text, built with createElement and
+        // textContent, with a link on "988 Lifeline chat", a Spanish line,
+        // and, when `withContinue` is true, a line on how to continue.
+        // `announce` writes the text to the chat live region so a screen
+        // reader reads it when it appears live; a transcript rebuild passes
+        // false so reloads stay quiet.
+        function appendCrisisNotice(ts, announce, withContinue) {
+            const div = document.createElement('div');
+            div.className = 'message system crisis-notice';
+            const main = document.createElement('p');
+            const linkText = '988 Lifeline chat';
+            const at = CRISIS_NOTICE_TEXT.indexOf(linkText);
+            if (at === -1) {
+                main.textContent = CRISIS_NOTICE_TEXT;
+            } else {
+                main.appendChild(document.createTextNode(CRISIS_NOTICE_TEXT.slice(0, at)));
+                const a = document.createElement('a');
+                a.href = CRISIS_CHAT_URL;
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                a.textContent = linkText;
+                a.setAttribute('aria-label', linkText + ' (opens in a new tab)');
+                main.appendChild(a);
+                main.appendChild(document.createTextNode(CRISIS_NOTICE_TEXT.slice(at + linkText.length)));
+            }
+            div.appendChild(main);
+            const spanish = document.createElement('p');
+            spanish.lang = 'es';
+            spanish.textContent = CRISIS_NOTICE_SPANISH;
+            div.appendChild(spanish);
+            if (withContinue) {
+                const go = document.createElement('p');
+                go.className = 'crisis-continue';
+                go.textContent = CRISIS_NOTICE_CONTINUE;
+                div.appendChild(go);
+            }
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+            if (announce) chatLive.textContent = crisisNoticeExportText(withContinue);
+        }
+        // The notice as one plain-text line, for the saved message, the .txt
+        // export, and the live region.
+        function crisisNoticeExportText(withContinue) {
+            const text = CRISIS_NOTICE_TEXT + ' Chat: ' + CRISIS_CHAT_URL + ' ' + CRISIS_NOTICE_SPANISH;
+            return withContinue ? text + ' ' + CRISIS_NOTICE_CONTINUE : text;
+        }
+
         // It may flag likely PHI; it must NEVER be used to imply a clean or
         // exhaustive scan - see textLooksLikePHI's own comment. Fires the
         // inline notice at most once per chat, and not at all once a PIN is
@@ -5611,25 +5814,32 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // embedder.
         // This is a symmetric intent-classification task, not retrieval, so
         // no COMPENDIUM_QUERY_INSTRUCTION prefix here - see retrieveCompendium().
+        // Encodes every list in `lists` ({ id: [strings] }) with the shared
+        // embedder, under the engine lock. Returns { ids, vecs }: one id per
+        // row and a flat Float32Array of rows * COMPENDIUM_DIMS. Shared by
+        // the router and the crisis check, which each cache the result.
+        async function encodeExemplarLists(lists) {
+            const em = await ensureCompendiumEmbedder();
+            const ids = [];
+            const strings = [];
+            for (const id of Object.keys(lists)) {
+                for (const s of lists[id]) { ids.push(id); strings.push(s); }
+            }
+            await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+            let out;
+            try {
+                out = await em(strings, { pooling: 'cls', normalize: true });
+            } finally {
+                EngineLock.release();
+            }
+            return { ids, vecs: out.data };
+        }
         async function buildRouterExemplarVecs() {
             if (routerExemplarVecs) return;
             if (routerExemplarBuilding) return routerExemplarBuilding;
             routerExemplarBuilding = (async () => {
-                const em = await ensureCompendiumEmbedder();
-                const ids = [];
-                const strings = [];
-                const allIntents = Object.keys(ROUTER_EXEMPLARS);
-                for (const id of allIntents) {
-                    for (const s of ROUTER_EXEMPLARS[id]) { ids.push(id); strings.push(s); }
-                }
-                await EngineLock.acquire('chat', chatLockWaitCtl.signal);
-                let out;
-                try {
-                    out = await em(strings, { pooling: 'cls', normalize: true });
-                } finally {
-                    EngineLock.release();
-                }
-                routerExemplarVecs = out.data; // flat Float32Array, ids.length * COMPENDIUM_DIMS
+                const { ids, vecs } = await encodeExemplarLists(ROUTER_EXEMPLARS);
+                routerExemplarVecs = vecs; // flat Float32Array, ids.length * COMPENDIUM_DIMS
                 routerExemplarIds = ids;
             })().catch(e => {
                 routerExemplarBuilding = null;
@@ -5637,28 +5847,43 @@ with this program. If not, see https://www.gnu.org/licenses/.
             });
             return routerExemplarBuilding;
         }
-        // Per-intent score = max cosine (dot product; both sides normalized)
-        // over that intent's exemplar rows. Returns { qVec, scores }.
-        async function scoreTier1(text) {
+        // One embedding of the prompt per turn, shared by the crisis check
+        // and the router. The memo holds the last prompt only: a second
+        // caller on the same turn pays nothing, and the next prompt replaces
+        // it. Symmetric classification, so no COMPENDIUM_QUERY_INSTRUCTION
+        // prefix here - see retrieveCompendium().
+        let routingEmbedMemo = { text: null, vec: null };
+        async function embedRoutingText(text) {
+            const key = text.slice(0, 400);
+            if (routingEmbedMemo.vec && routingEmbedMemo.text === key) return routingEmbedMemo.vec;
             const em = await ensureCompendiumEmbedder();
-            await buildRouterExemplarVecs();
             await EngineLock.acquire('chat', chatLockWaitCtl.signal);
             let out;
             try {
-                out = await em(text.slice(0, 400), { pooling: 'cls', normalize: true });
+                out = await em(key, { pooling: 'cls', normalize: true });
             } finally {
                 EngineLock.release();
             }
-            const qVec = out.data;
+            routingEmbedMemo = { text: key, vec: out.data };
+            return out.data;
+        }
+        // Per-id score = max cosine (dot product; both sides normalized)
+        // over that id's rows. Returns { id: score }.
+        function maxCosineByIds(qVec, ids, vecs) {
             const dims = COMPENDIUM_DIMS;
             const scores = {};
-            for (let r = 0; r < routerExemplarIds.length; r++) {
-                const off = r * dims;
-                const dot = cosineSim(qVec, 0, routerExemplarVecs, off, dims);
-                const id = routerExemplarIds[r];
+            for (let r = 0; r < ids.length; r++) {
+                const dot = cosineSim(qVec, 0, vecs, r * dims, dims);
+                const id = ids[r];
                 if (!(id in scores) || dot > scores[id]) scores[id] = dot;
             }
-            return { qVec, scores };
+            return scores;
+        }
+        // Router Tier 1. Returns { qVec, scores } with one score per intent.
+        async function scoreTier1(text) {
+            await buildRouterExemplarVecs();
+            const qVec = await embedRoutingText(text);
+            return { qVec, scores: maxCosineByIds(qVec, routerExemplarIds, routerExemplarVecs) };
         }
 
         // --- Tier 2: NLI tiebreak (Xenova/nli-deberta-v3-xsmall) ---
@@ -5865,6 +6090,44 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (chat) routerStickyByChat.set(chat.id, intent);
 
             return { intent, secondaryIntent, hintSkillId, qVec, floor: false };
+        }
+
+        // --- Crisis check ---
+        // Runs on every chat prompt before any reply is generated, with the
+        // router on or off and on every backend, and returns true when the
+        // prompt appears to describe the writer's own current mental health
+        // crisis. Three tiers, each costlier than the last: the regex tier
+        // (no model), the embedding tier (the shared bge-small model, one
+        // vector the router reuses on the same turn), and the NLI tiebreak
+        // only when the scores land between the two margins. The data and
+        // thresholds live in the block marked "Crisis check: data and pure
+        // helpers". A lock cancellation (Stop) is rethrown so the caller can
+        // end the turn; the caller treats any other failure as no crisis.
+        let crisisExemplarCache = null;    // { ids, vecs } once encoded, per session
+        let crisisExemplarBuilding = null;
+        function buildCrisisExemplarVecs() {
+            if (crisisExemplarCache) return Promise.resolve(crisisExemplarCache);
+            if (crisisExemplarBuilding) return crisisExemplarBuilding;
+            crisisExemplarBuilding = encodeExemplarLists({ crisis: CRISIS_EXEMPLARS, topic: CRISIS_CONTRAST_EXEMPLARS })
+                .then(result => { crisisExemplarCache = result; return result; })
+                .catch(e => { crisisExemplarBuilding = null; throw e; });
+            return crisisExemplarBuilding;
+        }
+        async function promptSignalsCrisis(text) {
+            const trimmed = text.trim();
+            if (crisisTier0(trimmed)) return true;
+            const { ids, vecs } = await buildCrisisExemplarVecs();
+            const qVec = await embedRoutingText(trimmed);
+            const scores = maxCosineByIds(qVec, ids, vecs);
+            const verdict = crisisVerdictFromScores(scores.crisis, scores.topic);
+            if (verdict !== 'ambiguous') return verdict === 'crisis';
+            const hyps = [CRISIS_NLI_HYPOTHESES.crisis, CRISIS_NLI_HYPOTHESES.topic];
+            const res = await tryClassifyRouterNli(trimmed.slice(0, 400), hyps);
+            // No tiebreak available (the model did not load): the embedding
+            // margin already passed the lower bar, so show the notice. Once
+            // per chat bounds the cost of being wrong here.
+            if (!res || !res.labels || !res.labels.length) return true;
+            return res.labels[0] === hyps[0];
         }
 
         // Placeholder for a future feature: transcribe an audio message
@@ -6272,7 +6535,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 let lastErr = 'unknown error';
                 for (const step of ladder) {
                     try {
-                        const cb = makeCacheAwareProgress(cachedRc, 'Downloading compendium embedder...');
+                        const cb = makeCacheAwareProgress(cachedRc, 'Downloading the text-matching helper...');
                         const em = await pipeline('feature-extraction', COMPENDIUM_EMBED_ID, {
                             dtype: step.dtype,
                             device: step.device,
@@ -7511,11 +7774,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         function buildGenMessages(chat, partial, overrideSystem, overrideUserSuffix, compendiumUserPrefix) {
-            // 'note' (attachment audit trail) and 'phi-warning' messages are
-            // persisted and rendered but are not real conversation turns -
-            // excluded here so they never reach the model as an unrecognized
-            // role.
-            const msgs = chat.messages.filter(m => m.role !== 'note' && m.role !== 'phi-warning').map(m => ({ ...m }));
+            // 'note' (attachment audit trail), 'phi-warning', and
+            // 'crisis-notice' messages are persisted and rendered but are not
+            // real conversation turns - excluded here so they never reach the
+            // model as an unrecognized role.
+            const msgs = chat.messages.filter(m => m.role !== 'note' && m.role !== 'phi-warning' && m.role !== 'crisis-notice').map(m => ({ ...m }));
             if (overrideSystem) {
                 // Per-turn routed persona - never persisted to chat.messages, so
                 // each turn can be routed independently based on its own intent
@@ -8056,6 +8319,59 @@ with this program. If not, see https://www.gnu.org/licenses/.
             chat.updated = Date.now();
             saveStore();
             renderChips(); // sample chips disappear after the first prompt
+
+            // ### Crisis check ###
+            // Before any reply is generated, on every chat prompt, whatever
+            // the model and whether or not the router is on: a prompt that
+            // appears to describe the writer's own current crisis gets the
+            // fixed notice instead of a reply. The first notice invites the
+            // person to send the message again, and that re-send is
+            // answered; a further flagged prompt brings the notice back
+            // without that invitation (see crisisTurnAction). Nothing from
+            // the prompt is logged here.
+            let crisis = false;
+            try {
+                crisis = await promptSignalsCrisis(text);
+            } catch (e) {
+                // A Stop (lock cancellation) falls through to the normal
+                // path below, which ends the turn as "Stopped by user".
+                if (!e || !e.lockCancelled) console.error('Crisis check failed; answering normally:', errMsg(e));
+            }
+            if (crisis) {
+                const action = crisisTurnAction(chat.crisisNoticed, chat.crisisFlagsAfterNotice);
+                if (chat.crisisNoticed) chat.crisisFlagsAfterNotice = (chat.crisisFlagsAfterNotice || 0) + 1;
+                if (action !== 'answer') {
+                    if (cancelledForNewChat) {
+                        // New Chat mid-check: the old chat should look untouched.
+                        if (chat.messages.length && chat.messages[chat.messages.length - 1].role === 'user') {
+                            chat.messages.pop();
+                            chat.updated = Date.now();
+                            saveStore();
+                        }
+                        cancelledForNewChat = false;
+                        return;
+                    }
+                    const withContinue = action === 'notice-continue';
+                    const noticeTs = Date.now();
+                    if (isMyTurn()) appendCrisisNotice(noticeTs, true, withContinue);
+                    chat.messages.push({ role: 'crisis-notice', content: crisisNoticeExportText(withContinue), continueShown: withContinue, ts: noticeTs });
+                    chat.crisisNoticed = true;
+                    if (withContinue) {
+                        // The notice says to send the message again, so it
+                        // stays in the box (and in the per-chat draft).
+                        chat.draft = text;
+                        if (isMyTurn()) input.value = text;
+                    }
+                    chat.updated = noticeTs;
+                    saveStore();
+                    busy = false;
+                    stopBtn.hidden = true;
+                    setControls(true);
+                    renderChips();
+                    input.focus();
+                    return;
+                }
+            }
 
             const botDiv = appendMessage('bot', '');
             const start = performance.now();

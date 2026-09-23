@@ -56,3 +56,6 @@ __pycache__/
 .venv/
 .cache/
 .kb_cache/
+
+# Ignore installed test dependencies
+node_modules/

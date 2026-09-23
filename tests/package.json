@@ -1,0 +1,11 @@
+{
+  "_license": "This file is part of Field Station AI. tests/package.json. Author(s): Gabriel Mongefranco. Created: 2026-09-23. Last Modified: 2026-09-23. Summary: Declares the one dependency the model-backed crisis check test needs, the same Transformers.js package the app loads in the browser, at a newer release than the app pins because the 4.2.0 release carries security advisories in its Node-only dependencies. The fast tests need nothing from here. Notes: See README file for documentation and full license information. Copyright (c) 2026 The Regents of the University of Michigan. This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details. You should have received a copy of the GNU General Public License along with this program. If not, see https://www.gnu.org/licenses/.",
+  "name": "fieldstationai-tests",
+  "private": true,
+  "type": "module",
+  "description": "Test dependencies for Field Station AI. Not published.",
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {
+    "@huggingface/transformers": "4.3.0"
+  }
+}

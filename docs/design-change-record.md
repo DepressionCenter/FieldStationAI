@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 design-change-record.md: Summary of recent major design changes in Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-17
+Last Modified: 2026-09-23
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -122,11 +122,30 @@ Reason:
 
 This is both a privacy control and a correctness control.
 
+## Crisis Check
+
+Issue #1 asked for a way to recognize a prompt that may signal a mental health emergency and point the person to help.
+
+Decision:
+
+- One check for every model, run before any reply is generated. It reuses the router's pieces: phrase patterns, the shared embedding model against example sentences, and the NLI tiebreak model.
+- The notice is fixed text and replaces the reply for that turn. It is stored like the other system notices, never sent to the model.
+- The first notice in a chat invites the person to send the message again, and the message stays in the box. That re-send is answered. A second flagged prompt after the notice is treated as a strong signal, so the notice returns without the invitation and every later flagged prompt gets it. Unflagged prompts are always answered and the chat is never locked. The smallest models do not refuse crisis content on their own, which is why screening continues after the first notice. The full method is in `security-privacy-accessibility.md`.
+- No model-side instruction. A prompt rule can only produce a model-written reply or a sentinel token, and a crisis instruction primes safety-tuned models to lecture on legitimate research questions about suicide.
+- The check runs before generation rather than beside it. Every model call goes through the shared engine lock, so a parallel check would queue behind the reply, and a small model streams its first tokens faster than the check finishes.
+
+The detection data lives in a marked block in `index.html` that the tests evaluate on their own. Change thresholds and phrase lists there, and keep the prompt fixture under `tests/` in step.
+
+## Automated Checks
+
+The repository carries a small test suite under `tests/` and a GitHub Actions workflow. The fast suite needs nothing installed and checks the documentation, the single-file rule, and the crisis check's phrase tier. A second job installs one dependency and scores the crisis prompt fixture with the real models. Browser testing of the app itself remains manual.
+
 ## Documentation Rule
 
 When these areas change, update this file and the relevant user or developer doc:
 
 - Runtime behavior.
+- Crisis check behavior.
 - Browser requirements.
 - Compendium behavior.
 - Field Kit state model.
