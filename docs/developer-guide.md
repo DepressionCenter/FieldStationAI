@@ -138,6 +138,7 @@ The crisis check decides whether a chat prompt gets the fixed 988 notice instead
 - Change the thresholds last. `CRISIS_COSINE_MIN` is the floor, `CRISIS_MARGIN_MIN` is how far the crisis score must beat the contrast score, and `CRISIS_CLEAR_MARGIN` is where the tiebreak stops being needed.
 - Put every new case in `tests/fixtures/crisis-prompts.json` first, then run the model test (see Run the Tests) until every prompt lands on the right side.
 - The embedding and tiebreak models are English-only. A Spanish case must be covered by the phrase patterns.
+- `crisisTurnAction()` decides what a flagged prompt gets: the first notice with the continue line, an answer for the invited re-send, or the notice without the continue line once the chat has flagged again. `CRISIS_ANSWERED_AFTER_NOTICE` is how many flagged prompts are answered after the first notice. The chat keeps the two counters (`crisisNoticed`, `crisisFlagsAfterNotice`).
 - Never put the notice text through a model, and never log the prompt.
 
 Then confirm in a browser on the smallest model in the dropdown and on a 1B model, with the router on and off and the compendium on and off. The notice must appear for the crisis prompts and not for the research prompts.

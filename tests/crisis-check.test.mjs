@@ -121,3 +121,20 @@ test('the verdict helper follows the thresholds', () => {
     assert.equal(crisisVerdictFromScores(high, high - CRISIS_CLEAR_MARGIN - 0.01), 'crisis', 'clear margin');
     assert.equal(crisisVerdictFromScores(high, high - (CRISIS_MARGIN_MIN + CRISIS_CLEAR_MARGIN) / 2), 'ambiguous', 'in the band');
 });
+
+// ### Escalation ###
+
+test('the first flagged prompt in a chat gets the notice with the continue line', () => {
+    assert.equal(block.crisisTurnAction(false, 0), 'notice-continue');
+});
+
+test('the invited re-send is answered, and a further flagged prompt escalates', () => {
+    const { crisisTurnAction, CRISIS_ANSWERED_AFTER_NOTICE } = block;
+    assert.ok(Number.isInteger(CRISIS_ANSWERED_AFTER_NOTICE) && CRISIS_ANSWERED_AFTER_NOTICE >= 1);
+    for (let flags = 0; flags < CRISIS_ANSWERED_AFTER_NOTICE; flags++) {
+        assert.equal(crisisTurnAction(true, flags), 'answer', `flag ${flags} after the notice is answered`);
+    }
+    assert.equal(crisisTurnAction(true, CRISIS_ANSWERED_AFTER_NOTICE), 'notice-only');
+    assert.equal(crisisTurnAction(true, CRISIS_ANSWERED_AFTER_NOTICE + 5), 'notice-only', 'stays escalated');
+    assert.equal(crisisTurnAction(true, undefined), 'answer', 'a chat saved before the counter existed');
+});

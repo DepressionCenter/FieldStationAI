@@ -42,7 +42,8 @@ export const BLOCK_END = '// ### Crisis check: data and pure helpers (end) ###';
 export const BLOCK_EXPORTS = [
     'CRISIS_TIER0_MAX_CHARS', 'CRISIS_TIER0_RE', 'CRISIS_TIER0_TOPIC_RE', 'crisisTier0',
     'CRISIS_EXEMPLARS', 'CRISIS_CONTRAST_EXEMPLARS', 'CRISIS_NLI_HYPOTHESES',
-    'CRISIS_COSINE_MIN', 'CRISIS_MARGIN_MIN', 'CRISIS_CLEAR_MARGIN', 'crisisVerdictFromScores'
+    'CRISIS_COSINE_MIN', 'CRISIS_MARGIN_MIN', 'CRISIS_CLEAR_MARGIN', 'crisisVerdictFromScores',
+    'CRISIS_ANSWERED_AFTER_NOTICE', 'crisisTurnAction'
 ];
 
 /**

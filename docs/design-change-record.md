@@ -129,7 +129,8 @@ Issue #1 asked for a way to recognize a prompt that may signal a mental health e
 Decision:
 
 - One check for every model, run before any reply is generated. It reuses the router's pieces: phrase patterns, the shared embedding model against example sentences, and the NLI tiebreak model.
-- The notice is fixed text and replaces the reply for that turn. It shows once per chat and is stored like the other system notices, never sent to the model.
+- The notice is fixed text and replaces the reply for that turn. It is stored like the other system notices, never sent to the model.
+- The first notice in a chat invites the person to send the message again, and the message stays in the box. That re-send is answered. A second flagged prompt after the notice is treated as a strong signal, so the notice returns without the invitation and every later flagged prompt gets it. Unflagged prompts are always answered and the chat is never locked. The smallest models do not refuse crisis content on their own, which is why screening continues after the first notice. The full method is in `security-privacy-accessibility.md`.
 - No model-side instruction. A prompt rule can only produce a model-written reply or a sentinel token, and a crisis instruction primes safety-tuned models to lecture on legitimate research questions about suicide.
 - The check runs before generation rather than beside it. Every model call goes through the shared engine lock, so a parallel check would queue behind the reply, and a small model streams its first tokens faster than the check finishes.
 

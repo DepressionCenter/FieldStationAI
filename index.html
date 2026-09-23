@@ -2174,6 +2174,21 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (margin < CRISIS_MARGIN_MIN) return 'none';
             return margin >= CRISIS_CLEAR_MARGIN ? 'crisis' : 'ambiguous';
         }
+        // After the first notice the person is invited to send the message
+        // again, so that many flagged prompts are answered. A further
+        // flagged prompt in the same chat is a strong signal that the
+        // crisis is real, so from then on every flagged prompt gets the
+        // notice again, without the line about continuing. Unflagged
+        // prompts are always answered, and the chat is never locked.
+        const CRISIS_ANSWERED_AFTER_NOTICE = 1;
+        // What a flagged prompt gets: 'notice-continue' (the chat's first
+        // notice), 'answer' (the invited re-send), or 'notice-only'
+        // (escalated). `noticed` says whether the chat has shown the notice
+        // and `flagsAfterNotice` counts flagged prompts since it did.
+        function crisisTurnAction(noticed, flagsAfterNotice) {
+            if (!noticed) return 'notice-continue';
+            return (flagsAfterNotice || 0) < CRISIS_ANSWERED_AFTER_NOTICE ? 'answer' : 'notice-only';
+        }
         // ### Crisis check: data and pure helpers (end) ###
 
         // PHI detection: local regex over an attachment's derived text for
@@ -3046,6 +3061,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (!Array.isArray(c.attachments)) c.attachments = [];
                 if (typeof c.phiWarned !== 'boolean') c.phiWarned = false;
                 if (typeof c.crisisNoticed !== 'boolean') c.crisisNoticed = false;
+                if (typeof c.crisisFlagsAfterNotice !== 'number') c.crisisFlagsAfterNotice = 0;
             }
         }
 
@@ -3203,7 +3219,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 hintedSkills: [], // skill ids already hinted this chat, so a hint fires at most once per skill per chat
                 attachments: [], // { id, kind, name, mimeType, sizeBytes, addedAt, derivedText?, segments?, phiFlagged }
                 phiWarned: false, // has the PHI notice already fired once for this chat
-                crisisNoticed: false // has the crisis notice already shown once for this chat
+                crisisNoticed: false, // has the crisis notice already shown once for this chat
+                crisisFlagsAfterNotice: 0 // flagged prompts since that notice, for crisisTurnAction
             };
             store.chats.push(chat);
             store.activeId = chat.id;
@@ -3489,7 +3506,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (m.role === 'system') continue;
                 if (m.role === 'note') { appendMessage('system', m.content, m.ts); continue; }
                 if (m.role === 'phi-warning') { appendPhiWarning(m.content, m.ts); continue; }
-                if (m.role === 'crisis-notice') { appendCrisisNotice(m.ts, false); continue; }
+                if (m.role === 'crisis-notice') { appendCrisisNotice(m.ts, false, m.continueShown !== false); continue; }
                 appendMessage(m.role === 'assistant' ? 'bot' : 'user', m.content, m.ts, m.sources);
             }
             chatBox.scrollTop = chatBox.scrollHeight;
@@ -5096,10 +5113,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // Crisis notice bubble: fixed text, built with createElement and
         // textContent, with a link on "988 Lifeline chat", a Spanish line,
-        // and a line on how to continue. `announce` writes the text to the
-        // chat live region so a screen reader reads it when it appears
-        // live; a transcript rebuild passes false so reloads stay quiet.
-        function appendCrisisNotice(ts, announce) {
+        // and, when `withContinue` is true, a line on how to continue.
+        // `announce` writes the text to the chat live region so a screen
+        // reader reads it when it appears live; a transcript rebuild passes
+        // false so reloads stay quiet.
+        function appendCrisisNotice(ts, announce, withContinue) {
             const div = document.createElement('div');
             div.className = 'message system crisis-notice';
             const main = document.createElement('p');
@@ -5123,18 +5141,21 @@ with this program. If not, see https://www.gnu.org/licenses/.
             spanish.lang = 'es';
             spanish.textContent = CRISIS_NOTICE_SPANISH;
             div.appendChild(spanish);
-            const go = document.createElement('p');
-            go.className = 'crisis-continue';
-            go.textContent = CRISIS_NOTICE_CONTINUE;
-            div.appendChild(go);
+            if (withContinue) {
+                const go = document.createElement('p');
+                go.className = 'crisis-continue';
+                go.textContent = CRISIS_NOTICE_CONTINUE;
+                div.appendChild(go);
+            }
             chatBox.appendChild(div);
             chatBox.scrollTop = chatBox.scrollHeight;
-            if (announce) chatLive.textContent = crisisNoticeExportText();
+            if (announce) chatLive.textContent = crisisNoticeExportText(withContinue);
         }
         // The notice as one plain-text line, for the saved message, the .txt
         // export, and the live region.
-        function crisisNoticeExportText() {
-            return CRISIS_NOTICE_TEXT + ' Chat: ' + CRISIS_CHAT_URL + ' ' + CRISIS_NOTICE_SPANISH + ' ' + CRISIS_NOTICE_CONTINUE;
+        function crisisNoticeExportText(withContinue) {
+            const text = CRISIS_NOTICE_TEXT + ' Chat: ' + CRISIS_CHAT_URL + ' ' + CRISIS_NOTICE_SPANISH;
+            return withContinue ? text + ' ' + CRISIS_NOTICE_CONTINUE : text;
         }
 
         // It may flag likely PHI; it must NEVER be used to imply a clean or
@@ -8303,19 +8324,23 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // Before any reply is generated, on every chat prompt, whatever
             // the model and whether or not the router is on: a prompt that
             // appears to describe the writer's own current crisis gets the
-            // fixed notice instead of a reply. Once per chat; after that the
-            // check is skipped so the person can go on chatting. Nothing from
+            // fixed notice instead of a reply. The first notice invites the
+            // person to send the message again, and that re-send is
+            // answered; a further flagged prompt brings the notice back
+            // without that invitation (see crisisTurnAction). Nothing from
             // the prompt is logged here.
-            if (!chat.crisisNoticed) {
-                let crisis = false;
-                try {
-                    crisis = await promptSignalsCrisis(text);
-                } catch (e) {
-                    // A Stop (lock cancellation) falls through to the normal
-                    // path below, which ends the turn as "Stopped by user".
-                    if (!e || !e.lockCancelled) console.error('Crisis check failed; answering normally:', errMsg(e));
-                }
-                if (crisis) {
+            let crisis = false;
+            try {
+                crisis = await promptSignalsCrisis(text);
+            } catch (e) {
+                // A Stop (lock cancellation) falls through to the normal
+                // path below, which ends the turn as "Stopped by user".
+                if (!e || !e.lockCancelled) console.error('Crisis check failed; answering normally:', errMsg(e));
+            }
+            if (crisis) {
+                const action = crisisTurnAction(chat.crisisNoticed, chat.crisisFlagsAfterNotice);
+                if (chat.crisisNoticed) chat.crisisFlagsAfterNotice = (chat.crisisFlagsAfterNotice || 0) + 1;
+                if (action !== 'answer') {
                     if (cancelledForNewChat) {
                         // New Chat mid-check: the old chat should look untouched.
                         if (chat.messages.length && chat.messages[chat.messages.length - 1].role === 'user') {
@@ -8326,10 +8351,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         cancelledForNewChat = false;
                         return;
                     }
+                    const withContinue = action === 'notice-continue';
                     const noticeTs = Date.now();
-                    if (isMyTurn()) appendCrisisNotice(noticeTs, true);
-                    chat.messages.push({ role: 'crisis-notice', content: crisisNoticeExportText(), ts: noticeTs });
+                    if (isMyTurn()) appendCrisisNotice(noticeTs, true, withContinue);
+                    chat.messages.push({ role: 'crisis-notice', content: crisisNoticeExportText(withContinue), continueShown: withContinue, ts: noticeTs });
                     chat.crisisNoticed = true;
+                    if (withContinue) {
+                        // The notice says to send the message again, so it
+                        // stays in the box (and in the per-chat draft).
+                        chat.draft = text;
+                        if (isMyTurn()) input.value = text;
+                    }
                     chat.updated = noticeTs;
                     saveStore();
                     busy = false;
