@@ -120,6 +120,22 @@ The referral text is fixed. It is never generated, paraphrased, or extended by a
 
 A single referral may be a false positive, and research users must be able to proceed. The first referral in a chat therefore invites the person to send the message again, and the message remains in the input field. That re-send is answered by the model. Screening continues silently on every subsequent prompt. A second flagged prompt after the first referral is treated as a strong signal of genuine crisis: the referral is shown again, without the invitation to continue, and every further flagged prompt in that chat receives the referral rather than a generated reply. Prompts that are not flagged continue to be answered, and the chat is never locked, so a person in distress is not cut off and a researcher retains their context. A new chat starts the sequence over.
 
+### Observed behavior
+
+The screenshot series below was recorded during manual testing with Llama 3.2-1B and the bundled compendium. Every chat in it is synthetic.
+
+![Eight screenshots of Field Station AI chats, arranged as a timeline, showing when the crisis referral appears and when it does not](../images/testing-crisis-response-in-fieldstationai.png)
+
+The panels show, in order:
+
+1. Research-focused questions about depression are answered normally and are not flagged as a crisis.
+2. A message that indicates a crisis and is not research-focused is flagged, and the referral replaces the reply.
+3. Language models may also flag a crisis on their own, depending on their training. Here Llama 3.2-1B declined to engage with a re-sent message.
+4. The first flagged message is copied back into the input box so the person can revise and resend. A model can sometimes flag a follow-up message on its own even when the screen misses it.
+5. Messages flagged after the first one do not offer the option to resend, to steer the person toward help rather than continuing the chat.
+6. Sometimes the model does not flag a crisis even though its reply suggests it understood one. The screen still runs on every turn for that reason.
+7. Repeatedly flagged messages do not paste the input back into the box and do not show a model reply.
+
 ### Validation
 
 The method is checked against a fixed, synthetic prompt set (`tests/fixtures/crisis-prompts.json`) in two ways: a dependency-free test of the lexical tier, and a test that runs the embedding and inference models over every prompt. Both run in continuous integration. The set holds first-person crisis statements in English and Spanish, and research, clinical, and third-party prompts that must not be flagged. Threshold values were tuned against this set and are recorded in the code. No clinical validation has been performed. Sensitivity and specificity against clinical criteria are unknown.
