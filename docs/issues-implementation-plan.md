@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 docs/issues-implementation-plan.md: Ordered plan and status tracker for the open GitHub issues, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-09-22
-Last Modified: 2026-09-22
+Last Modified: 2026-09-23
 Summary: Lists the open GitHub issues in the order they will be worked, the branch and scope for each, and the rules every phase follows.
 Notes: See README file for documentation and full license information.
 
@@ -36,7 +36,7 @@ Status values are **Not started**, **Planning**, **In progress**, **In review**,
 4. Treat every prompt, file, model output, and compendium passage as untrusted input. Nothing user-controlled reaches `innerHTML` without encoding.
 5. Every new control needs a keyboard path, a visible focus state, and a label. Status changes must not rely on color alone.
 6. Update the documentation pages named in the phase in the same branch. Stale documentation is a defect.
-7. Test in a real browser before calling the phase done. There is no automated test suite, so record the browser, the models, and the exact steps in the pull request. Say plainly what was not tested.
+7. Run `node --test tests/` before opening a pull request, and the model-backed test when the phase touches the crisis check (see the [developer guide](developer-guide.md)). The suite covers the documentation and the crisis check, not the app's behavior in a browser, so also test in a real browser before calling the phase done, and record the browser, the models, and the exact steps in the pull request. Say plainly what was not tested.
 8. Commit only when the work is tested, then open a pull request against `main`. Commit messages and pull request text are plain English, describe what changed and why, and carry no co-author trailer, robot signature, or tool or model name.
 9. Close the GitHub issue when the pull request merges, and update this page.
 
@@ -44,17 +44,17 @@ Status values are **Not started**, **Planning**, **In progress**, **In review**,
 
 | Phase | Issue | Title | Branch | Status |
 | --- | --- | --- | --- | --- |
-| 1 | [#1](https://github.com/DepressionCenter/FieldStationAI/issues/1) | Crisis notice for prompts that may signal a mental health emergency | `feature/crisis-notice` | Not started |
+| 1 | [#1](https://github.com/DepressionCenter/FieldStationAI/issues/1) | Crisis notice for prompts that may signal a mental health emergency | `feature/crisis-notice` | In review |
 | 2 | [#6](https://github.com/DepressionCenter/FieldStationAI/issues/6) | "Paste text" input for the four text classifier skills | `feature/skill-paste-text` | Not started |
 | 3 | [#7](https://github.com/DepressionCenter/FieldStationAI/issues/7) | Direct chat-to-skill flow for text-only skills | `feature/chat-to-skill` | Not started |
 | 4 | [#4](https://github.com/DepressionCenter/FieldStationAI/issues/4) | Storage management dialog in the menu | `feature/storage-manager` | Not started |
 | 5 | [#2](https://github.com/DepressionCenter/FieldStationAI/issues/2) | Full Markdown support in chats | `feature/chat-markdown` | Not started (do much later) |
 
-Issues [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3) and [#5](https://github.com/DepressionCenter/FieldStationAI/issues/5) stay open but are not scheduled. See [Issues not scheduled](#issues-not-scheduled).
+Issues [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3), [#5](https://github.com/DepressionCenter/FieldStationAI/issues/5), and [#12](https://github.com/DepressionCenter/FieldStationAI/issues/12) stay open but are not scheduled. See [Issues not scheduled](#issues-not-scheduled).
 
 ### Phase 1: Crisis notice (issue #1)
 
-**Status:** Not started
+**Status:** In review
 
 **Branch:** `feature/crisis-notice`, from `main`.
 
@@ -64,34 +64,39 @@ Field Station AI carries Depression Center branding. A study participant in dist
 
 #### What the person sees
 
-When a prompt appears to describe a current mental health crisis, the app shows a fixed notice instead of a routine answer. The notice is hard-coded text. It is never written or reworded by a model, so a small model cannot garble it, soften it, or add advice.
+When a prompt appears to describe the writer's own current mental health crisis, the app shows a fixed notice instead of a reply. The notice is hard-coded text. It is never written or reworded by a model, so a small model cannot garble it, soften it, or add advice.
 
-The working text, adapted from the policy used for the Depression Center Resources agent in Microsoft Copilot:
+The notice text, adapted from the policy used for the Depression Center Resources agent in Microsoft Copilot, with a Spanish line and a line on how to continue:
 
-> It seems you may be having a mental health crisis. If you're in the United States, call or text 988 or use [988 Lifeline chat](https://chat.988lifeline.org/) now.
-
-A longer alternative, to choose between during phase planning:
-
-> It sounds like you may be struggling. Call or text 988 to reach the 988 Lifeline. 988 is confidential, available 24/7, and connects people experiencing a mental health, substance use, or suicidal crisis with trained crisis counselors.
+> It sounds like you may be struggling. Call or text 988 to reach the 988 Lifeline, or use the [988 Lifeline chat](https://chat.988lifeline.org/). 988 is confidential, available 24/7, and connects people experiencing a mental health, substance use, or suicidal crisis with trained crisis counselors.
+>
+> Si hablas español, llama al 988 y oprime 2, o envía la palabra AYUDA al 988.
+>
+> To continue chatting, send your message again.
 
 The policy the notice follows: if a prompt appears to describe a current crisis, the app does not engage clinically, assess risk, ask safety questions, or continue routine guidance. Academic, research, or general informational discussion of suicide or self-harm does not by itself indicate a current crisis.
 
+#### Decisions
+
+- The notice replaces the model's reply for that turn. No generation runs.
+- Prompts only. Model responses are not scanned; that is a possible follow-up issue.
+- The notice shows once per chat. After it, the check is skipped for that chat, so a false positive costs one resend.
+- The notice is stored as a `crisis-notice` message, the same way the PHI warning is: it re-renders on reload, appears in the text export, and is never sent to the model.
+- One check for every model, with no model-side instruction. A system-prompt rule can only produce a model-written reply or a sentinel token, needs the reply stream buffered and scanned, and primes safety-tuned models to lecture on legitimate research questions. The check is model-independent, covers Ollama, and is tuned against a written prompt list.
+- The check runs before generation, not beside it. Every model call goes through the shared engine lock, so a parallel check would queue behind the reply, and a small model streams its first tokens faster than the check finishes. The cost is one prompt embedding when the router is off, and nothing extra when it is on, because the two share one vector.
+- The phrase patterns and example sentences cover English and Spanish. The embedding and tiebreak models are English-only, so Spanish relies on the phrase patterns.
+
 #### How it fits the code
 
-The chat router (`routeIntent()` in `index.html`) already runs a regex tier and then scores each prompt with the shared `bge-small` embedding against short exemplar lists (`ROUTER_EXEMPLARS`), with an NLI tiebreak (`ROUTER_NLI_ID`). The crisis check should reuse those same pieces rather than load another model. The difference is that it is a separate, parallel check, not one more intent:
+The chat router (`routeIntent()` in `index.html`) runs a regex tier, then scores each prompt with the shared `bge-small` embedding against short exemplar lists, with an NLI tiebreak. The crisis check reuses those pieces without loading another model, as a separate check rather than one more intent:
 
-- It runs on every prompt, whether or not the router is turned on.
-- It never competes with the routing intents for top score. It has its own exemplars, its own threshold, and its own regex tier for explicit phrases.
-- Its result does not change the system prompt. It decides only whether the fixed notice is shown.
-- It must add little memory and time. Reusing the embedding the router already computes for the prompt keeps the added cost near zero when the router is on.
+- `promptSignalsCrisis()` runs in `handleSend()` after the user's message is saved and before any reply is generated, whether or not the router is on. Tier 0 is `crisisTier0()`, a set of first-person phrase patterns silenced by research-context words. Tier 1 embeds the prompt once through `embedRoutingText()`, which the router reuses on the same turn, and scores it against `CRISIS_EXEMPLARS` and `CRISIS_CONTRAST_EXEMPLARS` through `crisisVerdictFromScores()`. Tier 2 asks the router's NLI model only when the scores fall between the two margins.
+- All detection data sits in one marked block in `index.html` that the tests evaluate on their own. The notice text constants sit next to the system prompts.
+- A hit appends the notice bubble, saves the `crisis-notice` message, sets `chat.crisisNoticed`, and ends the turn. The bubble is built with `createElement` and `textContent`, links the words "988 Lifeline chat", marks the Spanish line with `lang="es"`, and is announced through a screen-reader-only live region.
 
-#### Decisions to settle in the phase plan
+#### Tests
 
-- Whether the notice replaces the model's reply for that turn (the Copilot policy) or is shown above a reply that still runs. The Copilot policy is the recommended default.
-- Whether to also scan model responses, as the issue suggests. Recommendation: prompts only in this phase, and open a follow-up issue for responses if wanted.
-- Whether the notice is shown once per chat or on every matching turn.
-- The exemplar list and the threshold, tested against both crisis phrasing and non-crisis phrasing (research questions, survey design, literature summaries, the classifier skills' category descriptions).
-- How the notice is announced to screen readers, and how it is stored in the chat history, if at all. Recommendation: store it as a system notice that is excluded from model input, the same way existing system notices are.
+`tests/crisis-check.test.mjs` runs the phrase tier against `tests/fixtures/crisis-prompts.json` with no model. `tests/crisis-models.test.mjs` scores the same fixture with the real embedding and tiebreak models on the CPU, so every crisis prompt must end as a crisis and every research prompt must not. Both run in the GitHub Actions workflow added in this phase, together with the documentation lint and the static checks on `index.html`.
 
 #### Acceptance criteria
 
@@ -101,9 +106,15 @@ The chat router (`routeIntent()` in `index.html`) already runs a regex tier and 
 - No prompt text is logged.
 - The notice is keyboard reachable, has sufficient contrast, and is announced when it appears.
 
-#### Documentation to update
+#### Verification record
 
-`docs/user-guide.md`, `docs/security-privacy-accessibility.md`, and `docs/design-change-record.md`.
+Automated, on 2026-09-23: `node --test tests/` passed (121 tests, the model test skipped), and `node --test tests/crisis-models.test.mjs` passed all 33 fixture prompts with the real models on the CPU.
+
+Browser, on 2026-09-23, headless Microsoft Edge 151 with WebGPU, served from `python -m http.server 8010`, driven over the DevTools protocol: every fixture prompt was sent in a fresh chat with SmolLM2-360M + Router and the bundled compendium (17 crisis prompts showed the notice and no reply, 16 research prompts got a normal reply). A twelve-prompt subset was repeated with Llama 3.2-1B (router off) with the compendium on and off, and with SmolLM2-360M + Router with the compendium off, with the same result every time. A phrase-tier hit shows the notice about 110 ms after Send; an embedding-tier hit took 2.2 s the first time (the tiebreak model loading) and 110 to 220 ms after that. A second crisis prompt in the same chat got a normal reply. The notice re-rendered after reload, appeared in brackets in the text export, was never sent to the model, and no console errors were logged. The 988 chat link took keyboard focus with a visible outline and opens in a new tab; the Spanish line carries `lang="es"`; the notice text is Michigan Blue and dark ink on white, above 5:1 contrast. Not tested: Ollama, Stop or New Chat during the check itself, and a real screen reader.
+
+#### Documentation updated
+
+`docs/user-guide.md`, `docs/security-privacy-accessibility.md`, `docs/design-change-record.md`, `docs/developer-guide.md`, `docs/architecture.md`, `docs/models-and-runtime.md`, and the project preferences skill.
 
 ### Phase 2: Paste text input for classifier skills (issue #6)
 
@@ -205,10 +216,11 @@ Model output is untrusted, so rendered Markdown must be encoded before it reache
 
 - [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3), zip and progressive XML ingestion, is groundwork for a wearable-data skill that does not exist yet. It stays open until that skill is planned.
 - [#5](https://github.com/DepressionCenter/FieldStationAI/issues/5), service worker and cache bucket, changes the deployment story and adds a network allowlist. It needs an explicit design decision first, recorded in `docs/design-change-record.md`.
+- [#12](https://github.com/DepressionCenter/FieldStationAI/issues/12), pinning the WebLLM import, is a small dependency change that needs its own release-note and advisory check. Do it in its own branch when convenient.
 
 ### Conclusion
 
-Start with phase 1. Create the branch from `main`, write the detailed plan under the phase heading, and set the status to Planning. Move down the table as each pull request merges.
+Phase 1 is in review. Move down the table as each pull request merges: create the next branch from `main`, write the detailed plan under the phase heading, and set the status to Planning.
 
 ### Additional resources
 

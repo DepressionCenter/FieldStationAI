@@ -1,0 +1,88 @@
+# This file is part of Field Station AI
+# .github/workflows/tests.yml
+# Author(s): Gabriel Mongefranco.
+# Created: 2026-09-23
+# Last Modified: 2026-09-23
+# Summary: Runs the test suite on every pull request and on every push to
+# main. The static job installs nothing: it checks the documentation, the
+# single-file app, and the crisis check's regex tier with Node's own test
+# runner. The models job installs the one test dependency and scores the
+# crisis prompt fixture with the real embedding and tiebreak models on the
+# CPU, caching the model files between runs. Nothing here publishes, writes
+# to the repository, or needs a secret.
+# Notes: See README file for documentation and full license information.
+#
+# Copyright © 2026 The Regents of the University of Michigan
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+# You should have received a copy of the GNU General Public License along
+# with this program. If not, see <https://www.gnu.org/licenses/>.
+
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request supersedes the run in progress.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      # The model-backed test skips itself here; the models job runs it.
+      - name: Run the fast suite
+        run: node --test tests/
+        env:
+          FSAI_SKIP_MODEL_TESTS: "1"
+
+  models:
+    name: Model checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+
+      - name: Install the test dependency
+        run: npm ci --prefix tests
+
+      # The embedding and tiebreak model files are about 200 MB together
+      # and never change for a given package version, so they are kept
+      # between runs.
+      - name: Cache the model files
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tests/.cache/models
+          key: crisis-models-${{ hashFiles('tests/package-lock.json') }}
+
+      - name: Score the crisis prompt fixture with the real models
+        run: node --test tests/crisis-models.test.mjs

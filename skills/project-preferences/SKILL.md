@@ -73,9 +73,10 @@ browsers block model downloads for `file://` pages.
 4. Exercise the paths your change touched: chat, attachments, Field Kit tools, and the
    compendium badge.
 
-There is no automated test suite in this repository, so verification is manual. Say exactly
-which browser and which models you used, and say plainly when you could not test something.
-Never report a result you did not observe.
+The automated suite under `tests/` covers the documentation, the single-file rule, and the
+crisis check; run `node --test tests/` before opening a pull request. The app itself is
+verified manually in a browser. Say exactly which browser and which models you used, and say
+plainly when you could not test something. Never report a result you did not observe.
 
 A WebGPU-capable browser and a discrete GPU make larger models usable. Smaller models can
 run without one, so check that a change still works on modest hardware before calling it done.

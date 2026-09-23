@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 security-privacy-accessibility.md: Security and accessibility guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-17
+Last Modified: 2026-09-23
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -94,6 +94,25 @@ Design rule:
 
 This is defense-in-depth, not formal de-identification.
 
+## Crisis Notice
+
+When a chat prompt appears to describe the writer's own current mental health crisis, the app shows a fixed notice with the 988 Lifeline number and chat link instead of a reply. The check follows the policy of the Depression Center Resources agent in Microsoft Copilot: the app does not engage clinically, assess risk, or ask safety questions, and it does not continue routine guidance on that turn.
+
+What the code does:
+
+- The check runs on the prompt only, in the browser, before any reply is generated, on every chat model including Ollama, with the router on or off.
+- It has three tiers: first-person phrase patterns in English and Spanish, a comparison of the prompt with crisis and research example sentences using the same embedding model the compendium uses, and a small tiebreak model for scores that fall between the two.
+- The notice text is a constant in the code. No model writes or rewords it.
+- The notice is saved in the chat the way the PHI warning is, so it re-appears on reload and in the text export, and it is never sent to the model as part of the conversation.
+- The notice shows once per chat. After that, the check is skipped for that chat.
+- No prompt text is logged.
+
+What the check cannot do:
+
+- It is a heuristic. It can miss a crisis, and it can show the notice for an academic or research prompt about suicide or self-harm. The prompts in `tests/fixtures/crisis-prompts.json` record the cases it is tested against.
+- The embedding and tiebreak models are English-only. Spanish is covered by the phrase patterns, so Spanish detection is narrower.
+- It is not a clinical assessment, and it does not replace a study's safety protocol.
+
 ## Logging and Exports
 
 Console errors may include technical details. Avoid capturing logs or screenshots with real participant data.
@@ -129,6 +148,7 @@ Before release, test:
 6. Test screen-reader announcement of status and progress messages.
 7. Confirm color is not the only state cue.
 8. Test reduced-motion mode.
+9. Send a crisis test prompt from `tests/fixtures/crisis-prompts.json`, confirm a screen reader announces the notice, and reach its 988 chat link with Tab.
 
 Automated check:
 

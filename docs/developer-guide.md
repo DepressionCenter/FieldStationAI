@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 developer-guide.md: Guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-17
+Last Modified: 2026-09-23
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -129,6 +129,19 @@ The standing instructions are short text constants near the top of the script in
 
 Test a wording change on the smallest model in the dropdown and on a 1B model, with a compendium on and off, before keeping it.
 
+## Change the Crisis Check
+
+The crisis check decides whether a chat prompt gets the fixed 988 notice instead of a reply. Its data lives in `index.html` between the comments `Crisis check: data and pure helpers (start)` and `(end)`: the phrase patterns, the topic words that silence them, the crisis and contrast example sentences, the tiebreak hypotheses, the three thresholds, and two pure functions. The tests evaluate that block on its own, so keep it free of DOM access and of other constants from the file.
+
+- Add a phrase to `CRISIS_TIER0_RE` when a clearly worded first-person statement gets past the check. Add a topic word to `CRISIS_TIER0_TOPIC_RE` when a research phrasing fires the patterns.
+- Add example sentences to `CRISIS_EXEMPLARS` or `CRISIS_CONTRAST_EXEMPLARS` when the embedding tier gets a case wrong. A research prompt that scores close to the crisis list needs a contrast entry that is closer.
+- Change the thresholds last. `CRISIS_COSINE_MIN` is the floor, `CRISIS_MARGIN_MIN` is how far the crisis score must beat the contrast score, and `CRISIS_CLEAR_MARGIN` is where the tiebreak stops being needed.
+- Put every new case in `tests/fixtures/crisis-prompts.json` first, then run the model test (see Run the Tests) until every prompt lands on the right side.
+- The embedding and tiebreak models are English-only. A Spanish case must be covered by the phrase patterns.
+- Never put the notice text through a model, and never log the prompt.
+
+Then confirm in a browser on the smallest model in the dropdown and on a 1B model, with the router on and off and the compendium on and off. The notice must appear for the crisis prompts and not for the research prompts.
+
 ## Add a User Setting
 
 User settings live in `SETTING_DEFS`, which holds each setting's fixed recommended value and range. The Advanced settings dialog reads its limits from there and its reset text from `recommendedSetting()`, which may return something else for a setting whose recommendation depends on context. The match floor is the example: it follows the loaded compendium's own floor when the file has one.
@@ -170,6 +183,27 @@ For browser-based Python workflows:
 - Do not include dataframe `head()` output in notebooks unless explicitly reviewed.
 - Prefer aggregate metadata: row counts, column counts, column names, exception type.
 - Keep real data previews limited to UI where needed and review PHI risk.
+
+## Run the Tests
+
+The tests live under `tests/` and use Node's own test runner, so nothing is installed for the fast suite. You need Node 22 or newer.
+
+```text
+node --test tests/
+```
+
+That checks every documentation page (links, license comment, heading structure), the file header and single-script rule in `index.html`, and the crisis check's phrase tier against the prompt fixture. The model-backed test skips itself unless its dependency is installed.
+
+To score the crisis prompt fixture with the real embedding and tiebreak models on your CPU:
+
+```text
+npm ci --prefix tests
+node --test tests/crisis-models.test.mjs
+```
+
+The first run downloads about 200 MB of model files into `tests/.cache/`, which git ignores. Set `FSAI_SKIP_MODEL_TESTS=1` to skip that test even when the dependency is installed.
+
+The GitHub Actions workflow in `.github/workflows/tests.yml` runs both on every pull request and on every push to `main`. Browser testing of the app is still manual: record the browser, the models, and the steps in the pull request.
 
 ## Security Checklist
 

@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 user-guide.md: Guide for users of Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-17
+Last Modified: 2026-09-23
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -34,6 +34,16 @@ Do not treat the app as a compliance certification. If your data may contain PHI
 5. Use **Stop** to interrupt a response when available.
 
 Use **New chat** for a separate conversation. Each chat should keep its own messages and attachments.
+
+## If You May Be in Crisis
+
+Field Station AI™ is not a counseling service, but it is made by a depression center, so it watches for one thing. If a message you type sounds like you are in a mental health crisis right now, the app shows a fixed notice instead of a reply. The notice gives the 988 Suicide and Crisis Lifeline, which you can call or text at 988 in the United States, and a link to the 988 Lifeline chat. It also says how to reach 988 in Spanish.
+
+The notice is written by people, not by the AI model, so it always says the same thing. The app checks your message on your own computer and does not send it anywhere.
+
+The notice appears once per chat. After it, the app answers normally. To continue chatting, send your message again.
+
+The check is a best effort. It can miss a message, and it can show the notice for a research question about suicide or self-harm. If that happens, send the message again and the assistant will answer. If you or someone else is in danger, contact your local emergency services.
 
 ## Choose a Model
 
