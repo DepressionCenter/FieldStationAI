@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 developer-guide.md: Guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-23
+Last Modified: 2026-09-28
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -112,6 +112,9 @@ Preserve these rules:
 - Treat every field in a compendium as untrusted input, and keep the size limit (`COMPENDIUM_MAX_BYTES`, applied to the container bytes whether they arrive plain or come out of gzip).
 - Do not send user prompts to the compendium URL.
 - Retune the fallback `compendiumCosineMin` in `SETTING_DEFS`, and the other thresholds, if the embedding model ever changes.
+- Load the reranker (`COMPENDIUM_RERANK_MODEL_ID`) as a sequence-classification model and read its raw score. The text-classification pipeline turns a one-label model's score into a constant 1.
+- Apply each section's `weight` in the reranker, after the sigmoid of its score. A compendium marks boilerplate with a weight below 1, and a reranker that ignored it would undo that.
+- Keep `COMPENDIUM_RERANK_TOPN_INPUT` above `COMPENDIUM_TOPK`, and `COMPENDIUM_SOURCE_CAP` at 1. The reranker can only replace a poor section when it sees more sections than the prompt keeps, and a hit is a section's full text, so a second window of one section is a duplicate excerpt. The static test checks all three.
 
 The bundled file is found by name. `BUNDLED_COMPENDIUM_URLS` lists the names tried, full file first and `.gz` before `.json`, and `fetchBundledCompendium()` uses the first one the server does not answer 404 for. Extractium writes a light file (`<slug>.json.gz`, page descriptions only) and a full file (`<slug>-full.json.gz`, every section's text). To ship the other one, change the file next to `index.html`, not the list. A `?compendium-url=` file is read the same way, and gzip is detected from the first two bytes, never from the name.
 
@@ -124,8 +127,9 @@ The standing instructions are short text constants near the top of the script in
 - `SYSTEM_PROMPT` is sent when the model answers from its own knowledge. Its strict brevity is deliberate. On a small model, a longer answer is mostly more room to make things up.
 - `SYSTEM_PROMPT_COMPENDIUM` replaces it on a turn that carries compendium excerpts. A `COMPENDIUM_*_SUFFIX` rule follows it. Include mode tells the model to answer from the excerpts first. Lockdown mode tells it to answer only from them.
 - Never send `SYSTEM_PROMPT` on a compendium turn. Its last sentence limits answers to the conversation, and a literal-minded model can read that as a reason to ignore the excerpts.
-- The sentence that marks excerpts as reference data, not instructions, lives in the excerpt block header. Do not remove it.
+- The sentence that marks excerpts as reference data, not instructions, lives in the excerpt block header. Do not remove it. A small model sometimes types that header back before its answer; `isLeakedHeaderPrefix` holds the copy out of the bubble while it streams and `stripLeakedReferenceHeader` removes it, so keep both in step with the header's wording.
 - Router closing hints (`ROUTER_ENHANCEMENTS`) are the last thing a routed model reads, so they outweigh the system prompt on the smallest model. Do not put a quoted reply in one. Given the words "I am not sure" there, a 360M model answered every question with them.
+- A compendium excerpt is the section's text alone. Do not put its heading in the block. A small model copies the first line of the first excerpt, so with a heading there, SmolLM2-360M answered with the article title and nothing else, and Llama 3.2-1B opened with it. The Sources row and the citation chips carry the title.
 
 Test a wording change on the smallest model in the dropdown and on a 1B model, with a compendium on and off, before keeping it.
 
@@ -193,16 +197,18 @@ The tests live under `tests/` and use Node's own test runner, so nothing is inst
 node --test tests/
 ```
 
-That checks every documentation page (links, license comment, heading structure), the file header and single-script rule in `index.html`, and the crisis check's phrase tier against the prompt fixture. The model-backed test skips itself unless its dependency is installed.
+That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, and reranker wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, and the reply and citation text helpers. The model-backed tests skip themselves unless their dependency is installed.
 
-To score the crisis prompt fixture with the real embedding and tiebreak models on your CPU:
+Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are two such blocks: the crisis check's data and the reply and citation text helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
+
+To score the crisis prompt fixture with the real embedding and tiebreak models, and the reranker with synthetic passages, on your CPU:
 
 ```text
 npm ci --prefix tests
-node --test tests/crisis-models.test.mjs
+node --test tests/crisis-models.test.mjs tests/rerank-models.test.mjs
 ```
 
-The first run downloads about 200 MB of model files into `tests/.cache/`, which git ignores. Set `FSAI_SKIP_MODEL_TESTS=1` to skip that test even when the dependency is installed.
+The first run downloads about 300 MB of model files into `tests/.cache/`, which git ignores. Set `FSAI_SKIP_MODEL_TESTS=1` to skip those tests even when the dependency is installed.
 
 The GitHub Actions workflow in `.github/workflows/tests.yml` runs both on every pull request and on every push to `main`. Browser testing of the app is still manual: record the browser, the models, and the steps in the pull request.
 

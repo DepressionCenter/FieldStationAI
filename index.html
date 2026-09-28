@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 index.html: Main HTML file for the Field Station AI application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-18
-Last Modified: 2026-09-23
+Last Modified: 2026-09-28
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This is the main HTML file for the Field Station AI application.
 Notes: See README file for documentation and full license information.
 
@@ -1181,7 +1181,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     <footer id="app-footer">© 2026 The Regents of the University of Michigan &nbsp;|&nbsp; <a href="https://depressioncenter.org" target="_blank" rel="noopener noreferrer">Eisenberg Family Depression Center</a></footer>
 
     <script type="module">
-        import { pipeline, TextStreamer, InterruptableStoppingCriteria, AutoProcessor, AutoModelForVision2Seq, Qwen2VLForConditionalGeneration, RawImage, read_audio, env, LogLevel, ModelRegistry } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
+        import { pipeline, TextStreamer, InterruptableStoppingCriteria, AutoProcessor, AutoTokenizer, AutoModelForSequenceClassification, AutoModelForVision2Seq, Qwen2VLForConditionalGeneration, RawImage, read_audio, env, LogLevel, ModelRegistry } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
 
         // Run ORT-WASM in a Web Worker so the main thread stays free to paint
         // and dispatch clicks (Stop, New Chat) between token dispatches. Without
@@ -1631,8 +1631,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // A "source" is one section (a compendium parent, identified by its
         // stable id) - never a bare URL. That makes this a real per-section
         // cap, so e.g. a long video transcript's many sections can't
-        // collapse to one citable unit.
-        const COMPENDIUM_SOURCE_CAP = 2;                          // max hits kept per source identity
+        // collapse to one citable unit. One hit per section: a hit resolves
+        // to the section's full text (see compendiumHitsFromSelected), so a
+        // second window of the same section would put the same excerpt in
+        // the prompt twice.
+        const COMPENDIUM_SOURCE_CAP = 1;                          // max hits kept per source identity
         const COMPENDIUM_TOPK = 4;                                // hits per turn fed into the prompt
         const COMPENDIUM_CTX_TOKEN_BUDGET = 1800;                 // rough cap for the reference block
         const COMPENDIUM_TTL_MS = 7 * 24 * 60 * 60 * 1000;        // 7 days for cached EXTERNAL compendium bodies
@@ -1678,7 +1681,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // ---------- Cross-encoder reranker (always on, see compendiumRerankEnabled) ----------
         const COMPENDIUM_RERANK_MODEL_ID = 'Xenova/ms-marco-MiniLM-L-6-v2';
-        const COMPENDIUM_RERANK_TOPN_INPUT = 10;                  // rerank only a small post-diversify shortlist, not the whole candidate pool
+        // How many diversified sections the reranker reads before the best
+        // COMPENDIUM_TOPK are kept. Larger than COMPENDIUM_TOPK on purpose:
+        // the search that builds the shortlist scores a window as its
+        // heading plus its text, so a short section under a heading that
+        // repeats the question (an author bio, a tag line) can outrank the
+        // section that answers it. Only a reranker that sees more sections
+        // than the prompt keeps can swap those out. A small shortlist, not
+        // the whole candidate pool, because a cross-encoder pass costs far
+        // more per item than a dot product.
+        const COMPENDIUM_RERANK_TOPN_INPUT = 10;
         // The model cites opaque [S#] tags only - never a URL or file name,
         // which it would otherwise reproduce imperfectly. JS resolves the
         // tags to real links. Deliberately kept SHORT: this suffix only
@@ -3592,7 +3604,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // fall within 1..sources.length will also match - there is no way to
         // distinguish that from a genuine citation without the model marking
         // citations more explicitly than a bracketed number.
-        const CITATION_RE = /(?<=^|[\s(\[])\[?S(\d{1,2})\]?(?=$|[\s.,;:)\]])/g;
+        // A closing bracket may precede a tag and an opening bracket may
+        // follow one, so two tags written back to back, "[S1][S2]", both
+        // match whole. Without that, the first match stopped short of its
+        // closing bracket and the second lost its opening one, and the
+        // reader saw "1][2".
+        // ### Citation tags: regex and pure helpers (start) ###
+        const CITATION_RE = /(?<=^|[\s(\[\]])\[?S(\d{1,2})\]?(?=$|[\s.,;:)\[\]])/g;
         function findSourceById(sources, numStr) {
             return (sources || []).find(s => s.id === 'S' + numStr) || null;
         }
@@ -3619,6 +3637,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (last < text.length) parts.push({ text: text.slice(last) });
             return parts.length ? parts : [{ text }];
         }
+        // ### Citation tags: regex and pure helpers (end) ###
         // Resolves [S#] tags back into a real, human-readable citation for
         // sinks that leave the live chat UI (Copy button, .txt export) -
         // a chip that only ever existed as a DOM element is worthless once
@@ -3875,6 +3894,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // dropped hit's tag number missing from the row entirely - e.g.
         // "[1] ... [3] ..." with no [2] anywhere, which reads as a bug even
         // though it was just tag 2's page being a duplicate of tag 1's.
+        // The link is labelled with the page title (compendiumPageTitle),
+        // never with one section's heading, because one link stands for
+        // every section cited on that page.
         // Builds (but does not insert) the row - returns null when there's
         // nothing to show so callers can skip appending it entirely.
         function buildSourcesRow(hits) {
@@ -3888,7 +3910,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const byUrl = new Map(); // u -> { t, u, nums: [] }
             for (const h of hits) {
                 if (!h || !h.u) continue;
-                const entry = byUrl.get(h.u) || { t: h.t || h.u, u: h.u, nums: [] };
+                const entry = byUrl.get(h.u) || { t: compendiumPageTitle(h.t) || h.u, u: h.u, nums: [] };
                 if (h.id) entry.nums.push(h.id.replace(/^S/, ''));
                 byUrl.set(h.u, entry);
             }
@@ -4128,28 +4150,97 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return cut > 0 ? raw.slice(0, cut).trim() : '';
         }
 
+        // ### Reply and citation text helpers (start) ###
+        // Pure text helpers, kept free of DOM and app state: the tests
+        // evaluate this block on its own.
+
         // A weak/small model given a reference-excerpt block sometimes echoes
-        // the block's own HEADER sentence back verbatim as if it were the
-        // start of its answer, instead of actually answering - a
-        // completion-style failure (the header is the last thing before the
-        // real question, so a weak model just continues it) rather than a
-        // prompt-injection concern. `headers` is whichever exact header
-        // string(s) buildCompendiumContextBlock/buildAttachmentContextBlock actually
-        // returned this turn (so this never drifts out of sync with the real
-        // prompt text). Exact-substring removal only - never touches a
-        // paraphrase, which is normal model behavior, not a leak. Same
-        // output-side-scrub philosophy as trimRepeatedTail/detectRepetition:
-        // fix the failure in code, not by growing the prompt (see this
-        // file's own history of an elaborate anti-repeat suffix that didn't
-        // clearly help and is suspected of destabilizing an unrelated model).
+        // the block's own HEADER sentence back as if it were the start of
+        // its answer, instead of actually answering - a completion-style
+        // failure (the header is the last thing before the real question,
+        // so a weak model just continues it) rather than a prompt-injection
+        // concern. The copy is rarely exact: a 360M model wrote "inside the
+        // excerpts" for "inside excerpts", which an exact-substring test
+        // missed, and on another run it echoed only the header's first
+        // sentence. leakedHeaderPattern matches the header's words in
+        // order, ignoring case, and lets punctuation, spacing, and an
+        // inserted article vary between them. It accepts the whole header
+        // or any run of whole sentences from its start, never part of a
+        // sentence, so a real rewording (normal model behavior, not a
+        // leak) is left alone. `headers` is whichever exact header string(s)
+        // buildCompendiumContextBlock/buildAttachmentContextBlock actually
+        // returned this turn, so this never drifts out of sync with the real
+        // prompt text. Same output-side-scrub philosophy as
+        // trimRepeatedTail/detectRepetition: fix the failure in code, not by
+        // growing the prompt (see this file's own history of an elaborate
+        // anti-repeat suffix that didn't clearly help and is suspected of
+        // destabilizing an unrelated model).
+        function leakedHeaderPattern(header) {
+            // Between two words: any run of other characters, with room for
+            // one article the model slipped in. Words are alphanumeric
+            // runs, so nothing here needs escaping.
+            const gap = '[^A-Za-z0-9]+(?:(?:the|an|a)[^A-Za-z0-9]+)?';
+            const sentences = String(header || '').split(/(?<=[.!?])\s+/)
+                .map(sentence => sentence.match(/[A-Za-z0-9]+/g))
+                .filter(words => words && words.length)
+                .map(words => words.join(gap));
+            if (!sentences.length) return null;
+            // First sentence required, each later one optional only when
+            // every sentence before it matched: S1(?:gap S2(?:gap S3)?)?
+            let tail = '';
+            for (let i = sentences.length - 1; i >= 1; i--) tail = '(?:' + gap + sentences[i] + tail + ')?';
+            // After the last matched word: the closing punctuation and the
+            // blank line before the answer.
+            return new RegExp(sentences[0] + tail + '[^A-Za-z0-9]*', 'gi');
+        }
         function stripLeakedReferenceHeader(text, headers) {
-            let out = text;
+            let out = String(text || '');
             for (const h of headers) {
-                if (!h) continue;
-                out = out.split(h).join('');
+                const pattern = leakedHeaderPattern(h);
+                if (pattern) out = out.replace(pattern, '');
             }
             return out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
         }
+
+        // Whether `text` could still be the opening of one of `headers`:
+        // its words match the header's words in order, and the last word
+        // may be cut short by a token boundary. Articles are ignored on
+        // both sides, since a small model adds or drops them. Used while a
+        // reply streams, so an echoed header is held back rather than shown
+        // and then removed when stripLeakedReferenceHeader runs at the end.
+        function isLeakedHeaderPrefix(text, headers) {
+            const article = w => w === 'the' || w === 'a' || w === 'an';
+            const words = s => (String(s || '').match(/[A-Za-z0-9]+/g) || []).map(w => w.toLowerCase());
+            const got = words(text).filter(w => !article(w));
+            // A last word still being typed: it may also be the start of an
+            // article, which would be ignored once complete.
+            const partial = /[A-Za-z0-9]$/.test(String(text || ''));
+            if (partial && got.length && ['the', 'an'].some(a => a.startsWith(got[got.length - 1]))) got.pop();
+            if (!got.length) return false;
+            for (const h of headers || []) {
+                const want = words(h).filter(w => !article(w));
+                if (got.length > want.length) continue;
+                let ok = true;
+                for (let i = 0; i < got.length && ok; i++) {
+                    ok = (partial && i === got.length - 1) ? want[i].startsWith(got[i]) : want[i] === got[i];
+                }
+                if (ok) return true;
+            }
+            return false;
+        }
+
+        // The page title in a compendium section heading. Extractium writes
+        // a heading as "Page title -- Section heading", or the page title
+        // alone for text before the first heading, so the title is what
+        // precedes the first " -- ". Used where one link stands for a whole
+        // page (the Sources row), so a page cited through its "About the
+        // Author" section is not labelled with that section.
+        function compendiumPageTitle(heading) {
+            const t = String(heading || '');
+            const cut = t.indexOf(' -- ');
+            return (cut === -1 ? t : t.slice(0, cut)).trim();
+        }
+        // ### Reply and citation text helpers (end) ###
 
         // ---------- Context trimming ----------
 
@@ -6568,14 +6659,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Lazy cross-encoder reranker load, gated behind compendiumRerankEnabled()
         // (always true - see that function) so it only loads once actually
         // needed for a compendium/attachment turn. Mirrors ensureCompendiumEmbedder's
-        // lazy-load-once/fallback-ladder shape, but deliberately does NOT
-        // reuse its 'feature-extraction' pipeline task: ms-marco-MiniLM-L-6-v2
-        // is a cross-encoder (query/passage PAIR -> single relevance score),
-        // which Transformers.js exposes via the 'text-classification'
-        // pipeline task with a `text_pair` option, not feature-extraction's
-        // embedding-vector shape. Score is a relative ranking signal only,
-        // not a calibrated probability - rerankHits sorts by it, nothing
-        // compares it against an absolute cutoff.
+        // lazy-load-once/fallback-ladder shape, but loads the tokenizer and
+        // the sequence-classification model directly rather than through a
+        // pipeline: ms-marco-MiniLM-L-6-v2 is a cross-encoder (query/passage
+        // PAIR -> one relevance logit), and the 'text-classification'
+        // pipeline puts that single logit through a softmax, which makes
+        // every passage score exactly 1 and reranks nothing. The raw logit
+        // is a relative ranking signal only, not a calibrated probability -
+        // rerankHits sorts by it, nothing compares it against an absolute
+        // cutoff. The cached value is { tokenizer, model }.
         function ensureCompendiumReranker() {
             if (compendiumState.reranker) return Promise.resolve(compendiumState.reranker);
             if (compendiumState.rerankerLoading) return compendiumState.rerankerLoading;
@@ -6593,11 +6685,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 for (const step of ladder) {
                     try {
                         const cb = makeCacheAwareProgress(cachedRc, 'Downloading reranker...');
-                        const rr = await pipeline('text-classification', COMPENDIUM_RERANK_MODEL_ID, {
+                        const tokenizer = await AutoTokenizer.from_pretrained(COMPENDIUM_RERANK_MODEL_ID, { progress_callback: cb });
+                        const model = await AutoModelForSequenceClassification.from_pretrained(COMPENDIUM_RERANK_MODEL_ID, {
                             dtype: step.dtype,
                             device: step.device,
                             progress_callback: cb
                         });
+                        const rr = { tokenizer, model };
                         compendiumState.reranker = rr;
                         markCached(COMPENDIUM_RERANK_MODEL_ID);
                         saveModelRung(COMPENDIUM_RERANK_MODEL_ID, step.device, step.dtype);
@@ -6622,9 +6716,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         // Reranks an already-diversified, already-resolved hit list (parent
         // text, not raw child windows) - only ever called on a small
-        // shortlist (COMPENDIUM_RERANK_TOPN_INPUT), never the full candidate pool,
-        // since a cross-encoder pass is much more expensive per item than
-        // the dot-product scoring the rest of retrieval uses. Adds a
+        // shortlist (COMPENDIUM_RERANK_TOPN_INPUT, see rerankShortlistSize), never
+        // the full candidate pool, since a cross-encoder pass is much more
+        // expensive per item than the dot-product scoring the rest of
+        // retrieval uses. The caller keeps the top k of the returned order. Adds a
         // SEPARATE `rerankS` field rather than overwriting `s` - keeps the
         // original fused/cosine score visible for debugging and avoids
         // silently changing what `s` means to every other reader of a hit
@@ -6644,9 +6739,21 @@ with this program. If not, see https://www.gnu.org/licenses/.
             await EngineLock.acquire('chat', chatLockWaitCtl.signal);
             try {
                 for (const h of shortlist) {
-                    const out = await rr(query, { text_pair: h.x || '' });
-                    const rec = Array.isArray(out) ? out[0] : out;
-                    h.rerankS = (rec && Number.isFinite(rec.score)) ? rec.score : h.s;
+                    // One query/passage pair per call; the model's single
+                    // logit is the score. Truncation keeps a long section
+                    // inside the model's 512-token window. The logit goes
+                    // through a sigmoid, which keeps its order, so the
+                    // section's own weight from the compendium can multiply
+                    // it: the file's builder marks a section as boilerplate
+                    // with a weight below 1, every client applies that after
+                    // rank fusion, and a reranker that replaced the fused
+                    // score without it would quietly undo the builder's
+                    // choice. Attachment hits have no weight and count as 1.
+                    const inputs = rr.tokenizer(query, { text_pair: h.x || '', padding: true, truncation: true });
+                    const out = await rr.model(inputs);
+                    const logit = (out && out.logits) ? Number(out.logits.data[0]) : NaN;
+                    const prior = (Number.isFinite(h.weight) && h.weight > 0) ? h.weight : 1;
+                    h.rerankS = Number.isFinite(logit) ? prior / (1 + Math.exp(-logit)) : h.s;
                 }
             } catch (e) {
                 console.error('Reranking failed, falling back to un-reranked order:', e);
@@ -7002,7 +7109,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // section text, not just the smaller window that happened to match
         // the query. `start` stays null: it is a segment time in seconds for
         // attachment hits, and a compendium has no such value (a video
-        // section's URL already carries its moment).
+        // section's URL already carries its moment). `weight` is the
+        // section's own prior from the file, carried so the reranker can
+        // apply it (see rerankHits).
         function compendiumHitsFromSelected(selected) {
             return selected.map(h => {
                 const parent = compendiumParentOf(h.i) || {};
@@ -7010,7 +7119,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     t: typeof parent.t === 'string' ? parent.t : '',
                     x: typeof parent.x === 'string' ? parent.x : '',
                     u: typeof parent.u === 'string' ? parent.u : '',
-                    s: h.s, start: null, pid: compendiumState.childPids[h.i]
+                    s: h.s, start: null, pid: compendiumState.childPids[h.i],
+                    weight: (Number.isFinite(parent.weight) && parent.weight > 0) ? parent.weight : 1
                 };
             });
         }
@@ -7019,10 +7129,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
         async function retrieveCompendium(query, k, noThreshold) {
             const pool = await retrieveCompendiumCandidates(query);
             if (!pool) return [];
-            const selected = diversifyHits(pool.candidates, pool.dims, k, compendiumSourceKeyFn, noThreshold, null);
+            // The "closest" list (noThreshold) is informational and never
+            // reranked, so it is cut to k here; a real hit list is
+            // diversified to the rerank shortlist, reranked, then cut.
+            const size = noThreshold ? k : rerankShortlistSize(k);
+            const selected = diversifyHits(pool.candidates, pool.dims, size, compendiumSourceKeyFn, noThreshold, null);
             let hits = compendiumHitsFromSelected(selected);
             if (!noThreshold && compendiumRerankEnabled()) hits = await rerankHits(query, hits);
-            return hits;
+            return hits.slice(0, k);
         }
         // Single-embedding variant for handleSend's dual need: a real,
         // threshold-filtered hit list to cite AND an unfiltered "closest"
@@ -7030,15 +7144,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // come from the same candidate pool so this costs one embedding
         // call, not two. Only `hits` (the real citation list) is ever
         // reranked - `closest` is informational-only (lockdown-empty
-        // fallback links), not worth the extra cross-encoder passes.
+        // fallback links), not worth the extra cross-encoder passes. The
+        // hit list is diversified to the rerank shortlist and cut to
+        // COMPENDIUM_TOPK after reranking, so the reranker can swap a
+        // section out, not only reorder the ones the search picked.
         async function retrieveCompendiumBoth(query, closestK) {
             const pool = await retrieveCompendiumCandidates(query);
             if (!pool) return { hits: [], closest: [] };
-            const hitsSelected = diversifyHits(pool.candidates, pool.dims, COMPENDIUM_TOPK, compendiumSourceKeyFn, false, null);
+            const hitsSelected = diversifyHits(pool.candidates, pool.dims, rerankShortlistSize(COMPENDIUM_TOPK), compendiumSourceKeyFn, false, null);
             const closestSelected = diversifyHits(pool.candidates, pool.dims, closestK, compendiumSourceKeyFn, true, null);
             let hits = compendiumHitsFromSelected(hitsSelected);
             if (compendiumRerankEnabled()) hits = await rerankHits(query, hits);
-            return { hits, closest: compendiumHitsFromSelected(closestSelected) };
+            return { hits: hits.slice(0, COMPENDIUM_TOPK), closest: compendiumHitsFromSelected(closestSelected) };
         }
 
         // Per-chat-open vector cache: vectors decrypt once into memory when
@@ -7201,7 +7318,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 return c.att.id + '#' + (start != null ? start : c.i);
             };
             const calibration = computeAttachmentCalibration(allPoints, dims);
-            const selected = diversifyHits(candidates, dims, k, sourceKeyFn, false, calibration);
+            const selected = diversifyHits(candidates, dims, rerankShortlistSize(k), sourceKeyFn, false, calibration);
             let hits = selected.map(h => {
                 const seg = h.att.segments[h.i];
                 const hasPid = seg && typeof seg === 'object' && seg.pid != null;
@@ -7218,9 +7335,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
             });
             // Same single global toggle as the compendium path - a user turning on
             // "more precise compendium answers" reasonably expects it to also apply
-            // to attachment retrieval.
+            // to attachment retrieval. The shortlist is cut to k after.
             if (compendiumRerankEnabled()) hits = await rerankHits(query, hits);
-            return hits;
+            return hits.slice(0, k);
         }
 
         // Same visual row as buildSourcesRow, but plain name badges rather
@@ -7324,6 +7441,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // and citation instruction entirely and get a plain excerpt block.
         // `sources` is still returned either way (the Sources row doesn't
         // depend on the model ever using a tag).
+        //
+        // Each excerpt is the section's text alone, with no heading line.
+        // A small model copies the first line of the first excerpt: with
+        // the heading there, SmolLM2-360M answered with only the article
+        // title and Llama 3.2-1B opened with it, on every question tried.
+        // With the text alone, both answered with content, and moving the
+        // heading after the text still let it leak into the first line.
+        // The heading is kept in `sources` for the Sources row and chips.
         // Returns null if there are no hits, else { text, sources }.
         function buildCompendiumContextBlock(hits, site, query, startId, tagged) {
             if (!hits || !hits.length) return null;
@@ -7340,7 +7465,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 id: 'S' + (start + i), t: h.t || '', x: h.x || '', u: h.u || '',
                 start: h.start != null ? h.start : null
             }));
-            const format = arr => header + '\n\n' + arr.map(h => (useTags ? '[' + h.id + '] ' : '') + h.t + '\n' + h.x).join('\n---\n');
+            const format = arr => header + '\n\n' + arr.map(h => (useTags ? '[' + h.id + '] ' : '') + h.x).join('\n---\n');
             let joined = format(items);
             if (joined.length > budgetChars) {
                 const overhead = format(items.map(h => ({ ...h, x: '' }))).length;
@@ -7644,6 +7769,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // still gate on this function rather than being called
         // unconditionally, so re-adding a toggle later is a one-line change.
         function compendiumRerankEnabled() { return true; }
+        // How many diversified hits to resolve before reranking, when k
+        // will be kept: the reranker needs to see more than k to change
+        // the set, not just its order. Without reranking, exactly k.
+        function rerankShortlistSize(k) {
+            return compendiumRerankEnabled() ? Math.max(k, COMPENDIUM_RERANK_TOPN_INPUT) : k;
+        }
 
         // Persisted badge choice: 'off' or 'bundled' only. 'external' is
         // never persisted - it only ever exists while ?compendium-url= is on the URL, so
@@ -8401,14 +8532,24 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }, 100);
 
             let gibStopped = false;
+            // The exact excerpt-block headers of this turn, set once the
+            // blocks are built below. A small model sometimes types the
+            // header back before its answer; the copy is held back while
+            // it streams and removed once complete, so the reader never
+            // sees it appear and then vanish (see stripLeakedReferenceHeader).
+            let leakHeaders = [];
 
             const onToken = (tok) => {
                 raw += tok;
                 const vis = stripThink(raw);
                 if (isMyTurn()) {
-                    if (vis.trim()) {
+                    let shown = vis;
+                    if (leakHeaders.length && vis.trim()) {
+                        shown = isLeakedHeaderPrefix(vis, leakHeaders) ? '' : stripLeakedReferenceHeader(vis, leakHeaders);
+                    }
+                    if (shown.trim()) {
                         shownAny = true;
-                        botDiv.setText(vis);
+                        botDiv.setText(shown);
                     }
                     chatBox.scrollTop = chatBox.scrollHeight;
                 }
@@ -8595,6 +8736,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 // excerpts, calculation result) into the single user-message
                 // prefix buildGenMessages already supports - no new parameter.
                 const combinedPrefix = [attachmentBlock, compendiumBlock, calcBlock].filter(Boolean).join('\n\n') || null;
+                leakHeaders = [compendiumHeader, attachmentHeader].filter(Boolean);
 
                 let rounds = 0;
                 while (true) {

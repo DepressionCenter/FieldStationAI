@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 design-change-record.md: Summary of recent major design changes in Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-23
+Last Modified: 2026-09-28
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -139,6 +139,16 @@ The detection data lives in a marked block in `index.html` that the tests evalua
 ## Automated Checks
 
 The repository carries a small test suite under `tests/` and a GitHub Actions workflow. The fast suite needs nothing installed and checks the documentation, the single-file rule, and the crisis check's phrase tier. A second job installs one dependency and scores the crisis prompt fixture with the real models. Browser testing of the app itself remains manual.
+
+## Excerpt Reranking
+
+An updated compendium with several sources for one article showed that the reranker was not ranking. Three changes, all in `index.html`:
+
+- The reranker is loaded as a sequence-classification model and its raw score is used. Through the text-classification pipeline, a one-label cross-encoder gets a softmax over its single score, so every passage scored 1 and the order never changed.
+- The search hands the reranker ten sections, and the four with the best scores go to the model. Reranking only the four the search picked could reorder them but never replace one. Search scores a passage with its heading in front, so a short section under a heading that repeats the question, such as an author bio, ranked first and stayed there.
+- One hit per section. A hit is the section's full text, so a second window of the same section put the same excerpt in the prompt twice.
+
+The reranker multiplies each section's score by the weight the compendium gives it, so a section its builder marked as boilerplate stays demoted after reranking. The excerpt block carries each section's text without its heading: a small model copies the first line of the first excerpt, and with the heading there it answered with the article title. Three smaller changes came with these. The Sources row labels a link with the page title rather than one section's heading. Two citation tags written back to back, `[S1][S2]`, both resolve; before, the reader saw `1][2`. The check that removes a leaked excerpt-block header from a reply now tolerates changed punctuation, an inserted article, or a copy of the header's first sentence alone, and it runs while the reply streams: a header being typed back is held out of the bubble and removed when complete, where before it showed for several seconds and then vanished. A model-backed test checks the reranker's scoring, and the fast suite checks the text helpers.
 
 ## Documentation Rule
 
