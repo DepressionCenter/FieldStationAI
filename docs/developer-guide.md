@@ -113,6 +113,7 @@ Preserve these rules:
 - Do not send user prompts to the compendium URL.
 - Retune the fallback `compendiumCosineMin` in `SETTING_DEFS`, and the other thresholds, if the embedding model ever changes.
 - Load the reranker (`COMPENDIUM_RERANK_MODEL_ID`) as a sequence-classification model and read its raw score. The text-classification pipeline turns a one-label model's score into a constant 1.
+- Apply each section's `weight` in the reranker, after the sigmoid of its score. A compendium marks boilerplate with a weight below 1, and a reranker that ignored it would undo that.
 - Keep `COMPENDIUM_RERANK_TOPN_INPUT` above `COMPENDIUM_TOPK`, and `COMPENDIUM_SOURCE_CAP` at 1. The reranker can only replace a poor section when it sees more sections than the prompt keeps, and a hit is a section's full text, so a second window of one section is a duplicate excerpt. The static test checks all three.
 
 The bundled file is found by name. `BUNDLED_COMPENDIUM_URLS` lists the names tried, full file first and `.gz` before `.json`, and `fetchBundledCompendium()` uses the first one the server does not answer 404 for. Extractium writes a light file (`<slug>.json.gz`, page descriptions only) and a full file (`<slug>-full.json.gz`, every section's text). To ship the other one, change the file next to `index.html`, not the list. A `?compendium-url=` file is read the same way, and gzip is detected from the first two bytes, never from the name.

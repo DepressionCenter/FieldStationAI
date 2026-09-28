@@ -148,7 +148,7 @@ An updated compendium with several sources for one article showed that the reran
 - The search hands the reranker ten sections, and the four with the best scores go to the model. Reranking only the four the search picked could reorder them but never replace one. Search scores a passage with its heading in front, so a short section under a heading that repeats the question, such as an author bio, ranked first and stayed there.
 - One hit per section. A hit is the section's full text, so a second window of the same section put the same excerpt in the prompt twice.
 
-Two smaller changes came with them. The Sources row labels a link with the page title rather than one section's heading. The check that removes a leaked excerpt-block header from a reply now tolerates changed punctuation, an inserted article, or a copy of the header's first sentence alone. A model-backed test checks the reranker's scoring, and the fast suite checks the text helpers.
+The reranker multiplies each section's score by the weight the compendium gives it, so a section its builder marked as boilerplate stays demoted after reranking. Three smaller changes came with these. The Sources row labels a link with the page title rather than one section's heading. Two citation tags written back to back, `[S1][S2]`, both resolve; before, the reader saw `1][2`. The check that removes a leaked excerpt-block header from a reply now tolerates changed punctuation, an inserted article, or a copy of the header's first sentence alone. A model-backed test checks the reranker's scoring, and the fast suite checks the text helpers.
 
 ## Documentation Rule
 

@@ -3604,7 +3604,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // fall within 1..sources.length will also match - there is no way to
         // distinguish that from a genuine citation without the model marking
         // citations more explicitly than a bracketed number.
-        const CITATION_RE = /(?<=^|[\s(\[])\[?S(\d{1,2})\]?(?=$|[\s.,;:)\]])/g;
+        // A closing bracket may precede a tag and an opening bracket may
+        // follow one, so two tags written back to back, "[S1][S2]", both
+        // match whole. Without that, the first match stopped short of its
+        // closing bracket and the second lost its opening one, and the
+        // reader saw "1][2".
+        // ### Citation tags: regex and pure helpers (start) ###
+        const CITATION_RE = /(?<=^|[\s(\[\]])\[?S(\d{1,2})\]?(?=$|[\s.,;:)\[\]])/g;
         function findSourceById(sources, numStr) {
             return (sources || []).find(s => s.id === 'S' + numStr) || null;
         }
@@ -3631,6 +3637,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (last < text.length) parts.push({ text: text.slice(last) });
             return parts.length ? parts : [{ text }];
         }
+        // ### Citation tags: regex and pure helpers (end) ###
         // Resolves [S#] tags back into a real, human-readable citation for
         // sinks that leave the live chat UI (Copy button, .txt export) -
         // a chip that only ever existed as a DOM element is worthless once
@@ -6707,11 +6714,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 for (const h of shortlist) {
                     // One query/passage pair per call; the model's single
                     // logit is the score. Truncation keeps a long section
-                    // inside the model's 512-token window.
+                    // inside the model's 512-token window. The logit goes
+                    // through a sigmoid, which keeps its order, so the
+                    // section's own weight from the compendium can multiply
+                    // it: the file's builder marks a section as boilerplate
+                    // with a weight below 1, every client applies that after
+                    // rank fusion, and a reranker that replaced the fused
+                    // score without it would quietly undo the builder's
+                    // choice. Attachment hits have no weight and count as 1.
                     const inputs = rr.tokenizer(query, { text_pair: h.x || '', padding: true, truncation: true });
                     const out = await rr.model(inputs);
                     const logit = (out && out.logits) ? Number(out.logits.data[0]) : NaN;
-                    h.rerankS = Number.isFinite(logit) ? logit : h.s;
+                    const prior = (Number.isFinite(h.weight) && h.weight > 0) ? h.weight : 1;
+                    h.rerankS = Number.isFinite(logit) ? prior / (1 + Math.exp(-logit)) : h.s;
                 }
             } catch (e) {
                 console.error('Reranking failed, falling back to un-reranked order:', e);
@@ -7067,7 +7082,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // section text, not just the smaller window that happened to match
         // the query. `start` stays null: it is a segment time in seconds for
         // attachment hits, and a compendium has no such value (a video
-        // section's URL already carries its moment).
+        // section's URL already carries its moment). `weight` is the
+        // section's own prior from the file, carried so the reranker can
+        // apply it (see rerankHits).
         function compendiumHitsFromSelected(selected) {
             return selected.map(h => {
                 const parent = compendiumParentOf(h.i) || {};
@@ -7075,7 +7092,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     t: typeof parent.t === 'string' ? parent.t : '',
                     x: typeof parent.x === 'string' ? parent.x : '',
                     u: typeof parent.u === 'string' ? parent.u : '',
-                    s: h.s, start: null, pid: compendiumState.childPids[h.i]
+                    s: h.s, start: null, pid: compendiumState.childPids[h.i],
+                    weight: (Number.isFinite(parent.weight) && parent.weight > 0) ? parent.weight : 1
                 };
             });
         }
