@@ -2,14 +2,15 @@
 # .github/workflows/tests.yml
 # Author(s): Gabriel Mongefranco.
 # Created: 2026-09-23
-# Last Modified: 2026-09-23
+# Last Modified: 2026-09-28
 # Summary: Runs the test suite on every pull request and on every push to
 # main. The static job installs nothing: it checks the documentation, the
 # single-file app, and the crisis check's regex tier with Node's own test
 # runner. The models job installs the one test dependency and scores the
-# crisis prompt fixture with the real embedding and tiebreak models on the
-# CPU, caching the model files between runs. Nothing here publishes, writes
-# to the repository, or needs a secret.
+# crisis prompt fixture with the real embedding and tiebreak models, and
+# synthetic passages with the real reranker, on the CPU, caching the model
+# files between runs. Nothing here publishes, writes to the repository, or
+# needs a secret.
 # Notes: See README file for documentation and full license information.
 #
 # Copyright © 2026 The Regents of the University of Michigan
@@ -75,14 +76,14 @@ jobs:
       - name: Install the test dependency
         run: npm ci --prefix tests
 
-      # The embedding and tiebreak model files are about 200 MB together
-      # and never change for a given package version, so they are kept
-      # between runs.
+      # The embedding, tiebreak, and reranker model files are about 300 MB
+      # together and never change for a given package version, so they are
+      # kept between runs.
       - name: Cache the model files
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: tests/.cache/models
-          key: crisis-models-${{ hashFiles('tests/package-lock.json') }}
+          key: test-models-${{ hashFiles('tests/package-lock.json') }}
 
-      - name: Score the crisis prompt fixture with the real models
-        run: node --test tests/crisis-models.test.mjs
+      - name: Run the model-backed tests
+        run: node --test tests/crisis-models.test.mjs tests/rerank-models.test.mjs

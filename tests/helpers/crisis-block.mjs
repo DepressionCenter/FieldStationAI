@@ -2,12 +2,10 @@
 // tests/helpers/crisis-block.mjs
 // Author(s): Gabriel Mongefranco.
 // Created: 2026-09-23
-// Last Modified: 2026-09-23
-// Summary: Shared helpers for the crisis check tests. Cuts the crisis
-// check's data block out of index.html and evaluates it in a bare
-// JavaScript context, so the tests exercise the exact regexes, exemplar
-// lists, thresholds, and pure helpers the app ships, without a browser.
-// Also loads the shared prompt fixture.
+// Last Modified: 2026-09-28
+// Summary: Shared helpers for the crisis check tests. Names the crisis
+// check's data block in index.html and its exports, loads the block
+// through the marked-block helper, and loads the shared prompt fixture.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -24,18 +22,16 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import { REPO_ROOT, INDEX_HTML, blockMarkers, markedBlockSource, loadMarkedBlock } from './marked-block.mjs';
 
-export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-export const INDEX_HTML = path.join(REPO_ROOT, 'index.html');
+export { REPO_ROOT, INDEX_HTML };
 export const FIXTURE = path.join(REPO_ROOT, 'tests', 'fixtures', 'crisis-prompts.json');
 
-// The two marker comments that fence the data block in index.html. The
-// block between them must stay free of DOM and app state, because it is
-// run here with nothing else loaded.
-export const BLOCK_START = '// ### Crisis check: data and pure helpers (start) ###';
-export const BLOCK_END = '// ### Crisis check: data and pure helpers (end) ###';
+// The block in index.html that holds the crisis check's data. It must stay
+// free of DOM and app state, because it is run here with nothing else loaded.
+export const BLOCK_NAME = 'Crisis check: data and pure helpers';
+export const BLOCK_START = blockMarkers(BLOCK_NAME).start;
+export const BLOCK_END = blockMarkers(BLOCK_NAME).end;
 
 // Every name the block must define. The block's completion value is an
 // object holding them, which is how a bare vm context hands them back.
@@ -51,13 +47,7 @@ export const BLOCK_EXPORTS = [
  * Throws when either marker is missing or they are out of order.
  */
 export function crisisBlockSource() {
-    const html = fs.readFileSync(INDEX_HTML, 'utf8');
-    const start = html.indexOf(BLOCK_START);
-    const end = html.indexOf(BLOCK_END);
-    if (start === -1 || end === -1 || end < start) {
-        throw new Error('index.html does not carry the crisis check data block markers');
-    }
-    return html.slice(start + BLOCK_START.length, end);
+    return markedBlockSource(BLOCK_NAME);
 }
 
 /**
@@ -65,8 +55,7 @@ export function crisisBlockSource() {
  * language itself, and returns its exported names as an object.
  */
 export function loadCrisisBlock() {
-    const source = crisisBlockSource() + '\n;({ ' + BLOCK_EXPORTS.join(', ') + ' })';
-    return vm.runInNewContext(source, Object.create(null), { filename: 'crisis-block.js' });
+    return loadMarkedBlock(BLOCK_NAME, BLOCK_EXPORTS);
 }
 
 /**
