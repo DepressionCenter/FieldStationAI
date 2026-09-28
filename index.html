@@ -7414,6 +7414,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // and citation instruction entirely and get a plain excerpt block.
         // `sources` is still returned either way (the Sources row doesn't
         // depend on the model ever using a tag).
+        //
+        // Each excerpt is the section's text alone, with no heading line.
+        // A small model copies the first line of the first excerpt: with
+        // the heading there, SmolLM2-360M answered with only the article
+        // title and Llama 3.2-1B opened with it, on every question tried.
+        // With the text alone, both answered with content, and moving the
+        // heading after the text still let it leak into the first line.
+        // The heading is kept in `sources` for the Sources row and chips.
         // Returns null if there are no hits, else { text, sources }.
         function buildCompendiumContextBlock(hits, site, query, startId, tagged) {
             if (!hits || !hits.length) return null;
@@ -7430,7 +7438,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 id: 'S' + (start + i), t: h.t || '', x: h.x || '', u: h.u || '',
                 start: h.start != null ? h.start : null
             }));
-            const format = arr => header + '\n\n' + arr.map(h => (useTags ? '[' + h.id + '] ' : '') + h.t + '\n' + h.x).join('\n---\n');
+            const format = arr => header + '\n\n' + arr.map(h => (useTags ? '[' + h.id + '] ' : '') + h.x).join('\n---\n');
             let joined = format(items);
             if (joined.length > budgetChars) {
                 const overhead = format(items.map(h => ({ ...h, x: '' }))).length;

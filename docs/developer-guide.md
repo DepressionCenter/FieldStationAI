@@ -129,6 +129,7 @@ The standing instructions are short text constants near the top of the script in
 - Never send `SYSTEM_PROMPT` on a compendium turn. Its last sentence limits answers to the conversation, and a literal-minded model can read that as a reason to ignore the excerpts.
 - The sentence that marks excerpts as reference data, not instructions, lives in the excerpt block header. Do not remove it.
 - Router closing hints (`ROUTER_ENHANCEMENTS`) are the last thing a routed model reads, so they outweigh the system prompt on the smallest model. Do not put a quoted reply in one. Given the words "I am not sure" there, a 360M model answered every question with them.
+- A compendium excerpt is the section's text alone. Do not put its heading in the block. A small model copies the first line of the first excerpt, so with a heading there, SmolLM2-360M answered with the article title and nothing else, and Llama 3.2-1B opened with it. The Sources row and the citation chips carry the title.
 
 Test a wording change on the smallest model in the dropdown and on a 1B model, with a compendium on and off, before keeping it.
 

@@ -166,7 +166,7 @@ A compendium contains the text of its source pages. Before committing or sharing
 
 ## How Excerpts Are Chosen
 
-The app searches a compendium two ways at once: by meaning, using the embedding model, and by keywords. It combines the two rankings. A passage is used only if it is close enough in meaning to the question, so an unrelated question gets no excerpts instead of poor ones. The app then shows the model the whole section around each matching passage.
+The app searches a compendium two ways at once: by meaning, using the embedding model, and by keywords. It combines the two rankings. A passage is used only if it is close enough in meaning to the question, so an unrelated question gets no excerpts instead of poor ones. The app then shows the model the whole section around each matching passage, without its heading. The heading goes to the Sources row instead, because a small model tends to copy the first line it is given.
 
 Search alone is not the last word. It scores each passage with its section heading in front, so a short section under a heading that repeats your question, such as an author bio at the end of an article, can score above the section that answers it. So the app takes the ten best sections, has a small reranking model read each one against your question, and keeps the four that answer it best. Each section appears at most once, and a section the compendium's builder marked as boilerplate keeps that mark through reranking. The Sources row under the answer names the page each excerpt came from, and one link can stand for several excerpts from the same page.
 
