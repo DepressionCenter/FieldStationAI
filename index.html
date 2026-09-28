@@ -666,7 +666,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         #tax-results:not(:empty) { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
         #tax-results .skill-section:first-child { padding-top: 0; }
         .skill-hint { font-size: 0.75rem; color: var(--muted); margin: 0 0 8px; }
-        .skill-tabs { display: flex; gap: 0; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+        label.skill-hint { display: block; }
+        /* Wraps so three tabs still fit a 320px-wide screen without sideways scrolling. */
+        .skill-tabs { display: flex; flex-wrap: wrap; gap: 0; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
         .skill-tab {
             padding: 7px 12px; border: none; background: none;
             font-family: inherit; font-size: 0.82rem; color: var(--muted); cursor: pointer;
@@ -10783,7 +10785,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         function closeFieldKitTab() {
             const hasState = skillsCurrentId && skillHasStateToPreserve(skillsCurrentId);
             if ((skillBatchRunning || hasState) &&
-                !confirm('Close Field Kit? Any running batch will stop, and its files/results will be cleared.')) {
+                !confirm('Close Field Kit? Any running batch will stop, and its files, text, and results will be cleared.')) {
                 return;
             }
             skillLockWaitCtl.abort();
@@ -10906,7 +10908,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 // already uses.
                 const pausedName = findSkill(skillsCurrentId)?.name || 'this tool';
                 if (skillHasStateToPreserve(skillsCurrentId) &&
-                    !confirm('Leave "' + pausedName + '"? Its files and any results will be cleared. Saved settings are kept.')) {
+                    !confirm('Leave "' + pausedName + '"? Its files, text, and any results will be cleared. Saved settings are kept.')) {
                     return;
                 }
                 try { disposePyodideWorker(); } catch (_) {}
@@ -10957,7 +10959,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // discards - that's the difference between the two.
         skillsDoneBtn.addEventListener('click', () => {
             if (skillHasStateToPreserve(skillsCurrentId) &&
-                !confirm('Leave this tool? Your files and any results here will be cleared. Saved settings are kept.')) {
+                !confirm('Leave this tool? Your files, text, and any results here will be cleared. Saved settings are kept.')) {
                 return;
             }
             resetCurrentSkill();
@@ -10968,7 +10970,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         skillsResetBtn.addEventListener('click', () => {
             const skill = findSkill(skillsCurrentId);
             if (!skill) return;
-            if (confirm('Start over? Your files and any results in this tool will be cleared. Saved settings are kept.')) {
+            if (confirm('Start over? Your files, text, and any results in this tool will be cleared. Saved settings are kept.')) {
                 skillLoadToken++;
                 skillLockWaitCtl = new AbortController(); // fresh session for EngineLock
                 skillStateProbe = null;
@@ -11031,6 +11033,190 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return (Math.round(p * 10) / 10).toFixed(1);
         }
 
+        // ### Skill paste input: pure helpers (start) ###
+        // Text handling for the "Paste text" tab of the text skills.
+        // Everything between these two markers is evaluated on its own by
+        // the tests under tests/ in a bare JavaScript context, so keep it
+        // to constants and pure functions: no DOM, no app state, no other
+        // constants from this file.
+        //
+        // Pasted text is one item, handled like one uploaded document. It
+        // has no file name, so result tables, downloads, and Send to Chat
+        // show this fixed name. The name never comes from the pasted text.
+        const PASTED_TEXT_ITEM_NAME = 'Pasted text';
+        // Longest pasted text a skill keeps, in UTF-16 code units, the unit
+        // a textarea's maxlength counts. About 150,000 English words: more
+        // than one document needs, and small enough to keep the box responsive.
+        const PASTED_TEXT_MAX_CHARS = 1000000;
+
+        /**
+         * Returns pasted text ready for a skill. Line endings become \n,
+         * the ends are trimmed, and anything past PASTED_TEXT_MAX_CHARS is
+         * dropped. A value that is not a string gives an empty string.
+         */
+        function normalizePastedText(raw) {
+            if (typeof raw !== 'string') return '';
+            let text = raw.replace(/\r\n?/g, '\n').trim();
+            if (text.length <= PASTED_TEXT_MAX_CHARS) return text;
+            text = text.slice(0, PASTED_TEXT_MAX_CHARS);
+            // A cut between the two halves of one character leaves a broken half behind.
+            const last = text.charCodeAt(text.length - 1);
+            return (last >= 0xD800 && last <= 0xDBFF) ? text.slice(0, -1) : text;
+        }
+
+        /**
+         * Returns the items a skill runs for pasted text, in the shape the
+         * file and spreadsheet tabs produce: [{ id, text }]. Blank text
+         * gives an empty list, so a run never starts on nothing.
+         */
+        function pastedTextToDocs(raw) {
+            const text = normalizePastedText(raw);
+            return text ? [{ id: PASTED_TEXT_ITEM_NAME, text }] : [];
+        }
+
+        /**
+         * Returns the line shown under the paste box: the word count, and a
+         * sentence when the box is full. The limit is stated in words so
+         * color is never the only cue.
+         */
+        function pastedTextStatus(raw) {
+            const text = typeof raw === 'string' ? raw : '';
+            const words = (text.match(/\S+/g) || []).length;
+            if (!words) return 'No text yet.';
+            const count = words.toLocaleString('en-US') + ' word' + (words === 1 ? '' : 's') + '.';
+            return text.length >= PASTED_TEXT_MAX_CHARS ? count + ' Limit reached. Text past this point is not kept.' : count;
+        }
+
+        /**
+         * Returns what to tell the person when a run is started with
+         * nothing in the open input tab ('files', 'bulk', or 'paste').
+         */
+        function skillEmptyInputMessage(mode) {
+            if (mode === 'paste') return 'Paste or type some text above.';
+            return 'Choose at least one file or a spreadsheet above.';
+        }
+        // ### Skill paste input: pure helpers (end) ###
+
+        // ---------- Shared input tabs and paste pane ----------
+        /**
+         * Wires a strip of .skill-tab buttons to the panes they show, as one
+         * ARIA tab list. The open tab is announced as selected, the Left,
+         * Right, Home, and End keys move between tabs, and Tab goes from the
+         * open tab into its pane.
+         * @param {HTMLElement} section - Holds the .skill-tabs strip and its heading.
+         * @param {Object<string, HTMLElement>} panesByMode - Each tab's data-mode mapped to the pane it shows. Every pane needs an id.
+         * @param {function(string)} onModeChange - Called with the data-mode of the tab that opened, and once at wiring time for the tab that starts open.
+         */
+        function wireSkillTabs(section, panesByMode, onModeChange) {
+            const strip = section.querySelector('.skill-tabs');
+            const tabs = Array.from(strip.querySelectorAll('.skill-tab'));
+            const heading = section.querySelector('h3');
+            strip.setAttribute('role', 'tablist');
+            strip.setAttribute('aria-label', heading ? heading.textContent : 'Input type');
+
+            function openTab(tab, moveFocus) {
+                for (const t of tabs) {
+                    const open = t === tab;
+                    t.classList.toggle('active', open);
+                    t.setAttribute('aria-selected', open ? 'true' : 'false');
+                    // Only the open tab is a Tab stop; the arrow keys reach the others.
+                    t.tabIndex = open ? 0 : -1;
+                    panesByMode[t.dataset.mode].hidden = !open;
+                }
+                if (moveFocus) tab.focus();
+                onModeChange(tab.dataset.mode);
+            }
+
+            tabs.forEach((tab, i) => {
+                const pane = panesByMode[tab.dataset.mode];
+                tab.type = 'button';
+                tab.id = pane.id + '-tab';
+                tab.setAttribute('role', 'tab');
+                tab.setAttribute('aria-controls', pane.id);
+                pane.setAttribute('role', 'tabpanel');
+                pane.setAttribute('aria-labelledby', tab.id);
+                tab.addEventListener('click', () => openTab(tab, false));
+                tab.addEventListener('keydown', (e) => {
+                    let next = null;
+                    if (e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
+                    else if (e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
+                    else if (e.key === 'Home') next = tabs[0];
+                    else if (e.key === 'End') next = tabs[tabs.length - 1];
+                    if (!next) return;
+                    e.preventDefault();
+                    openTab(next, true);
+                });
+            });
+            openTab(tabs.find(t => t.classList.contains('active')) || tabs[0], false);
+        }
+
+        /**
+         * Builds the "Paste text" pane of a text skill: a labeled box, a
+         * word count, and a Clear button. The text lives only in this box,
+         * inside the skill, and is never written to chat state or storage.
+         * The pane is built from elements and textContent, so nothing a
+         * person pastes is ever parsed as markup.
+         * @param {string} idPrefix - The skill's id prefix, such as 'emo'. The pane's id is idPrefix + '-paste-pane'.
+         * @param {string} labelText - The visible label of the box.
+         * @returns {{pane: HTMLElement, hasText: function(): boolean, getDocs: function(): Array<{id: string, text: string}>}}
+         */
+        function mountPasteTextPane(idPrefix, labelText) {
+            const pane = document.createElement('div');
+            pane.id = idPrefix + '-paste-pane';
+            pane.hidden = true;
+
+            const textarea = document.createElement('textarea');
+            textarea.className = 'skill-textarea';
+            textarea.id = idPrefix + '-paste-textarea';
+            textarea.maxLength = PASTED_TEXT_MAX_CHARS;
+            // Some browsers send the text of a spell-checked box to an online
+            // service. Pasted research text may hold PHI, so checking is off.
+            textarea.spellcheck = false;
+            textarea.autocomplete = 'off';
+
+            const label = document.createElement('label');
+            label.className = 'skill-hint';
+            label.htmlFor = textarea.id;
+            label.textContent = labelText;
+
+            const row = document.createElement('div');
+            row.className = 'skill-row';
+            const count = document.createElement('span');
+            count.className = 'skill-hint';
+            count.id = idPrefix + '-paste-count';
+            count.style.margin = '0';
+            textarea.setAttribute('aria-describedby', count.id);
+            const clearBtn = document.createElement('button');
+            clearBtn.type = 'button';
+            clearBtn.className = 'skill-btn';
+            clearBtn.textContent = 'Clear text';
+
+            function refresh() {
+                count.textContent = pastedTextStatus(textarea.value);
+                clearBtn.disabled = textarea.value.length === 0;
+            }
+            textarea.addEventListener('input', refresh);
+            clearBtn.addEventListener('click', () => {
+                textarea.value = '';
+                refresh();
+                // The button is disabled now, so focus returns to the box.
+                textarea.focus();
+            });
+            refresh();
+
+            row.appendChild(count);
+            row.appendChild(clearBtn);
+            pane.appendChild(label);
+            pane.appendChild(textarea);
+            pane.appendChild(row);
+
+            return {
+                pane,
+                hasText: () => normalizePastedText(textarea.value).length > 0,
+                getDocs: () => pastedTextToDocs(textarea.value)
+            };
+        }
+
         function mountTaxonomySkill(container) {
             // Local state, scoped to this mount
             let inputMode = 'files';
@@ -11056,14 +11242,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     if (runningBatch) return true;
                     if (ingestedDocs.length) return true;
                     if (bulkRows && bulkRows.length) return true;
+                    if (pasteInputRef && pasteInputRef.hasText()) return true;
                     if (lastResultsSummary) return true;
                     const txt = (taxTextareaRef && taxTextareaRef.value ? taxTextareaRef.value.trim() : '');
                     return txt.length > 0;
                 }
             };
-            // Forward-declared so the state probe above can reference it
+            // Forward-declared so the state probe above can reference them
             // before the DOM is built.
             let taxTextareaRef = null;
+            let pasteInputRef = null;
 
             // ----- Section A: Categories -----
             const sectionA = document.createElement('div');
@@ -11137,6 +11325,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 <div class="skill-tabs">
                     <button class="skill-tab active" data-mode="files">One person's documents</button>
                     <button class="skill-tab" data-mode="bulk">A spreadsheet of many people</button>
+                    <button class="skill-tab" data-mode="paste">Paste text</button>
                 </div>
                 <div id="tax-files-pane">
                     <p class="skill-hint">Upload plain-text or PDF documents. Each document is treated as a separate item.</p>
@@ -11179,15 +11368,10 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const bulkTextSel = sectionB.querySelector('#tax-bulk-text');
             const bulkPreview = sectionB.querySelector('#tax-bulk-preview');
 
-            sectionB.querySelectorAll('.skill-tab').forEach(tab => {
-                tab.addEventListener('click', () => {
-                    sectionB.querySelectorAll('.skill-tab').forEach(t => t.classList.remove('active'));
-                    tab.classList.add('active');
-                    inputMode = tab.dataset.mode;
-                    filesPane.hidden = inputMode !== 'files';
-                    bulkPane.hidden = inputMode !== 'bulk';
-                });
-            });
+            const pasteInput = mountPasteTextPane('tax', 'Paste or type the text to sort. It is sorted as one item.');
+            pasteInputRef = pasteInput;
+            sectionB.appendChild(pasteInput.pane);
+            wireSkillTabs(sectionB, { files: filesPane, bulk: bulkPane, paste: pasteInput.pane }, (mode) => { inputMode = mode; });
 
             function renderChips() {
                 filesChips.innerHTML = '';
@@ -11424,13 +11608,22 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     skillLog(statusEl, 'Add at least two categories above, one per line.', true);
                     return;
                 }
+                // The tab open when the run starts decides how results are
+                // shown, even if another tab is opened while the run works.
+                const runMode = inputMode;
                 let docs; // Array<{id, text, _row?, _warning?}>
-                if (inputMode === 'files') {
+                if (runMode === 'files') {
                     if (!ingestedDocs.length) {
                         skillLog(statusEl, 'Choose at least one file to classify.', true);
                         return;
                     }
                     docs = ingestedDocs.map(d => ({ id: d.name, text: d.text, _warning: d.warning || null }));
+                } else if (runMode === 'paste') {
+                    docs = pasteInput.getDocs();
+                    if (!docs.length) {
+                        skillLog(statusEl, skillEmptyInputMessage('paste'), true);
+                        return;
+                    }
                 } else {
                     if (!bulkRows || !bulkRows.length) {
                         skillLog(statusEl, 'Choose a spreadsheet to classify.', true);
@@ -11589,7 +11782,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 }
                 lastResultsSummary = { count: perDoc.length };
                 finishRun();
-                renderResults(inputMode, labels, perDoc, resultsEl, bulkFileName);
+                renderResults(runMode, labels, perDoc, resultsEl, bulkFileName);
             });
         }
 
@@ -13576,11 +13769,14 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             // Skip the rest if nothing succeeded.
             if (!perDoc.some(d => Object.keys(d.scoreByLabel).length)) return;
 
-            if (mode === 'files') {
+            if (mode !== 'bulk') {
+                // Pasted text is one item with no file, so its headings
+                // and hints do not speak of files.
+                const pasted = mode === 'paste';
                 // Per-file table
                 const tbl = document.createElement('table');
                 tbl.className = 'skill-table';
-                tbl.innerHTML = '<thead><tr><th>File</th><th>Best match</th><th class="num">Score</th><th>Second</th><th class="num">Score</th><th>Third</th><th class="num">Score</th></tr></thead>';
+                tbl.innerHTML = '<thead><tr><th>' + (pasted ? 'Item' : 'File') + '</th><th>Best match</th><th class="num">Score</th><th>Second</th><th class="num">Score</th><th>Third</th><th class="num">Score</th></tr></thead>';
                 const tb = document.createElement('tbody');
                 for (const d of perDoc) {
                     const t = topN(d.scoreByLabel, 3);
@@ -13592,7 +13788,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 tbl.appendChild(tb);
                 const wrap = document.createElement('div');
                 wrap.className = 'skill-section';
-                wrap.innerHTML = '<h3>Results by file</h3><p class="skill-hint">Each file’s best three matching categories. Scores show how strongly each category fits (higher is better).</p>';
+                wrap.innerHTML = pasted
+                    ? '<h3>Results for your text</h3><p class="skill-hint">The best three matching categories. Scores show how strongly each category fits (higher is better).</p>'
+                    : '<h3>Results by file</h3><p class="skill-hint">Each file’s best three matching categories. Scores show how strongly each category fits (higher is better).</p>';
                 wrap.appendChild(tbl);
                 container.appendChild(wrap);
 
@@ -13608,7 +13806,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 const ranked = Object.keys(means).map(k => ({ label: k, mean: means[k] })).sort((a, b) => b.mean - a.mean);
                 const agg = document.createElement('div');
                 agg.className = 'skill-section';
-                agg.innerHTML = '<h3>Overall profile</h3><p class="skill-hint">Average score for each category across all uploaded files. The bar length shows relative strength.</p>';
+                agg.innerHTML = '<h3>Overall profile</h3><p class="skill-hint">' +
+                    (pasted ? 'Score for each category.' : 'Average score for each category across all uploaded files.') +
+                    ' The bar length shows relative strength.</p>';
                 for (let i = 0; i < ranked.length; i++) {
                     const r = ranked[i];
                     const bar = document.createElement('div');
@@ -13858,10 +14058,12 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             return { positive: positive / total, negative: negative / total, neutral: neutral / total };
         }
 
-        // ---------- Shared "files vs spreadsheet" input tabs ----------
+        // ---------- Shared "files vs spreadsheet vs pasted text" input tabs ----------
         // Shared by Emotions, Pain, Buckets, and Extract Entities - all four
         // need the identical "one document at a time" vs "a spreadsheet of
-        // many rows" input shape. Unlike the taxonomy skill's own copy
+        // many rows" vs "paste text" input shape. The paste pane and the
+        // tab wiring are shared with the taxonomy skill (mountPasteTextPane,
+        // wireSkillTabs). Unlike the taxonomy skill's own copy of the tabs
         // (which additionally handles multi-row-preamble header detection
         // via forensics/renderHeaderRowAdjuster), this uses the simpler
         // header-assuming parseTabularFile path (ingestFiles without
@@ -13880,6 +14082,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 <div class="skill-tabs">
                     <button class="skill-tab active" data-mode="files">One document at a time</button>
                     <button class="skill-tab" data-mode="bulk">A spreadsheet of many rows</button>
+                    <button class="skill-tab" data-mode="paste">Paste text</button>
                 </div>
                 <div id="${idPrefix}-files-pane">
                     <p class="skill-hint">Upload plain-text or PDF documents. Each document is checked separately.</p>
@@ -13919,15 +14122,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const bulkTextSel = section.querySelector('#' + idPrefix + '-bulk-text');
             const bulkPreview = section.querySelector('#' + idPrefix + '-bulk-preview');
 
-            section.querySelectorAll('.skill-tab').forEach(tab => {
-                tab.addEventListener('click', () => {
-                    section.querySelectorAll('.skill-tab').forEach(t => t.classList.remove('active'));
-                    tab.classList.add('active');
-                    inputMode = tab.dataset.mode;
-                    filesPane.hidden = inputMode !== 'files';
-                    bulkPane.hidden = inputMode !== 'bulk';
-                });
-            });
+            const pasteInput = mountPasteTextPane(idPrefix, 'Paste or type the text to check. It is checked as one document.');
+            section.appendChild(pasteInput.pane);
+            wireSkillTabs(section, { files: filesPane, bulk: bulkPane, paste: pasteInput.pane }, (mode) => { inputMode = mode; });
 
             function renderChips() {
                 filesChips.innerHTML = '';
@@ -14034,11 +14231,21 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             return {
                 section,
                 getMode: () => inputMode,
-                hasInput: () => inputMode === 'files' ? ingestedDocs.length > 0 : !!(bulkRows && bulkRows.length),
+                // True when the open tab holds something to run.
+                hasInput: () => {
+                    if (inputMode === 'files') return ingestedDocs.length > 0;
+                    if (inputMode === 'paste') return pasteInput.hasText();
+                    return !!(bulkRows && bulkRows.length);
+                },
+                // True when any tab holds input that leaving the skill would
+                // discard, whichever tab is open. For the state probe.
+                hasUnsavedInput: () => ingestedDocs.length > 0 || !!(bulkRows && bulkRows.length) || pasteInput.hasText(),
+                getEmptyInputMessage: () => skillEmptyInputMessage(inputMode),
                 getDocs: () => {
                     if (inputMode === 'files') {
                         return ingestedDocs.map(d => ({ id: d.name, text: d.text, warning: d.warning || null }));
                     }
+                    if (inputMode === 'paste') return pasteInput.getDocs();
                     const idCol = bulkIdSel.value, textCol = bulkTextSel.value;
                     return bulkRows.map((r, i) => ({
                         id: String(r[idCol] !== undefined && r[idCol] !== null ? r[idCol] : ('row-' + (i + 1))),
@@ -14107,13 +14314,13 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
         // ---------- Emotions skill ----------
         function mountEmotionsSkill(container) {
-            let runningBatch = false, lastResultsSummary = null, lastPerDoc = null;
+            let runningBatch = false, lastResultsSummary = null, lastPerDoc = null, lastRunMode = 'files';
             container.innerHTML = '';
 
             const inputTabs = mountClassifierInputTabs('emo');
             skillStateProbe = {
                 id: 'emotions',
-                fn: () => runningBatch || inputTabs.hasInput() || !!lastResultsSummary
+                fn: () => runningBatch || inputTabs.hasUnsavedInput() || !!lastResultsSummary
             };
             container.appendChild(inputTabs.section);
 
@@ -14150,11 +14357,14 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const showAllChk = sectionC.querySelector('#emo-show-all');
 
             showAllChk.addEventListener('change', () => {
-                if (lastPerDoc) renderEmotionsResults(inputTabs.getMode(), lastPerDoc, resultsEl, inputTabs.getBulkFileName(), showAllChk.checked);
+                if (lastPerDoc) renderEmotionsResults(lastRunMode, lastPerDoc, resultsEl, inputTabs.getBulkFileName(), showAllChk.checked);
             });
 
             runBtn.addEventListener('click', async () => {
-                if (!inputTabs.hasInput()) { skillLog(statusEl, 'Choose at least one file or a spreadsheet above.', true); return; }
+                if (!inputTabs.hasInput()) { skillLog(statusEl, inputTabs.getEmptyInputMessage(), true); return; }
+                // The tab open when the run starts decides how results are
+                // shown, even if another tab is opened while the run works.
+                const runMode = inputTabs.getMode();
                 const docs = inputTabs.getDocs();
                 if (!docs.length) { skillLog(statusEl, 'No readable text found in your input.', true); return; }
                 if (anyLoadInProgress && !skillEmotionsLoading) { skillLog(statusEl, 'Something else is downloading in the background. Give it a moment and try again.', true); return; }
@@ -14209,7 +14419,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                             : 'Done. Checked ' + okCount + ' of ' + perDoc.length + '. Some items could not be read - see below.');
                         lastResultsSummary = { count: perDoc.length };
                         lastPerDoc = perDoc;
-                        renderEmotionsResults(inputTabs.getMode(), perDoc, resultsEl, inputTabs.getBulkFileName(), showAllChk.checked);
+                        lastRunMode = runMode;
+                        renderEmotionsResults(runMode, perDoc, resultsEl, inputTabs.getBulkFileName(), showAllChk.checked);
                     }
                 });
             });
@@ -14366,7 +14577,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             container.innerHTML = '';
 
             const inputTabs = mountClassifierInputTabs('pain');
-            skillStateProbe = { id: 'pain-level', fn: () => runningBatch || inputTabs.hasInput() || !!lastResultsSummary };
+            skillStateProbe = { id: 'pain-level', fn: () => runningBatch || inputTabs.hasUnsavedInput() || !!lastResultsSummary };
             container.appendChild(inputTabs.section);
 
             const sectionC = document.createElement('div');
@@ -14397,7 +14608,10 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const hypotheses = PAIN_ANCHORS.map(a => a.phrase);
 
             runBtn.addEventListener('click', async () => {
-                if (!inputTabs.hasInput()) { skillLog(statusEl, 'Choose at least one file or a spreadsheet above.', true); return; }
+                if (!inputTabs.hasInput()) { skillLog(statusEl, inputTabs.getEmptyInputMessage(), true); return; }
+                // The tab open when the run starts decides how results are
+                // shown, even if another tab is opened while the run works.
+                const runMode = inputTabs.getMode();
                 const docs = inputTabs.getDocs();
                 if (!docs.length) { skillLog(statusEl, 'No readable text found in your input.', true); return; }
                 if (anyLoadInProgress && !skillZeroShotLoading) { skillLog(statusEl, 'Something else is downloading in the background. Give it a moment and try again.', true); return; }
@@ -14454,7 +14668,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                             ? 'Done. Estimated ' + perDoc.length + ' item' + (perDoc.length === 1 ? '' : 's') + '.'
                             : 'Done. Estimated ' + okCount + ' of ' + perDoc.length + '. Some items could not be read - see below.');
                         lastResultsSummary = { count: perDoc.length };
-                        renderPainResults(inputTabs.getMode(), perDoc, resultsEl, inputTabs.getBulkFileName());
+                        renderPainResults(runMode, perDoc, resultsEl, inputTabs.getBulkFileName());
                     }
                 });
             });
@@ -14630,7 +14844,7 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
             });
 
             const inputTabs = mountClassifierInputTabs('buck');
-            skillStateProbe = { id: 'buckets', fn: () => runningBatch || inputTabs.hasInput() || !!lastResultsSummary || textarea.value.trim().length > 0 };
+            skillStateProbe = { id: 'buckets', fn: () => runningBatch || inputTabs.hasUnsavedInput() || !!lastResultsSummary || textarea.value.trim().length > 0 };
             container.appendChild(inputTabs.section);
 
             const sectionC = document.createElement('div');
@@ -14661,7 +14875,10 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
             runBtn.addEventListener('click', async () => {
                 const { labels, hypotheses } = parseTaxonomyText(textarea.value);
                 if (labels.length < 1) { skillLog(statusEl, 'Add at least one label above.', true); return; }
-                if (!inputTabs.hasInput()) { skillLog(statusEl, 'Choose at least one file or a spreadsheet above.', true); return; }
+                if (!inputTabs.hasInput()) { skillLog(statusEl, inputTabs.getEmptyInputMessage(), true); return; }
+                // The tab open when the run starts decides how results are
+                // shown, even if another tab is opened while the run works.
+                const runMode = inputTabs.getMode();
                 const docs = inputTabs.getDocs();
                 if (!docs.length) { skillLog(statusEl, 'No readable text found in your input.', true); return; }
                 if (anyLoadInProgress && !skillZeroShotLoading) { skillLog(statusEl, 'Something else is downloading in the background. Give it a moment and try again.', true); return; }
@@ -14712,7 +14929,7 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
                             ? 'Done. Scored ' + perDoc.length + ' item' + (perDoc.length === 1 ? '' : 's') + '.'
                             : 'Done. Scored ' + okCount + ' of ' + perDoc.length + '. Some items could not be read - see below.');
                         lastResultsSummary = { count: perDoc.length };
-                        renderBucketsResults(inputTabs.getMode(), labels, perDoc, resultsEl, inputTabs.getBulkFileName());
+                        renderBucketsResults(runMode, labels, perDoc, resultsEl, inputTabs.getBulkFileName());
                     }
                 });
             });
@@ -14871,7 +15088,7 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
             container.innerHTML = '';
 
             const inputTabs = mountClassifierInputTabs('ner');
-            skillStateProbe = { id: 'ner', fn: () => runningBatch || inputTabs.hasInput() || !!lastResultsSummary };
+            skillStateProbe = { id: 'ner', fn: () => runningBatch || inputTabs.hasUnsavedInput() || !!lastResultsSummary };
             container.appendChild(inputTabs.section);
 
             const sectionC = document.createElement('div');
@@ -14900,7 +15117,10 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
             const progFill = sectionC.querySelector('#ner-progress-fill');
 
             runBtn.addEventListener('click', async () => {
-                if (!inputTabs.hasInput()) { skillLog(statusEl, 'Choose at least one file or a spreadsheet above.', true); return; }
+                if (!inputTabs.hasInput()) { skillLog(statusEl, inputTabs.getEmptyInputMessage(), true); return; }
+                // The tab open when the run starts decides how results are
+                // shown, even if another tab is opened while the run works.
+                const runMode = inputTabs.getMode();
                 const docs = inputTabs.getDocs();
                 if (!docs.length) { skillLog(statusEl, 'No readable text found in your input.', true); return; }
                 if (anyLoadInProgress && !skillNerLoading) { skillLog(statusEl, 'Something else is downloading in the background. Give it a moment and try again.', true); return; }
@@ -14974,7 +15194,7 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
                             ? 'Done. Checked ' + perDoc.length + ' item' + (perDoc.length === 1 ? '' : 's') + '.'
                             : 'Done. Checked ' + okCount + ' of ' + perDoc.length + '. Some items could not be read - see below.');
                         lastResultsSummary = { count: perDoc.length };
-                        renderNerResults(inputTabs.getMode(), perDoc, resultsEl, inputTabs.getBulkFileName());
+                        renderNerResults(runMode, perDoc, resultsEl, inputTabs.getBulkFileName());
                     }
                 });
             });
@@ -15134,15 +15354,7 @@ Feeling anxious about work."></textarea>
             const bulkTextSel = sectionA.querySelector('#dd-bulk-text');
             pasteArea = sectionA.querySelector('#dd-paste-textarea');
 
-            sectionA.querySelectorAll('.skill-tab').forEach(tab => {
-                tab.addEventListener('click', () => {
-                    sectionA.querySelectorAll('.skill-tab').forEach(t => t.classList.remove('active'));
-                    tab.classList.add('active');
-                    inputMode = tab.dataset.mode;
-                    bulkPane.hidden = inputMode !== 'bulk';
-                    pastePane.hidden = inputMode !== 'paste';
-                });
-            });
+            wireSkillTabs(sectionA, { bulk: bulkPane, paste: pastePane }, (mode) => { inputMode = mode; });
 
             bulkBtn.addEventListener('click', () => bulkInput.click());
             bulkInput.addEventListener('change', async () => {
