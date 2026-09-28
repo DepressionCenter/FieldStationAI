@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 docs/issues-implementation-plan.md: Ordered plan and status tracker for the open GitHub issues, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-09-22
-Last Modified: 2026-09-23
+Last Modified: 2026-09-28
 Summary: Lists the open GitHub issues in the order they will be worked, the branch and scope for each, and the rules every phase follows.
 Notes: See README file for documentation and full license information.
 
@@ -44,8 +44,8 @@ Status values are **Not started**, **Planning**, **In progress**, **In review**,
 
 | Phase | Issue | Title | Branch | Status |
 | --- | --- | --- | --- | --- |
-| 1 | [#1](https://github.com/DepressionCenter/FieldStationAI/issues/1) | Crisis notice for prompts that may signal a mental health emergency | `feature/crisis-notice` | In review |
-| 2 | [#6](https://github.com/DepressionCenter/FieldStationAI/issues/6) | "Paste text" input for the four text classifier skills | `feature/skill-paste-text` | Not started |
+| 1 | [#1](https://github.com/DepressionCenter/FieldStationAI/issues/1) | Crisis notice for prompts that may signal a mental health emergency | `feature/crisis-notice` | Done |
+| 2 | [#6](https://github.com/DepressionCenter/FieldStationAI/issues/6) | "Paste text" input for the four text classifier skills | `feature/skill-paste-text` | In review |
 | 3 | [#7](https://github.com/DepressionCenter/FieldStationAI/issues/7) | Direct chat-to-skill flow for text-only skills | `feature/chat-to-skill` | Not started |
 | 4 | [#4](https://github.com/DepressionCenter/FieldStationAI/issues/4) | Storage management dialog in the menu | `feature/storage-manager` | Not started |
 | 5 | [#2](https://github.com/DepressionCenter/FieldStationAI/issues/2) | Full Markdown support in chats | `feature/chat-markdown` | Not started (do much later) |
@@ -54,7 +54,7 @@ Issues [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3), [#5](h
 
 ### Phase 1: Crisis notice (issue #1)
 
-**Status:** In review
+**Status:** Done. Merged on 2026-09-23, and the issue is closed.
 
 **Branch:** `feature/crisis-notice`, from `main`.
 
@@ -120,7 +120,7 @@ Escalation, same setup with SmolLM2-360M + Router: the first flagged prompt show
 
 ### Phase 2: Paste text input for classifier skills (issue #6)
 
-**Status:** Not started
+**Status:** In review
 
 **Branch:** `feature/skill-paste-text`, from `main`.
 
@@ -130,7 +130,28 @@ Add a "Paste text" option to Emotions and Sentiment, Sort text into categories, 
 
 #### How it fits the code
 
-All four skills build their input area with one shared helper, `mountClassifierInputTabs()`, which today offers "One document at a time" and "A spreadsheet of many rows". Adding a third tab there covers all four skills in one change. The Combine spreadsheets skill already has a pasted-list mode that shows the pattern for a `textarea` tab, a state probe, and the "you have unsaved input" check.
+Three of the four skills build their input area with one shared helper, `mountClassifierInputTabs()`: Emotions and sentiment, Estimate pain level, and Find names and places. Score against any labels uses the same helper, so it gets the tab too. Sort text into categories builds its own tabs inside `mountTaxonomySkill()`, because its spreadsheet tab reads files with extra rows above the header.
+
+The change adds three pieces to `index.html` and uses them in both places:
+
+- `mountPasteTextPane()` builds the pane: a labeled box, a word count line, and a **Clear text** button.
+- `wireSkillTabs()` connects a tab strip to its panes. It replaces three copies of the same click handler, one of them in Find similar or duplicates.
+- A marked block, `Skill paste input: pure helpers`, holds the item name, the size limit, and the functions that clean the text and build the count line. The tests evaluate it on its own.
+
+#### Decisions
+
+- The whole box is one item, named "Pasted text". The name is fixed and never taken from the text.
+- Pasted text lives in the box only. It is not written to browser storage or to chat state.
+- The box holds up to 1,000,000 characters. The limit is set on the box and checked again when the text is read.
+- Spell checking is off for the box. Some browsers send spell-checked text to an online service, and pasted research text may hold PHI.
+- The state probe looks at every tab, so pasted text counts as unsaved input even when another tab is open. The run button looks at the open tab only.
+- A run remembers the tab it started from. Opening another tab while the run works no longer changes how the results are shown.
+- The tab strips are ARIA tab lists with arrow-key movement, so a screen reader announces which tab is open.
+- The questions the app asks before it discards skill input now name text as well as files.
+
+#### Tests
+
+`tests/skill-paste.test.mjs` runs the marked block with no browser: normal text, blank text, values that are not text, the size limit, line endings, and text that holds markup. `tests/index-html.test.mjs` checks that each text skill offers the tab, that each state probe counts pasted text, and that the pane does not use `innerHTML`, browser storage, chat, or the network.
 
 #### Acceptance criteria
 
@@ -139,9 +160,28 @@ All four skills build their input area with one shared helper, `mountClassifierI
 - The tab, textarea, and buttons work by keyboard and have labels.
 - Pasted text stays in skill state and never touches chat state.
 
-#### Documentation to update
+#### Verification record
 
-`docs/field-kit.md`.
+Automated, on 2026-09-28: `node --test tests/` passed (194 tests, the two model tests included).
+
+Browser, on 2026-09-28, headless Microsoft Edge 151 with WebGPU, served from `python -m http.server 8010`, driven over the DevTools protocol, with SmolLM2-360M + Router as the chat model. All sample text was synthetic.
+
+- In each of the five skills, the tab strip had three tabs and the right roles. The arrow, Home, and End keys moved between tabs, Tab moved from the open tab into the box and on to **Clear text**, and each focused control showed a 2-pixel outline. The box had a label and a word count line. **Clear text** was 86 by 32 CSS pixels.
+- A run with an empty box showed "Paste or type some text above." and started nothing.
+- Each skill ran its model on pasted text and finished: Emotions and sentiment, Estimate pain level, Find names and places, Score against any labels, and Sort text into categories. The results named the item "Pasted text" and offered the single-document download.
+- The pasted text held an `<img>` tag with an error handler and a `<script>` tag. Neither ran, and no such element reached the page.
+- Done and Start over asked before discarding pasted text, also with another tab open. Done asked nothing when the skill held no input. Back kept the text, the open tab, and the results.
+- A marker string in the pasted text never appeared in `localStorage`, `sessionStorage`, the chat prompt box, or the chat store, before or after a run. Send to Chat put the results in the prompt box without the pasted text.
+- The files tab and the spreadsheet tab still worked in Emotions and sentiment, with one text file and a two-row CSV.
+- At 320 and at 640 CSS pixels wide, nothing scrolled sideways. At 320 the three tabs wrap onto three lines.
+- An axe-core 4.10.2 scan of the input section in two skills, with WCAG 2.0, 2.1, and 2.2 A and AA rules, found no violations. It asked for a manual contrast check of the box. The box's text is dark ink (`#17263B`) on white, about 15:1.
+- No console errors were logged.
+
+Not tested: a real screen reader, a real clipboard paste (the text was entered through the browser's text input path), a phone or touch screen, Firefox or Safari, and a run on a browser without WebGPU.
+
+#### Documentation updated
+
+`docs/field-kit.md`, `docs/developer-guide.md`, `docs/design-change-record.md`, `docs/security-privacy-accessibility.md`, `docs/data-files-and-compendiums.md`, and the project preferences skill.
 
 ### Phase 3: Chat-to-skill flow for text-only skills (issue #7)
 
@@ -222,7 +262,7 @@ Model output is untrusted, so rendered Markdown must be encoded before it reache
 
 ### Conclusion
 
-Phase 1 is in review. Move down the table as each pull request merges: create the next branch from `main`, write the detailed plan under the phase heading, and set the status to Planning.
+Phase 1 is done and phase 2 is in review. Move down the table as each pull request merges: create the next branch from `main`, write the detailed plan under the phase heading, and set the status to Planning.
 
 ### Additional resources
 

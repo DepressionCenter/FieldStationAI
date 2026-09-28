@@ -83,6 +83,24 @@ Minimum checklist:
 
 Do not let a skill write to chat history unless the user explicitly chooses Send to Chat.
 
+## Change a Text Skill's Input Tabs
+
+Five skills read text: Sort text into categories, Emotions and sentiment, Estimate pain level, Score against any labels, and Find names and places. Each offers three input tabs: files, a spreadsheet, and pasted text.
+
+- `mountClassifierInputTabs()` builds all three tabs for four of the skills. Sort text into categories builds its own files and spreadsheet tabs, because its spreadsheet tab handles files with extra rows above the header.
+- `mountPasteTextPane()` builds the **Paste text** pane for all five. Change the pane there, once.
+- `wireSkillTabs()` connects a tab strip to its panes. It sets the tab roles a screen reader needs and handles the arrow, Home, and End keys. Use it for any new tab strip in a skill.
+- The pure text helpers sit in the marked block `Skill paste input: pure helpers`: the item name, the size limit (`PASTED_TEXT_MAX_CHARS`), and the functions that clean the text and build the word count line.
+
+Preserve these rules:
+
+- Pasted text is untrusted input. Build the pane with `createElement` and `textContent`, never `innerHTML`.
+- Keep pasted text in the pane. Do not write it to browser storage, to chat state, or to a log.
+- Keep `spellcheck` off on the box. Some browsers send spell-checked text to an online service.
+- The item name is the fixed `PASTED_TEXT_ITEM_NAME`. Never build a name from the pasted text.
+- A skill's state probe must call `hasUnsavedInput()`, which looks at every tab. `hasInput()` looks at the open tab only and is for the run button.
+- Read the open tab once when a run starts, and use that value to show the results. The person may open another tab while the run works.
+
 ## Add Attachment Behavior
 
 Update these areas together where they exist:
@@ -197,9 +215,9 @@ The tests live under `tests/` and use Node's own test runner, so nothing is inst
 node --test tests/
 ```
 
-That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, and reranker wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, and the reply and citation text helpers. The model-backed tests skip themselves unless their dependency is installed.
+That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, and **Paste text** tab wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, and the Field Kit paste text helpers. The model-backed tests skip themselves unless their dependency is installed.
 
-Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are two such blocks: the crisis check's data and the reply and citation text helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
+Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are four such blocks: the crisis check's data, the citation tag helpers, the reply and citation text helpers, and the Field Kit paste text helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
 
 To score the crisis prompt fixture with the real embedding and tiebreak models, and the reranker with synthetic passages, on your CPU:
 
