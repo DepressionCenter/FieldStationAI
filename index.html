@@ -4202,6 +4202,33 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return out.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
         }
 
+        // Whether `text` could still be the opening of one of `headers`:
+        // its words match the header's words in order, and the last word
+        // may be cut short by a token boundary. Articles are ignored on
+        // both sides, since a small model adds or drops them. Used while a
+        // reply streams, so an echoed header is held back rather than shown
+        // and then removed when stripLeakedReferenceHeader runs at the end.
+        function isLeakedHeaderPrefix(text, headers) {
+            const article = w => w === 'the' || w === 'a' || w === 'an';
+            const words = s => (String(s || '').match(/[A-Za-z0-9]+/g) || []).map(w => w.toLowerCase());
+            const got = words(text).filter(w => !article(w));
+            // A last word still being typed: it may also be the start of an
+            // article, which would be ignored once complete.
+            const partial = /[A-Za-z0-9]$/.test(String(text || ''));
+            if (partial && got.length && ['the', 'an'].some(a => a.startsWith(got[got.length - 1]))) got.pop();
+            if (!got.length) return false;
+            for (const h of headers || []) {
+                const want = words(h).filter(w => !article(w));
+                if (got.length > want.length) continue;
+                let ok = true;
+                for (let i = 0; i < got.length && ok; i++) {
+                    ok = (partial && i === got.length - 1) ? want[i].startsWith(got[i]) : want[i] === got[i];
+                }
+                if (ok) return true;
+            }
+            return false;
+        }
+
         // The page title in a compendium section heading. Extractium writes
         // a heading as "Page title -- Section heading", or the page title
         // alone for text before the first heading, so the title is what
@@ -8505,14 +8532,24 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }, 100);
 
             let gibStopped = false;
+            // The exact excerpt-block headers of this turn, set once the
+            // blocks are built below. A small model sometimes types the
+            // header back before its answer; the copy is held back while
+            // it streams and removed once complete, so the reader never
+            // sees it appear and then vanish (see stripLeakedReferenceHeader).
+            let leakHeaders = [];
 
             const onToken = (tok) => {
                 raw += tok;
                 const vis = stripThink(raw);
                 if (isMyTurn()) {
-                    if (vis.trim()) {
+                    let shown = vis;
+                    if (leakHeaders.length && vis.trim()) {
+                        shown = isLeakedHeaderPrefix(vis, leakHeaders) ? '' : stripLeakedReferenceHeader(vis, leakHeaders);
+                    }
+                    if (shown.trim()) {
                         shownAny = true;
-                        botDiv.setText(vis);
+                        botDiv.setText(shown);
                     }
                     chatBox.scrollTop = chatBox.scrollHeight;
                 }
@@ -8699,6 +8736,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 // excerpts, calculation result) into the single user-message
                 // prefix buildGenMessages already supports - no new parameter.
                 const combinedPrefix = [attachmentBlock, compendiumBlock, calcBlock].filter(Boolean).join('\n\n') || null;
+                leakHeaders = [compendiumHeader, attachmentHeader].filter(Boolean);
 
                 let rounds = 0;
                 while (true) {

@@ -127,7 +127,7 @@ The standing instructions are short text constants near the top of the script in
 - `SYSTEM_PROMPT` is sent when the model answers from its own knowledge. Its strict brevity is deliberate. On a small model, a longer answer is mostly more room to make things up.
 - `SYSTEM_PROMPT_COMPENDIUM` replaces it on a turn that carries compendium excerpts. A `COMPENDIUM_*_SUFFIX` rule follows it. Include mode tells the model to answer from the excerpts first. Lockdown mode tells it to answer only from them.
 - Never send `SYSTEM_PROMPT` on a compendium turn. Its last sentence limits answers to the conversation, and a literal-minded model can read that as a reason to ignore the excerpts.
-- The sentence that marks excerpts as reference data, not instructions, lives in the excerpt block header. Do not remove it.
+- The sentence that marks excerpts as reference data, not instructions, lives in the excerpt block header. Do not remove it. A small model sometimes types that header back before its answer; `isLeakedHeaderPrefix` holds the copy out of the bubble while it streams and `stripLeakedReferenceHeader` removes it, so keep both in step with the header's wording.
 - Router closing hints (`ROUTER_ENHANCEMENTS`) are the last thing a routed model reads, so they outweigh the system prompt on the smallest model. Do not put a quoted reply in one. Given the words "I am not sure" there, a 360M model answered every question with them.
 - A compendium excerpt is the section's text alone. Do not put its heading in the block. A small model copies the first line of the first excerpt, so with a heading there, SmolLM2-360M answered with the article title and nothing else, and Llama 3.2-1B opened with it. The Sources row and the citation chips carry the title.
 
