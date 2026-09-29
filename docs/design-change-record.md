@@ -165,12 +165,32 @@ Decision:
 
 The pure text helpers live in a marked block in `index.html` that the tests evaluate on their own.
 
+## Skill Offer in Chat
+
+Issue #7 asked for a way to send text from a chat prompt to a Field Kit skill that needs only text. It described the first step as a link in the chat that sends the text to the skill's own screen.
+
+Decision:
+
+- When a prompt asks for something a text skill does, the chat shows one line and one button under that prompt. The button opens the skill with the prompt's text in its **Paste text** box. Four skills can be opened this way: Emotions and sentiment, Find names and places, Estimate pain level, and Sort text into categories.
+- The offer is a separate check, like the crisis check, and the router's intent lists were left as they were. Adding the three new requests to the router would have changed how nearby prompts are routed and answered, and there is no fixture that would have shown the damage. It would also have told the model to mention the skill, which a small model does poorly and which the button makes unnecessary.
+- The reply is still generated. The check is a guess, and a wrong guess should cost the reader one line on the screen, not the answer. The offer is shown before the reply starts, so a person on a slow computer does not wait for the reply to see it.
+- Only the request is scored. A prompt is read as a request plus the text it is about, with the request first, last, or around quoted text. A long pasted text would otherwise decide the score, and the few words that say what to do with it would not count.
+- An offer needs a high score and a clear lead over every other list, including a contrast list of questions about the subject, requests for advice, and other jobs done on a text. One threshold was not enough, because scores from this embedding model are high for any two English sentences.
+- An offer is kept in memory and is never part of a chat message. Chat messages are sent to the model as stored, so a new field on a message would reach the model. The cost is that an offer is gone after a reload.
+- The skill does not run by itself. The person sees the text in the box, can correct it, and starts the run. Results reach a chat only through Send to Chat, as before.
+- The app asks before it replaces text in the box or discards another skill's work.
+
+Not built: running the skill inside the chat and showing its results there, and a button near the prompt box for choosing a skill first. Until a skill can run inside the chat, that button would do what the Field Kit button already does.
+
+The lists, the thresholds, and the two pure functions live in a marked block in `index.html` that the tests evaluate on their own. A prompt fixture under `tests/` holds the requests that must get an offer and the prompts that must not, and a model-backed test scores it with the real embedding model. On two batches of prompts written after the lists and thresholds were set, 55 of 58 came out right: two requests got no offer, and one request to make a bulleted list was offered Find names and places.
+
 ## Documentation Rule
 
 When these areas change, update this file and the relevant user or developer doc:
 
 - Runtime behavior.
 - Crisis check behavior.
+- Skill offer behavior.
 - Browser requirements.
 - Compendium behavior.
 - Field Kit state model.

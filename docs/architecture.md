@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 architecture.md: Documentation of the architecture of Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-23
+Last Modified: 2026-09-28
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -79,11 +79,12 @@ Expected chat flow:
 1. User sends a message.
 2. The crisis check runs on the prompt. A hit shows the fixed 988 notice and ends the turn without generation.
 3. Router or intent logic may classify the request.
-4. Attachment retrieval may run when relevant.
-5. Compendium retrieval may run when active and relevant.
-6. Prompt messages are built without permanently storing injected retrieval context.
-7. Model generation runs through the shared gateway or runtime path.
-8. Response renders and saves.
+4. With the router on, the skill offer check runs on the prompt. A hit shows a button under the prompt that opens a Field Kit text tool with the prompt's text. The turn goes on either way.
+5. Attachment retrieval may run when relevant.
+6. Compendium retrieval may run when active and relevant.
+7. Prompt messages are built without permanently storing injected retrieval context.
+8. Model generation runs through the shared gateway or runtime path.
+9. Response renders and saves.
 
 PHI warnings and system notes should not be treated as user-authored model input unless deliberately designed.
 
@@ -99,6 +100,8 @@ Expected Field Kit flow:
 6. Outputs render in the skill surface.
 7. User downloads output or sends a result to chat.
 
+A tool can also be opened from the chat, through the button a skill offer shows. That path puts the prompt's text in the tool's **Paste text** box and then joins this flow at step 3. The tool still runs only when the user starts it.
+
 Field Kit state is ephemeral unless persisted by a designed feature or sent to chat by explicit user action.
 
 ## Python Execution
@@ -111,6 +114,7 @@ Notebook exports should avoid raw PHI-bearing content. Prefer aggregate metadata
 
 - Skills must not touch chat pending state.
 - Chat attachments and skill input files must remain separate.
+- Prompt text reaches a skill only when the user presses a skill offer button, and skill results reach a chat only through Send to Chat.
 - Model calls must coordinate through the shared lock.
 - Attachment deletion must delete all related stored records where applicable.
 - Network-bound model prompts need destination-aware redaction where promised.

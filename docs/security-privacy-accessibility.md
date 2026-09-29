@@ -148,6 +148,17 @@ The method is checked against a fixed, synthetic prompt set (`tests/fixtures/cri
 - Behavior on the invited re-send depends on the language model. Larger instruction-tuned models generally decline to engage with self-harm content; the smallest models may not. The escalation rule exists because of this.
 - No data leaves the browser during screening, and prompt text is not logged. Referral events are stored only within the chat, in the browser.
 
+## Text Handed From Chat to Field Kit
+
+With a "+ Router" model chosen, the app checks each chat prompt for a request that a Field Kit text tool can do, and offers that tool under the prompt. The check runs in the browser with the embedding model the router already uses. No data leaves the browser for it, and the prompt is not logged.
+
+- An offer comes from the words of the prompt only. A file attached to the chat does not bring one.
+- The offer shows fixed wording and the tool's name. It never shows text from the prompt.
+- Pressing the button copies the prompt's text into the tool's **Paste text** box. The text is set as the value of the box, so markup in it is never read as markup. It goes through the same size limit as pasted text.
+- The tool does not run until the person starts it. Opening a tool writes nothing to chat history or to browser storage, and results reach a chat only through Send to Chat.
+- Offers are kept in memory and are gone after a reload. The prompt itself is a chat message and is stored with the chat, as every prompt is.
+- The check is a best effort. It can miss a request or offer a tool for a prompt that did not ask for one.
+
 ## Logging and Exports
 
 Console errors may include technical details. Avoid capturing logs or screenshots with real participant data.
@@ -185,6 +196,7 @@ Before release, test:
 8. Test reduced-motion mode.
 9. Send a crisis test prompt from `tests/fixtures/crisis-prompts.json`, confirm a screen reader announces the notice, and reach its 988 chat link with Tab.
 10. In a Field Kit text tool, move between the input tabs with the arrow keys, confirm a screen reader announces each tab as selected, and reach the **Paste text** box and **Clear text** with Tab.
+11. Send an offer test prompt from `tests/fixtures/skill-offer-prompts.json`, confirm a screen reader announces the offer, reach its button with Tab, press Enter, and confirm focus lands in the tool's **Paste text** box.
 
 Automated check:
 

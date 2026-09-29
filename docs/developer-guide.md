@@ -165,6 +165,38 @@ The crisis check decides whether a chat prompt gets the fixed 988 notice instead
 
 Then confirm in a browser on the smallest model in the dropdown and on a 1B model, with the router on and off and the compendium on and off. The notice must appear for the crisis prompts and not for the research prompts.
 
+## Change the Skill Offer
+
+The skill offer decides whether the chat shows a button under a prompt that opens a Field Kit text skill with the prompt's text in its **Paste text** box. It is a separate check that runs beside the router. It never changes how a prompt is routed or answered.
+
+Its data lives in `index.html` between the comments `Skill offer: data and pure helpers (start)` and `(end)`: the table of requests and skills (`SKILL_OFFER_INTENTS`), the example requests (`SKILL_OFFER_EXEMPLARS`), two thresholds, and two pure functions. The tests evaluate that block on its own, so keep it free of DOM access and of other constants from the file.
+
+How one prompt is checked:
+
+1. `skillRequestCandidates()` reads the prompt as a request plus the text it is about. It returns up to three readings: the request first, the request last, and the whole prompt. Only the request is scored, because a long pasted text would drown out the few words that say what to do with it.
+2. `skillOfferForPrompt()` encodes the readings in one call to the shared embedding model and scores each against the router's example lists and the offer block's lists.
+3. `pickSkillOffer()` offers a skill when its list scores at least `SKILL_OFFER_MIN_SCORE` and beats every other list by at least `SKILL_OFFER_MIN_MARGIN`. The first reading that earns an offer decides the skill and the text.
+4. `appendSkillOffer()` shows the button, and `openSkillWithText()` opens the skill when the button is pressed. The skill takes the text through the `skillTextReceiver` it registered when it was mounted.
+
+To change it:
+
+- Add a line to a skill's list in `SKILL_OFFER_EXEMPLARS` when a common way of asking is missed.
+- Add a line to the contrast list, `SKILL_OFFER_CONTRAST_ID`, when a prompt that is not a request gets an offer. Questions about a subject, requests for advice, and other jobs done on a text belong there.
+- Change the thresholds last. Raising either one means fewer offers and fewer wrong offers.
+- Put every new case in `tests/fixtures/skill-offer-prompts.json` first, then run the model test (see Run the Tests) until every prompt lands on the right side. A request the check still misses goes under `knownMisses`, which is recorded and not tested.
+- To offer another skill, add it to `SKILL_OFFER_INTENTS` with an example list, and register a `skillTextReceiver` in its mount function. The skill needs a **Paste text** pane.
+
+Preserve these rules:
+
+- An offer comes from the words of the prompt. Never make one from an attached file alone, and never offer a skill that is not ready.
+- Keep offers in memory (`skillOffersByChat`). Do not add an offer to a chat message or to browser storage. Chat messages are sent to the model as they are stored, so a new field on a message would reach the model.
+- Text moves one way, from the prompt into the skill's box. Opening a skill must not write to chat history, and the skill must not run until the person starts it.
+- The prompt is untrusted input. The offer shows fixed wording and the skill's name, never text from the prompt. The text reaches the page only as the value of the paste box.
+- Ask before replacing text in the box or discarding another skill's work.
+- Never log the prompt.
+
+Then confirm in a browser with the router model: each kind of request gets its offer, the button opens the skill with the text and moves focus to the box, and an ordinary question gets no offer.
+
 ## Add a User Setting
 
 User settings live in `SETTING_DEFS`, which holds each setting's fixed recommended value and range. The Advanced settings dialog reads its limits from there and its reset text from `recommendedSetting()`, which may return something else for a setting whose recommendation depends on context. The match floor is the example: it follows the loaded compendium's own floor when the file has one.
@@ -215,15 +247,15 @@ The tests live under `tests/` and use Node's own test runner, so nothing is inst
 node --test tests/
 ```
 
-That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, and **Paste text** tab wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, and the Field Kit paste text helpers. The model-backed tests skip themselves unless their dependency is installed.
+That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, **Paste text** tab wiring, and skill offer wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, and the skill offer's helpers and lists. The model-backed tests skip themselves unless their dependency is installed.
 
-Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are four such blocks: the crisis check's data, the citation tag helpers, the reply and citation text helpers, and the Field Kit paste text helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
+Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are six such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, and the Field Kit paste text helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
 
-To score the crisis prompt fixture with the real embedding and tiebreak models, and the reranker with synthetic passages, on your CPU:
+To score the crisis and skill offer prompt fixtures with the real embedding and tiebreak models, and the reranker with synthetic passages, on your CPU:
 
 ```text
 npm ci --prefix tests
-node --test tests/crisis-models.test.mjs tests/rerank-models.test.mjs
+node --test tests/crisis-models.test.mjs tests/rerank-models.test.mjs tests/skill-offer-models.test.mjs
 ```
 
 The first run downloads about 300 MB of model files into `tests/.cache/`, which git ignores. Set `FSAI_SKIP_MODEL_TESTS=1` to skip those tests even when the dependency is installed.

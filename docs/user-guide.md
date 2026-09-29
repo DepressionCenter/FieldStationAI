@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 user-guide.md: Guide for users of Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-23
+Last Modified: 2026-09-28
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -85,6 +85,40 @@ What did this participant say about sleep?
 ```
 
 For text-bearing attachments, the app may search extracted attachment text before using other context. For images, the app may rerun a vision model rather than relying on a stored caption.
+
+## Send Text to a Field Kit Tool
+
+Some jobs are done better by a Field Kit tool than by the chat model. When you ask the chat to do one of these jobs on a text, the chat offers the tool that does it.
+
+| When you ask the chat to | The chat offers |
+| --- | --- |
+| Find the feelings or the sentiment in a text | Emotions and sentiment |
+| Find the people, places, or organizations named in a text | Find names and places |
+| Rate the pain a text describes | Estimate pain level |
+| Sort a text into categories | Sort text into categories |
+
+1. Type your request and your text in one message. For example:
+
+   ```text
+   Analyze this text for sentiment: I had a wonderful day at the park and I cannot wait to go back.
+   ```
+
+2. Press **Send**. Under your message, the app shows "Field Kit has a tool for this." and a button, such as **Open in Emotions and sentiment**. The assistant still answers your message.
+3. Press the button. Field Kit opens the tool with your text in its **Paste text** box. The words of your request are left out.
+4. Check the text in the box, then press the tool's run button.
+
+Things to know:
+
+- Offers appear when the model you chose has "+ Router" in its name.
+- You can put your request before the text, after it, or around text in quotation marks.
+- The tool does not run until you press its run button.
+- Opening a tool adds nothing to your chat. Results reach a chat only when you press **Send to Chat** in the tool.
+- Only the words of your message bring an offer. Attaching a file does not.
+- If the box already holds other text, or another tool holds files or results, the app asks before it replaces them.
+- The offer stays under your message until you reload the page. To get it back, send the message again.
+- The check is a best effort. It can miss a request, and it can offer a tool you do not need. You can ignore an offer, and you can always open a tool yourself with the Field Kit button at the top of the page.
+
+See the [Field Kit Guide](field-kit.md) for what each tool does with your text.
 
 ## Use a Compendium
 

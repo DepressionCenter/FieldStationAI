@@ -52,6 +52,7 @@ Helper model areas may include:
 - Reranking of compendium and attachment excerpts.
 - Router or intent classification.
 - The crisis check, which shares the embedding model and the router's tiebreak model.
+- The skill offer check, which shares the embedding model and runs when the router is on.
 - Zero-shot classification.
 - Audio transcription.
 - Named entity recognition.
