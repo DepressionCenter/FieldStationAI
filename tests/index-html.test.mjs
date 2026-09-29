@@ -6,7 +6,9 @@
 // Summary: Static checks on index.html, the whole application: the file
 // header carries the project and license notice, the app is still one
 // module script, the crisis notice constants point at the 988 Lifeline,
-// and the excerpt reranker is wired the way that yields real scores.
+// the excerpt reranker is wired the way that yields real scores, and the
+// Field Kit text skills offer a "Paste text" tab whose text is never
+// parsed as markup or stored.
 // Runs with Node's built-in test runner and no dependencies.
 // Notes: See README file for documentation and full license information.
 //
@@ -41,6 +43,18 @@ function numberConstant(name) {
     const match = html.match(new RegExp('const ' + name + ' = ([0-9.]+)'));
     assert.ok(match, `index.html does not define ${name} as a number`);
     return Number(match[1]);
+}
+
+// Reads the source of one top-level function of the app script, from its
+// declaration up to the next top-level function. Top-level functions sit
+// at the script's base indent, and the functions inside them sit deeper.
+const TOP_LEVEL_INDENT = '        ';
+function functionSource(name) {
+    const start = html.indexOf('\n' + TOP_LEVEL_INDENT + 'function ' + name + '(');
+    assert.ok(start !== -1, `index.html does not define the function ${name}`);
+    const rest = html.slice(start + 1);
+    const next = rest.search(new RegExp('\\n' + TOP_LEVEL_INDENT + '(?:async )?function \\w+\\('));
+    return next === -1 ? rest : rest.slice(0, next);
 }
 
 // ### File Header ###
@@ -93,4 +107,59 @@ test('the rerank shortlist is longer than the excerpt count and holds one hit pe
     assert.ok(topK >= 1, 'at least one excerpt per turn');
     assert.ok(shortlist > topK, `the shortlist (${shortlist}) must exceed the excerpt count (${topK})`);
     assert.equal(numberConstant('COMPENDIUM_SOURCE_CAP'), 1, 'one hit per section');
+});
+
+// ### Paste Text Tab ###
+
+// Three of the text skills take their input tabs from one shared helper.
+// The category sorter builds its own, because its spreadsheet tab reads
+// files with extra rows above the header.
+const SHARED_TAB_SKILLS = ['mountEmotionsSkill', 'mountPainLevelSkill', 'mountNerSkill', 'mountBucketsSkill'];
+const TAB_BUILDERS = ['mountClassifierInputTabs', 'mountTaxonomySkill'];
+
+test('every text skill offers a Paste text tab', () => {
+    for (const name of TAB_BUILDERS) {
+        const source = functionSource(name);
+        assert.ok(source.includes('data-mode="paste">Paste text</button>'), `${name} has a Paste text tab`);
+        assert.ok(source.includes('mountPasteTextPane('), `${name} builds the shared paste pane`);
+        assert.ok(source.includes('wireSkillTabs('), `${name} wires its tabs through the shared helper`);
+    }
+    for (const name of SHARED_TAB_SKILLS) {
+        assert.ok(functionSource(name).includes('mountClassifierInputTabs('), `${name} uses the shared input tabs`);
+    }
+});
+
+test('pasted text counts as unsaved input in every text skill', () => {
+    for (const name of SHARED_TAB_SKILLS) {
+        assert.ok(functionSource(name).includes('inputTabs.hasUnsavedInput()'), `${name} asks the tabs for unsaved input`);
+    }
+    assert.ok(functionSource('mountClassifierInputTabs').includes('pasteInput.hasText()'), 'the shared tabs count pasted text');
+    assert.ok(functionSource('mountTaxonomySkill').includes('pasteInputRef.hasText()'), 'the category sorter counts pasted text');
+});
+
+// Pasted text is untrusted input. The pane that holds it must build its
+// elements one by one, so no part of the text can be read as markup.
+test('the paste pane never parses text as markup', () => {
+    const source = functionSource('mountPasteTextPane');
+    for (const sink of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write', 'eval(']) {
+        assert.ok(!source.includes(sink), `mountPasteTextPane does not use ${sink}`);
+    }
+});
+
+// Pasted text belongs to the skill. It must not reach chat, browser
+// storage, or the network from the pane that holds it.
+test('the paste pane keeps its text out of chat, storage, and the network', () => {
+    const source = functionSource('mountPasteTextPane');
+    for (const exit of ['chatBridge', 'localStorage', 'sessionStorage', 'indexedDB', 'fetch(', 'XMLHttpRequest', 'sendBeacon']) {
+        assert.ok(!source.includes(exit), `mountPasteTextPane does not use ${exit}`);
+    }
+});
+
+// A spell-checked box can send its text to an online service in some
+// browsers, and pasted research text may hold PHI.
+test('the paste box turns spell checking off and carries a label and a size limit', () => {
+    const source = functionSource('mountPasteTextPane');
+    assert.ok(source.includes('textarea.spellcheck = false'), 'spell checking is off');
+    assert.ok(source.includes('label.htmlFor = textarea.id'), 'the label points at the box');
+    assert.ok(source.includes('textarea.maxLength = PASTED_TEXT_MAX_CHARS'), 'the box has the size limit');
 });

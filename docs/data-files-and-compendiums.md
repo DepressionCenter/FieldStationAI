@@ -26,7 +26,7 @@ This boundary prevents a file used in one surface from silently contaminating an
 Required behavior:
 
 - Chat attachments stay with the chat.
-- Field Kit input files stay with the skill.
+- Field Kit input files and pasted text stay with the skill. Pasted text is not written to browser storage.
 - Resetting a skill must not delete chat-owned attachments.
 - Starting a new chat must not inherit Field Kit state.
 

@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 security-privacy-accessibility.md: Security and accessibility guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-23
+Last Modified: 2026-09-28
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -28,6 +28,7 @@ Network activity can still occur for:
 - Fetching the bundled compendium file or an external one.
 - Loading or using local Ollama if configured.
 - Browser speech recognition, which may be browser/vendor serviced depending on browser.
+- Browser spell checking. Some browsers send the text of a spell-checked box to an online service when the person has turned on an enhanced spell checker. The Field Kit **Paste text** box turns spell checking off. The chat prompt box and the other text boxes leave it to the browser's setting.
 - Opening external links.
 
 ## PHI Posture
@@ -183,6 +184,7 @@ Before release, test:
 7. Confirm color is not the only state cue.
 8. Test reduced-motion mode.
 9. Send a crisis test prompt from `tests/fixtures/crisis-prompts.json`, confirm a screen reader announces the notice, and reach its 988 chat link with Tab.
+10. In a Field Kit text tool, move between the input tabs with the arrow keys, confirm a screen reader announces each tab as selected, and reach the **Paste text** box and **Clear text** with Tab.
 
 Automated check:
 

@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 field-kit.md: Guide for using Field Kit within Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-07-27
+Last Modified: 2026-09-28
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -27,7 +27,8 @@ Field Kit is the task-focused side of Field Station AI™. It uses local-browser
 - Field Kit tools use skill-local state.
 - Chat and Field Kit should coordinate model calls through the shared engine lock.
 - Closing or resetting Field Kit can discard unsaved skill output.
-- Skills do not automatically add their input files to chat.
+- Skills do not automatically add their input files or pasted text to chat.
+- Text pasted into a tool stays in that tool. It is not saved in browser storage.
 - A skill-produced result becomes chat context only when the user explicitly sends it to chat.
 
 ## Tools
@@ -36,14 +37,14 @@ Documented Field Kit tool areas:
 
 | Tool area | Input | Output |
 | --- | --- | --- |
-| Sort text into categories | Text/PDF files or spreadsheet rows; user-defined categories | Per-item or per-row category results |
+| Sort text into categories | Text/PDF files, spreadsheet rows, or pasted text; user-defined categories | Per-item or per-row category results |
 | Combine spreadsheets | CSV/TSV/XLS/XLSX files or folders | Merged CSV, summary, reproducibility artifact where available |
 | Transcribe audio | Audio file | Transcript with download or send-to-chat behavior where available |
 | Summarize or find themes | Pasted text or text/PDF file | Summary or theme list |
-| Emotions and sentiment | Text/PDF files or spreadsheet rows | Emotion or sentiment scores where implemented |
-| Estimate pain level | Text/PDF files or spreadsheet rows | Estimated score output where implemented |
-| Score against custom labels | Text/PDF files or spreadsheet rows; user labels | Independent label scores |
-| Find names and places | Text/PDF files or spreadsheet rows | Entity list and counts where implemented |
+| Emotions and sentiment | Text/PDF files, spreadsheet rows, or pasted text | Emotion or sentiment scores where implemented |
+| Estimate pain level | Text/PDF files, spreadsheet rows, or pasted text | Estimated score output where implemented |
+| Score against any labels | Text/PDF files, spreadsheet rows, or pasted text; user labels | Independent label scores |
+| Find names and places | Text/PDF files, spreadsheet rows, or pasted text | Entity list and counts where implemented |
 | Find similar or duplicates | Spreadsheet column or pasted list | Similar pairs or duplicate clusters |
 
 Some tools may be complete, gated by model availability, or still under active development depending on the branch.
@@ -87,12 +88,43 @@ If you close or reset the Field Kit tab before downloading or sending, working s
 
 ## Classification Tools
 
-Classification tools commonly support:
+Five tools read text and score it: Sort text into categories, Emotions and sentiment, Estimate pain level, Score against any labels, and Find names and places. Each one gives you three ways to hand it text. Choose one with the tabs under **What to check**.
 
-- Document mode: each file is an item.
-- Spreadsheet mode: one selected text column is classified row by row.
+| Tab | What you give | What counts as one item |
+| --- | --- | --- |
+| One document at a time | Plain-text or PDF files | Each file |
+| A spreadsheet of many rows | A CSV or Excel file, and the column that holds the text | Each row |
+| Paste text | Text you paste or type into the box | The whole box |
+
+Sort text into categories names its heading **What to sort**, and its first two tabs **One person's documents** and **A spreadsheet of many people**. They work the same way.
 
 Very long text may be shortened or chunked depending on the model and tool constraints. Check outputs before analysis, publication, or clinical interpretation.
+
+### Paste Text
+
+Use **Paste text** when your text is in another app, or in a file type the tool cannot read. You do not need to save it as a PDF or text file first.
+
+1. Open the tool and choose the **Paste text** tab.
+2. Paste or type your text into the box. The line under the box shows the word count.
+3. Press the tool's run button, such as **Find feelings now**.
+4. Read the results. Your text is named "Pasted text" in the results table, in the CSV download, and in Send to Chat.
+
+Things to know:
+
+- The whole box is one item. To score many short texts one by one, put them in a spreadsheet column and use the spreadsheet tab.
+- The box holds up to 1,000,000 characters. Text past that point is not kept, and the line under the box tells you when the limit is reached.
+- Pasted text stays inside the tool. It is not saved in the browser and is not added to a chat.
+- Send to Chat sends the results, not the text you pasted. Results from Find names and places do hold the names found in your text.
+- The box does not check spelling. Some browsers send spell-checked text to an online service, so the app turns spell checking off for this box.
+- **Clear text** empties the box. Done, Start over, and closing Field Kit also discard the text. The app asks you first.
+
+### Use the Tabs by Keyboard
+
+1. Press Tab until the open tab has focus.
+2. Press the Right or Left arrow key to open the next or previous tab. Home opens the first tab and End opens the last.
+3. Press Tab again to move into the open tab's controls.
+
+Find similar or duplicates uses the same tab keys for its two tabs.
 
 ## Safe-Use Notes
 

@@ -150,6 +150,21 @@ An updated compendium with several sources for one article showed that the reran
 
 The reranker multiplies each section's score by the weight the compendium gives it, so a section its builder marked as boilerplate stays demoted after reranking. The excerpt block carries each section's text without its heading: a small model copies the first line of the first excerpt, and with the heading there it answered with the article title. Three smaller changes came with these. The Sources row labels a link with the page title rather than one section's heading. Two citation tags written back to back, `[S1][S2]`, both resolve; before, the reader saw `1][2`. The check that removes a leaked excerpt-block header from a reply now tolerates changed punctuation, an inserted article, or a copy of the header's first sentence alone, and it runs while the reply streams: a header being typed back is held out of the bubble and removed when complete, where before it showed for several seconds and then vanished. A model-backed test checks the reranker's scoring, and the fast suite checks the text helpers.
 
+## Paste Text Input
+
+Issue #6 asked for a way to paste text into the text skills, so that text from another app or from an unsupported file type does not have to be saved as a PDF or text file first.
+
+Decision:
+
+- A third input tab, **Paste text**, in Sort text into categories, Emotions and sentiment, Estimate pain level, and Find names and places. Score against any labels has it too, because it takes its input tabs from the same helper as three of those skills.
+- The whole box is one item and runs through the same steps as one uploaded document. It carries the fixed name "Pasted text", never a name taken from the text.
+- One pane for all five skills (`mountPasteTextPane`) and one function that wires every skill tab strip (`wireSkillTabs`), so the behavior cannot drift between skills.
+- Pasted text lives in the box and nowhere else. It is not written to browser storage or to chat state. Leaving the skill discards it, after the same question the app asks before it discards files.
+- The box holds up to 1,000,000 characters and turns spell checking off. Some browsers send spell-checked text to an online service, and pasted research text may hold PHI.
+- The tab strips became ARIA tab lists with arrow-key movement. Before, a screen reader could not tell which tab was open. This also applies to the two tabs of Find similar or duplicates.
+
+The pure text helpers live in a marked block in `index.html` that the tests evaluate on their own.
+
 ## Documentation Rule
 
 When these areas change, update this file and the relevant user or developer doc:
