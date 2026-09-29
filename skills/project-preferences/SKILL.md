@@ -75,7 +75,7 @@ browsers block model downloads for `file://` pages.
 
 The automated suite under `tests/` covers the documentation, the single-file rule, the
 crisis check, the excerpt reranker, the reply text helpers, the Field Kit paste text
-helpers, and the chat's skill offer; run `node --test tests/` before opening a pull request. The app itself is
+helpers, the chat's skill offer, and the storage dialog; run `node --test tests/` before opening a pull request. The app itself is
 verified manually in a browser. Say exactly which browser and which models you used, and say
 plainly when you could not test something. Never report a result you did not observe.
 

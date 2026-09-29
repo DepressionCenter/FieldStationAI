@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 user-guide.md: Guide for users of Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-28
+Last Modified: 2026-09-29
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -154,6 +154,36 @@ The smallest model runs 0.15 below the creativity number shown, because small mo
 Some compendium files carry their own recommended match strictness, measured when the file was built. When such a file is loaded, the **Reset** button shows that value, and the app uses it until you change the setting yourself. A value you set yourself stays until you press **Reset**.
 
 If answers ignore the compendium, first look at the Sources row under the answer. If it lists the right pages, the model is the weak link, so try a larger model. If it lists nothing, try a slightly lower match strictness.
+
+## Manage Storage
+
+The app saves chats, attachments, downloaded models, and compendiums in this browser. The Storage dialog shows what is saved and lets you delete items one at a time.
+
+To open it, choose the menu button at the top right (three lines), then **Manage storage**.
+
+The top line shows how much space the app uses and how much this browser allows. Below it are four groups:
+
+| Group | What it lists | Time shown |
+| --- | --- | --- |
+| Chats | Every saved chat, with the number of files attached to it | When the chat last changed |
+| Attachments | Every file you attached, and the chat it belongs to | When you added the file |
+| Models | Every AI model this browser has downloaded | When the model last loaded |
+| Compendiums | Every compendium file this browser has saved | When the file was saved |
+
+Each row shows a size and a **Delete** button. To delete an item:
+
+1. Choose **Delete** on its row.
+2. Confirm in the box that appears. Choose **Cancel** to keep the item.
+
+Things to know before you delete:
+
+- A deleted item cannot be brought back.
+- Deleting a chat also deletes the files attached to it.
+- A deleted model or compendium downloads again the next time the app needs it. That takes time and a network connection.
+- You cannot delete while the AI is writing a reply. Wait for the reply to finish.
+- If you set a PIN and did not enter it, the Chats and Attachments groups stay hidden. Reload the page and enter your PIN to see them.
+
+Sizes are close, not exact. The size of a chat is the size of its text, and a PIN adds about a third. The total at the top comes from the browser, and it leaves out chat text.
 
 ## Export Data
 

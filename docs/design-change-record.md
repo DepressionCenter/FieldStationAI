@@ -211,6 +211,29 @@ Not built: running the skill inside the chat and showing its results there, and 
 
 The lists, the thresholds, and the two pure functions live in a marked block in `index.html` that the tests evaluate on their own. A prompt fixture under `tests/` holds the requests that must get an offer and the prompts that must not, and a model-backed test scores it with the real embedding model. On two batches of prompts written after the lists and thresholds were set, 55 of 58 came out right: two requests got no offer, and one request to make a bulleted list was offered Find names and places.
 
+## Storage Dialog
+
+Issue #4 asked for one place to see and delete what the app saves in the browser. The menu now has **Manage storage**, which opens a dialog with four groups: chats, attachments, models, and compendiums.
+
+Decision:
+
+- The dialog lists what the browser holds, read fresh each time. It does not keep its own record of what was stored, which could drift from the truth.
+- Compendiums are a fourth group. The first plan had three groups, but a saved compendium takes up space too, about 27 MB for the bundled one.
+- Rows are a list, not a table. A list row wraps at narrow widths, and a four-column table does not fit 320 CSS pixels.
+- Delete uses the browser's own confirmation box, as every other delete in the app does. It works by keyboard and is read by screen readers.
+- Each group deletes through the path the rest of the app already uses. Attachment deletion was written for the chat on screen only, so it was widened into `deleteAttachmentEverywhere()`, which both the chat and the dialog call.
+- A model's time is the time it last loaded. The browser keeps no download time for a cached file, so the app now stores the load time in the flag it already kept per model.
+- With the store locked, chats and attachments are not listed. The app cannot tell which file belongs to which chat until the PIN is entered, and listing files as ownerless would invite deleting them by mistake.
+- The runtime files that the model libraries share are not listed. They belong to no single model, and deleting them would slow the next load of every model.
+
+Not built: downloading an attachment's file from the dialog, and deleting several items at once.
+
+### Startup Cleanup Deleted Models in Use
+
+Work on the dialog found a defect in the startup cleanup, which removes cached files of models the app no longer offers. The cleanup knew chat models by the app's names for them, such as `webllm:SmolLM2-360M-Instruct-q4f16_1-MLC`. Their files are cached under repository names, such as `mlc-ai/SmolLM2-360M-Instruct-q4f16_1-MLC`. No name matched, so the cleanup deleted every chat model's weights on each page load, and the model downloaded again. The excerpt ranking model and the small model for browsers without WebGPU were missing from the list as well, with the same result.
+
+The cleanup now knows every model by the name its files are cached under. A static test checks the list. In the test browser, the chat model's cache held no files after a page load before the change, and 10 files after it.
+
 ## Documentation Rule
 
 When these areas change, update this file and the relevant user or developer doc:
