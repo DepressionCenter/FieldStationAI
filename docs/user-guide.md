@@ -35,6 +35,20 @@ Do not treat the app as a compliance certification. If your data may contain PHI
 
 Use **New chat** for a separate conversation. Each chat should keep its own messages and attachments.
 
+### Rename a Chat or a Saved Prompt
+
+Each chat tab and each saved prompt has a small pencil button next to its name.
+
+1. Choose the pencil. The name turns into a text box, with the whole name selected.
+2. Type the new name. A name can be up to 40 characters long.
+3. Press **Enter** to keep the new name, or **Esc** to keep the old one. Clicking somewhere else also keeps the new name.
+
+Renaming a chat does not open it, and it does not stop a reply that is being written. You can rename chats the same way in the Storage dialog. See [Manage Storage](#manage-storage).
+
+### Pin a Chat
+
+A chat that is not pinned is removed 30 days after its last change. Choose the pin on a chat's tab to keep the chat. You can pin up to 5 chats. Choose the pin again to unpin.
+
 ## If You May Be in Crisis
 
 Field Station AI™ is not a counseling service, but it is made by a depression center, so it watches for one thing. If a message you type sounds like you are in a mental health crisis right now, the app shows a fixed notice instead of a reply. The notice gives the 988 Suicide and Crisis Lifeline, which you can call or text at 988 in the United States, and a link to the 988 Lifeline chat. It also says how to reach 988 in Spanish.
@@ -170,10 +184,19 @@ The top line shows how much space the app uses and how much this browser allows.
 | Models | Every AI model this browser has downloaded | When the model last loaded |
 | Compendiums | Every compendium file this browser has saved | When the file was saved |
 
-Each row shows a size and a **Delete** button. To delete an item:
+Each row shows a size and a **Delete** button. Next to the name of each group is the total size of that group.
+
+To delete an item:
 
 1. Choose **Delete** on its row.
 2. Confirm in the box that appears. Choose **Cancel** to keep the item.
+
+Each chat row has two more controls:
+
+- **The pencil** next to the name renames the chat. You can also double-click the name. The tab in the main screen shows the new name.
+- **The pin** to the left of **Delete** pins or unpins the chat. A gray pin with a dashed border means the chat is not pinned. A pin in color with a solid border means it is pinned.
+
+A pinned chat cannot be deleted here. Its **Delete** button is gray with a dashed border. Choose the pin to unpin the chat, and **Delete** works again.
 
 Things to know before you delete:
 

@@ -255,6 +255,18 @@ Rules for changes:
 - A model's files are found by the address they were downloaded from, not by the cache they are in, because the cache names belong to the model libraries and have changed between versions.
 - A chat model is named `webllm:<name>` in the app, and its files are cached under the repository `mlc-ai/<name>`. `webllmRepoId()` and `modelFlagIds()` map between the two. `knownModelIds()` must name every model the app uses by the name its files are cached under. The startup cleanup deletes the files of any model that is missing from it.
 - `markCached()` stores the time of the last successful load. A flag from an earlier release holds `1`, which `storageTime()` reads as no time.
+- A chat's row carries `chatId` and `pinned`. That gives the row a pencil button, a pin button, and a **Delete** button that is marked `aria-disabled` while the chat is pinned.
+
+## Rename in Place
+
+Chat tabs, saved prompt chips, and chat rows in the Storage dialog all rename through `beginInlineRename()`. It puts a text box in place of the name. `renameChat()` and `renameTemplate()` call it with a `commit` function that stores the name and redraws.
+
+Rules for changes:
+
+- Give the item's name element a `data-rename-label` value and its pencil button the same value in `data-rename`, such as `chat:<id>`. Build the pencil with `buildRenameButton()`.
+- A function that redraws a container with renamable items calls `holdInlineRename()` before it clears the container and `resumeInlineRename()` after it fills it. Without the pair, a redraw in the middle of typing loses the text. `renderTabs()` and `renderChips()` show how.
+- Code that moves focus to the prompt box by itself, such as at the end of a reply, calls `focusPromptWhenFree()`. It leaves focus alone while a name is being edited or a dialog is open.
+- Do not use `prompt()` for a name.
 
 ## Run the Tests
 

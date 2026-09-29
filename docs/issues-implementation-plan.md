@@ -289,7 +289,9 @@ The pieces exist in separate places. Attachments live in IndexedDB (`ATTACHMENT_
 #### What was built
 
 - **Manage storage** in the menu opens the dialog. The top line shows the space in use and the space the browser allows.
-- Four groups: Chats, Attachments, Models, and Compendiums. Each row shows a name, a time, a size, and a **Delete** button.
+- Four groups: Chats, Attachments, Models, and Compendiums. Each row shows a name, a time, a size, and a **Delete** button. Each group's heading shows the group's total size.
+- A chat's row has a pencil button that renames the chat in place, and a pin button. A pinned chat cannot be deleted until it is unpinned.
+- Chat tabs and saved prompt chips in the main screen rename the same way, through a pencil button. The double-click and the browser's box are gone.
 - The pure helpers live in a marked block, `Storage dialog: pure helpers`. The list functions, the rows, and the dialog's open and close code follow it.
 - `deleteAttachmentEverywhere()` deletes an attachment of any chat. `deleteAttachmentChip()`, which the chat uses, now calls it.
 - `AttachmentStore` gained `blobBytes()` and `vectorBytes()`, which read the size of a stored record without decrypting it.
@@ -309,6 +311,8 @@ The reasons are in the [Design Change Record](design-change-record.md#storage-di
 The startup cleanup deleted the weights of every chat model on each page load, so the model downloaded again each time. It knew chat models by the app's names, and their files are cached under repository names. Two helper models were missing from its list too. The cleanup now knows every model by the name its files are cached under. See the [Design Change Record](design-change-record.md#startup-cleanup-deleted-models-in-use).
 
 #### Tests
+
+`tests/index-html.test.mjs` also checks that a group's heading shows the size alone, that a pinned chat's **Delete** is refused before anything is deleted, that names are edited in a text box with a size limit and no browser dialog, and that renaming a chat does not open it or wait for a reply.
 
 `tests/storage-dialog.test.mjs` runs the marked block with no browser: sizes, the usage sentence, stored times, model names, hosts that only look like the model host, and the grouping of cached files, with empty and invalid input. `tests/index-html.test.mjs` checks that rows are built without `innerHTML`, that the dialog is a labeled modal, that each group deletes through the app's own path and asks first, that a compendium's address is shown without its query, and that the startup cleanup keeps every model the app uses.
 
@@ -341,7 +345,20 @@ Browser, on 2026-09-29, headless Microsoft Edge 151 with WebGPU, served from `py
 - An axe-core 4.10.2 scan of the open dialog, with WCAG 2.0, 2.1, and 2.2 A and AA rules, found no violations. It asked for a manual contrast check of the **Close** button, the title, the intro, and the usage line. Measured contrast on white was 15.3 to 1 for names, the title, and the usage line, 9.3 to 1 for the **Delete** button's text and border, and 5.4 to 1 for the intro and the details line. The **Close** button has the same colors as the one in Advanced settings. Every **Delete** button is described by the details of its own row.
 - No console errors were logged. The chats the checks created were deleted afterwards.
 
-Not tested: a real screen reader, a phone or touch screen, Firefox or Safari, 200% browser zoom, an external compendium loaded with `?compendium-url=`, an attachment with search vectors, a file with no chat, a model delete while another model loads, and a browser that does not report a storage estimate.
+Browser, second round on 2026-09-29, same setup, after the rename and pin changes:
+
+- A tab had three buttons, each 24 by 24 CSS pixels, and the tab was 28 pixels tall. A double-click on a tab or a chip did nothing.
+- The pencil on a tab opened a text box with the whole name selected. No browser box opened, and the chat on screen did not change. Enter stored the name, cut to 40 characters, and focus went back to the pencil. Escape and an empty name kept the old name. Leaving the box stored the name and left focus where it was moved.
+- A name that held an `<img>` tag with an error handler was shown as text in the tab, and the handler did not run.
+- A chat was renamed while another chat's reply was being written. The reply was written in full. When it ended, the text box was still open with its text, and focus had not moved.
+- The pencil on a saved prompt chip worked the same way. The text box held the name without the bookmark sign.
+- In the Storage dialog, each group's heading showed the size alone. A double-click on a chat's name and the pencil both opened the text box. Escape in the box kept the dialog open. After Enter, the row, its **Delete** label, and the tab in the main screen showed the new name.
+- The pin button was 32 by 32 pixels and sat to the left of **Delete**. Not pinned, it was gray with a dashed border and **Delete** worked. Pinned, it was in color with a solid border, **Delete** was gray with a dashed border, and pressing it asked nothing, deleted nothing, and said to unpin first. The tab showed the pin too. A sixth pin was refused with the reason. After unpinning, the chat was deleted after a confirmation.
+- At 320 CSS pixels wide, with a text box open, nothing scrolled sideways in the dialog or in the page.
+- axe-core 4.10.2 scans of the dialog with a pinned row and an open text box, of the tab bar, and of the chip row found no violations. They asked for manual contrast checks of the pencil and close buttons.
+- No console errors were logged. The chats and the saved prompt the checks created were deleted afterwards, and the pins were left as they were.
+
+Not tested: a real screen reader, a phone or touch screen, Firefox or Safari, 200% browser zoom, renaming with a PIN set, an external compendium loaded with `?compendium-url=`, an attachment with search vectors, a file with no chat, a model delete while another model loads, and a browser that does not report a storage estimate.
 
 Found while testing and not changed in this phase: the test browser profile held 121 chats left by checks in earlier phases. They are in the test profile only.
 

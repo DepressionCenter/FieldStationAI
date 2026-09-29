@@ -226,7 +226,25 @@ Decision:
 - With the store locked, chats and attachments are not listed. The app cannot tell which file belongs to which chat until the PIN is entered, and listing files as ownerless would invite deleting them by mistake.
 - The runtime files that the model libraries share are not listed. They belong to no single model, and deleting them would slow the next load of every model.
 
+- Each group's heading shows the total size of the group. A count of items next to the size was removed, because two numbers side by side were hard to read.
+- A pinned chat cannot be deleted from the dialog. The pin button sits to the left of **Delete**, and unpinning makes **Delete** work again. The **Delete** button of a pinned chat is marked `aria-disabled` and keeps its place in the Tab order, so that a person using a keyboard or a screen reader can reach it and learn why it does nothing. The close button on a chat's tab still deletes a pinned chat after a confirmation.
+
 Not built: downloading an attachment's file from the dialog, and deleting several items at once.
+
+## Rename in Place
+
+A chat or a saved prompt was renamed with a double-click, in a box the browser opened over the page. The double-click also acted as a click, which opened the chat, and the box covered the page.
+
+Decision:
+
+- Each chat tab and each saved prompt has a small pencil button. It turns the name into a text box in the same place, with the whole name selected. Enter or leaving the box keeps the new name, and Escape keeps the old one.
+- A pencil button was chosen over a right-click menu. A button can be reached with Tab and with a tap, and a right-click menu needs a second way in for both.
+- Double-click no longer renames a tab or a chip. In the Storage dialog a double-click on a chat's name still does, next to the pencil, because a click on that name does nothing else.
+- Renaming does not open the chat, and it is allowed while a reply is being written.
+- A redraw of the tab bar or the chip row keeps an edit in progress, with the text typed so far.
+- The app no longer moves focus to the prompt box at the end of a reply while a name is being edited or a dialog is open. Before, the end of a reply would have closed the text box in the middle of typing, and it took focus out of an open dialog.
+- The pencil is drawn at 75% strength. Fainter than that, it falls under 3 to 1 contrast against the white panel.
+- The buttons on a tab and on a chip are now 24 by 24 CSS pixels, the WCAG 2.2 minimum. They were smaller.
 
 ### Startup Cleanup Deleted Models in Use
 
