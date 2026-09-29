@@ -83,6 +83,21 @@ Recommended researcher practice:
 - Keep source data outside the app.
 - Avoid identifiers in filenames.
 
+## Storage Dialog
+
+The Storage dialog lists the chats, attachments, models, and compendiums saved in the browser, and deletes them one at a time. It reads and deletes local data only. It sends nothing to a network.
+
+- Names of chats and files come from the person and are untrusted. Every row is built with `createElement` and `textContent`, so markup in a name is shown as text. The same names appear in the confirmation box, which the browser shows as plain text.
+- The dialog shows file names and chat names on screen. Do not take screenshots of it when the names may identify a participant.
+- With a PIN set and not entered, the app has not read the chats. The dialog then lists no chats and no attachments, and shows no file name.
+- Sizes are read from the stored records as they are. No attachment is decrypted to build the list.
+- An external compendium is listed by its site name, host, and path. The query part of its address is left out, because a link to a private file may carry an access token there.
+- Every delete asks for confirmation first. A delete is refused while a reply is being written, and a model delete is refused while a model is loading.
+- A pinned chat cannot be deleted from the dialog until it is unpinned. Its **Delete** button stays reachable by keyboard and says why it does nothing.
+- A chat can be renamed in the dialog. The new name is typed by the person, is limited to 40 characters, and is shown as text like any other name.
+- Each delete goes through the path the rest of the app uses, so the related records go with the item. See [Data, Files, Attachments, and Compendiums](data-files-and-compendiums.md#the-storage-dialog).
+- Deleting removes the data from the browser's storage. It does not overwrite the space on disk. Treat a shared or lost computer as a risk that deleting in the app does not remove.
+
 ## Destination-Aware Redaction
 
 Redaction should depend on where text goes.
@@ -190,16 +205,19 @@ No formal accessibility audit result is included in the provided documentation s
 Before release, test:
 
 1. Navigate all chat controls with keyboard only.
-2. Open and close menu, compendium picker, PIN dialog, Advanced settings dialog, and Field Kit by keyboard.
+2. Open and close menu, compendium picker, PIN dialog, Advanced settings dialog, Storage dialog, and Field Kit by keyboard.
 3. In Advanced settings, change each number with the minus and plus buttons and by typing, and confirm a screen reader announces the new value.
 4. Confirm focus is visible and logical.
 5. Confirm dialogs do not trap focus permanently.
 6. Test screen-reader announcement of status and progress messages.
 7. Confirm color is not the only state cue.
 8. Test reduced-motion mode.
-9. Send a crisis test prompt from `tests/fixtures/crisis-prompts.json`, confirm a screen reader announces the notice, and reach its 988 chat link with Tab.
-10. In a Field Kit text tool, move between the input tabs with the arrow keys, confirm a screen reader announces each tab as selected, and reach the **Paste text** box and **Clear text** with Tab.
-11. Send an offer test prompt from `tests/fixtures/skill-offer-prompts.json`, confirm a screen reader announces the offer, reach its button with Tab, press Enter, and confirm focus lands in the tool's **Paste text** box.
+9. Open the menu of a chat tab and of a saved prompt with the keyboard only: reach the ⋯ button with Tab and press Enter. Confirm that a screen reader reads the button as a menu button, that the arrow keys move through the entries, and that Esc closes the menu with focus back on the button. Choose **Rename**, type, and press Enter. Confirm that a screen reader reads the text box's label, and that focus returns to the button. In the Storage dialog, rename a chat through its pencil, press Esc in the box, and confirm that the dialog stays open.
+10. In the Storage dialog, pin a chat with the keyboard. Confirm that a screen reader reads the pin as pressed and **Delete** as unavailable.
+11. In the Storage dialog, delete an item with the keyboard only. Confirm that a screen reader reads the item's name and details with the **Delete** button, announces the result, and that focus stays inside the dialog.
+12. Send a crisis test prompt from `tests/fixtures/crisis-prompts.json`, confirm a screen reader announces the notice, and reach its 988 chat link with Tab.
+13. In a Field Kit text tool, move between the input tabs with the arrow keys, confirm a screen reader announces each tab as selected, and reach the **Paste text** box and **Clear text** with Tab.
+14. Send an offer test prompt from `tests/fixtures/skill-offer-prompts.json`, confirm a screen reader announces the offer, reach its button with Tab, press Enter, and confirm focus lands in the tool's **Paste text** box.
 
 Automated check:
 

@@ -46,8 +46,8 @@ Status values are **Not started**, **Planning**, **In progress**, **In review**,
 | --- | --- | --- | --- | --- |
 | 1 | [#1](https://github.com/DepressionCenter/FieldStationAI/issues/1) | Crisis notice for prompts that may signal a mental health emergency | `feature/crisis-notice` | Done |
 | 2 | [#6](https://github.com/DepressionCenter/FieldStationAI/issues/6) | "Paste text" input for the four text classifier skills | `feature/skill-paste-text` | Done |
-| 3 | [#7](https://github.com/DepressionCenter/FieldStationAI/issues/7) | Direct chat-to-skill flow for text-only skills | `feature/chat-to-skill` | In review |
-| 4 | [#4](https://github.com/DepressionCenter/FieldStationAI/issues/4) | Storage management dialog in the menu | `feature/storage-manager` | Not started |
+| 3 | [#7](https://github.com/DepressionCenter/FieldStationAI/issues/7) | Direct chat-to-skill flow for text-only skills | `feature/chat-to-skill` | Done |
+| 4 | [#4](https://github.com/DepressionCenter/FieldStationAI/issues/4) | Storage management dialog in the menu | `feature/storage-manager` | In review |
 | 5 | [#2](https://github.com/DepressionCenter/FieldStationAI/issues/2) | Full Markdown support in chats | `feature/chat-markdown` | Not started (do much later) |
 
 Issues [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3), [#5](https://github.com/DepressionCenter/FieldStationAI/issues/5), and [#12](https://github.com/DepressionCenter/FieldStationAI/issues/12) stay open but are not scheduled. See [Issues not scheduled](#issues-not-scheduled).
@@ -187,7 +187,7 @@ Not tested: a real screen reader, a real clipboard paste (the text was entered t
 
 ### Phase 3: Chat-to-skill flow for text-only skills (issue #7)
 
-**Status:** In review
+**Status:** Done. Merged on 2026-09-29. Issue #7 stays open for the two parts that were not built: running a skill inside the chat, and a skills button near the prompt box.
 
 **Branch:** `feature/chat-to-skill`, from `main`.
 
@@ -272,7 +272,7 @@ Found while testing and not changed in this phase: with the app's 4-bit embeddin
 
 ### Phase 4: Storage management dialog (issue #4)
 
-**Status:** Not started
+**Status:** In review
 
 **Branch:** `feature/storage-manager`, from `main`.
 
@@ -280,21 +280,102 @@ Found while testing and not changed in this phase: with the app's 4-bit embeddin
 
 Add a storage management dialog to the menu. It lists attachments, cached models, and chats, with creation or modification time, size on disk, and a delete option for each.
 
+Saved compendiums were added as a fourth group when the phase started, because they take up space too.
+
 #### How it fits the code
 
 The pieces exist in separate places. Attachments live in IndexedDB (`ATTACHMENT_DB_NAME`) with an index and vectors alongside, and `deleteAttachment()` already removes the related records. Chats are stored in browser storage through the existing chat store, and `deleteChat()` exists. Model weights sit in Cache Storage, and `purgeModelFromCache()` removes one model. The compendium has its own cache (`COMPENDIUM_CACHE_NAME`). `navigator.storage.estimate()` is already called for the overall usage figure. The dialog ties these together in one place and must reuse the existing delete paths, so nothing is left behind.
 
+#### What was built
+
+- **Manage storage** in the menu opens the dialog. The top line shows the space in use and the space the browser allows.
+- Four groups: Chats, Attachments, Models, and Compendiums. Each row shows a name, a time, a size, and a **Delete** button. Each group's heading shows the group's total size.
+- A chat's row has a pencil button that renames the chat in place, and a pin button. A pinned chat cannot be deleted until it is unpinned.
+- Chat tabs and saved prompt chips in the main screen each carry one ⋯ button that opens a menu with **Rename**, **Pin** or **Unpin**, and **Delete**. Rename works in place, the same way. The double-click, the browser's box, and the separate pin and delete buttons are gone.
+- The pure helpers live in a marked block, `Storage dialog: pure helpers`. The list functions, the rows, and the dialog's open and close code follow it.
+- `deleteAttachmentEverywhere()` deletes an attachment of any chat. `deleteAttachmentChip()`, which the chat uses, now calls it.
+- `AttachmentStore` gained `blobBytes()` and `vectorBytes()`, which read the size of a stored record without decrypting it.
+- `markCached()` now stores the time of the load.
+
+#### Decisions
+
+- The lists are read from the browser each time, not kept by the app.
+- Delete uses the browser's confirmation box, as the rest of the app does.
+- With the store locked, chats and attachments are not listed.
+- The runtime files that the model libraries share are not listed.
+
+The reasons are in the [Design Change Record](design-change-record.md#storage-dialog).
+
+#### Defect found and fixed in this phase
+
+The startup cleanup deleted the weights of every chat model on each page load, so the model downloaded again each time. It knew chat models by the app's names, and their files are cached under repository names. Two helper models were missing from its list too. The cleanup now knows every model by the name its files are cached under. See the [Design Change Record](design-change-record.md#startup-cleanup-deleted-models-in-use).
+
+#### Tests
+
+`tests/index-html.test.mjs` also checks that a group's heading shows the size alone, that a pinned chat's **Delete** is refused before anything is deleted, that names are edited in a text box with a size limit and no browser dialog, and that renaming a chat does not open it or wait for a reply.
+
+`tests/storage-dialog.test.mjs` runs the marked block with no browser: sizes, the usage sentence, stored times, model names, hosts that only look like the model host, and the grouping of cached files, with empty and invalid input. `tests/index-html.test.mjs` checks that rows are built without `innerHTML`, that the dialog is a labeled modal, that each group deletes through the app's own path and asks first, that a compendium's address is shown without its query, and that the startup cleanup keeps every model the app uses.
+
 #### Acceptance criteria
 
-- The dialog shows the three groups with timestamps and sizes, and the overall usage and quota.
+- The dialog shows the groups with timestamps and sizes, and the overall usage and quota.
 - Deleting an item removes every related record, and the list refreshes.
 - Delete asks for confirmation, and the confirmation is keyboard operable.
 - Names of attachments are shown as text, never as HTML.
 - The dialog follows the existing modal pattern, with a label, focus trap, and close behavior.
 
-#### Documentation to update
+#### Verification record
 
-`docs/user-guide.md`, `docs/data-files-and-compendiums.md`, and `docs/security-privacy-accessibility.md`.
+Automated, on 2026-09-29: `node --test tests/` passed, the three model tests included.
+
+Browser, on 2026-09-29, headless Microsoft Edge 151 with WebGPU, served from `python -m http.server 8010`, driven over the DevTools protocol, with SmolLM2-360M + Router as the chat model. All names and text were synthetic.
+
+- The dialog opened from the menu with focus on the dialog. It showed the space in use, and all four groups with a time and a size on every row. The test profile held 123 chats, and the dialog scrolled.
+- A chat name and a file name that held an `<img>` tag with an error handler were shown as text. No element from a name reached the page, and no handler ran.
+- Tab went from the last button to the first, and Shift+Tab from the first to the last. A **Delete** button showed a 2-pixel focus ring and was 32 CSS pixels tall. Escape and the **Close** button closed the dialog, and focus went back to the menu button.
+- Delete asked first. Answering No deleted nothing.
+- Deleting an attachment of a chat that was not on screen removed the stored file, its line in the index, and its entry in the chat. The chat kept a note of the deletion. Focus moved to the next row.
+- Deleting a chat with two attachments removed the chat, both stored files, and both lines in the index.
+- Deleting a Field Kit model removed its cached files and both of its flags. Deleting the chat model removed its weights, its compiled library, and its flag. After a reload the chat model downloaded again and was listed with a new time.
+- Deleting the saved compendium emptied its cache, the group said **No saved compendiums.**, and focus moved to the group's heading. After a reload the compendium was saved again.
+- After the next reload, the chat model's files were still in the cache.
+- While a reply was being written, **Delete** showed no confirmation, the dialog said to wait, and nothing was deleted.
+- With a PIN set and not entered, the dialog listed no chats, no attachments, and no file name, and it listed the models. With the PIN entered, the chats and the attachment were listed. The PIN was then removed.
+- At 320, 640, and 1280 CSS pixels wide, nothing in the dialog reached past its edge, and the page did not scroll sideways. The result line stayed at the bottom edge of the dialog. In 40 presses of Tab at 320 pixels, no focused button was under it.
+- An axe-core 4.10.2 scan of the open dialog, with WCAG 2.0, 2.1, and 2.2 A and AA rules, found no violations. It asked for a manual contrast check of the **Close** button, the title, the intro, and the usage line. Measured contrast on white was 15.3 to 1 for names, the title, and the usage line, 9.3 to 1 for the **Delete** button's text and border, and 5.4 to 1 for the intro and the details line. The **Close** button has the same colors as the one in Advanced settings. Every **Delete** button is described by the details of its own row.
+- No console errors were logged. The chats the checks created were deleted afterwards.
+
+Browser, second round on 2026-09-29, same setup, after the rename and pin changes:
+
+- A tab had three buttons, each 24 by 24 CSS pixels, and the tab was 28 pixels tall. A double-click on a tab or a chip did nothing.
+- The pencil on a tab opened a text box with the whole name selected. No browser box opened, and the chat on screen did not change. Enter stored the name, cut to 40 characters, and focus went back to the pencil. Escape and an empty name kept the old name. Leaving the box stored the name and left focus where it was moved.
+- A name that held an `<img>` tag with an error handler was shown as text in the tab, and the handler did not run.
+- A chat was renamed while another chat's reply was being written. The reply was written in full. When it ended, the text box was still open with its text, and focus had not moved.
+- The pencil on a saved prompt chip worked the same way. The text box held the name without the bookmark sign.
+- In the Storage dialog, each group's heading showed the size alone. A double-click on a chat's name and the pencil both opened the text box. Escape in the box kept the dialog open. After Enter, the row, its **Delete** label, and the tab in the main screen showed the new name.
+- The pin button was 32 by 32 pixels and sat to the left of **Delete**. Not pinned, it was gray with a dashed border and **Delete** worked. Pinned, it was in color with a solid border, **Delete** was gray with a dashed border, and pressing it asked nothing, deleted nothing, and said to unpin first. The tab showed the pin too. A sixth pin was refused with the reason. After unpinning, the chat was deleted after a confirmation.
+- At 320 CSS pixels wide, with a text box open, nothing scrolled sideways in the dialog or in the page.
+- axe-core 4.10.2 scans of the dialog with a pinned row and an open text box, of the tab bar, and of the chip row found no violations. They asked for manual contrast checks of the pencil and close buttons.
+- No console errors were logged. The chats and the saved prompt the checks created were deleted afterwards, and the pins were left as they were.
+
+Browser, third round on 2026-09-29, same setup, after the three buttons on a tab became one menu button:
+
+- A tab had one labeled 24 by 24 pixel button that says it opens a menu. Enter opened the menu with focus on **Rename**, without switching chats. The menu had **Rename**, **Pin**, and **Delete**. The arrow keys, Home, and End moved through the entries and wrapped. Escape closed the menu and put focus back on the button.
+- **Rename** opened the text box with the name selected, and focus returned to the button afterwards. **Pin** pinned the chat, a small labeled pin mark 15 pixels wide appeared before the name, and focus was on the button's replacement. The menu then offered **Unpin**, which removed the pin and the mark.
+- A click opened the menu and a second click closed it. A right-click on the tab opened the menu without switching chats. A click elsewhere and a scroll of the tab bar closed it.
+- With the menu open while a reply was being written, the reply ended with the menu still open and focus still inside it.
+- A saved prompt chip had one labeled button with **Rename** and **Delete**. Rename stored the name. Delete asked first; No kept the prompt, and Yes removed it, with focus not lost.
+- **Delete** on a chat's menu deleted the chat after a confirmation, with focus not lost.
+- At 320 CSS pixels wide the open menu stayed inside the window, and the page did not scroll sideways.
+- axe-core 4.10.2 scans of the tab bar, the chip row, and the open menu found no violations. The earlier checks of the Storage dialog and of renaming were run again and passed.
+
+Not tested: a real screen reader, a phone or touch screen, Firefox or Safari, 200% browser zoom, renaming with a PIN set, an external compendium loaded with `?compendium-url=`, an attachment with search vectors, a file with no chat, a model delete while another model loads, and a browser that does not report a storage estimate.
+
+Found while testing and not changed in this phase: the test browser profile held 121 chats left by checks in earlier phases. They are in the test profile only.
+
+#### Documentation updated
+
+`docs/user-guide.md`, `docs/data-files-and-compendiums.md`, `docs/security-privacy-accessibility.md`, `docs/developer-guide.md`, `docs/design-change-record.md`, and the project preferences skill.
 
 ### Phase 5: Markdown in chats (issue #2)
 
@@ -322,7 +403,7 @@ Model output is untrusted, so rendered Markdown must be encoded before it reache
 
 ### Conclusion
 
-Phases 1 and 2 are done and phase 3 is in review. Move down the table as each pull request merges: create the next branch from `main`, write the detailed plan under the phase heading, and set the status to Planning.
+Phases 1, 2, and 3 are done and phase 4 is in review. Move down the table as each pull request merges: create the next branch from `main`, write the detailed plan under the phase heading, and set the status to Planning.
 
 ### Additional resources
 

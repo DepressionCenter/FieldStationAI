@@ -211,6 +211,58 @@ Not built: running the skill inside the chat and showing its results there, and 
 
 The lists, the thresholds, and the two pure functions live in a marked block in `index.html` that the tests evaluate on their own. A prompt fixture under `tests/` holds the requests that must get an offer and the prompts that must not, and a model-backed test scores it with the real embedding model. On two batches of prompts written after the lists and thresholds were set, 55 of 58 came out right: two requests got no offer, and one request to make a bulleted list was offered Find names and places.
 
+## Storage Dialog
+
+Issue #4 asked for one place to see and delete what the app saves in the browser. The menu now has **Manage storage**, which opens a dialog with four groups: chats, attachments, models, and compendiums.
+
+Decision:
+
+- The dialog lists what the browser holds, read fresh each time. It does not keep its own record of what was stored, which could drift from the truth.
+- Compendiums are a fourth group. The first plan had three groups, but a saved compendium takes up space too, about 27 MB for the bundled one.
+- Rows are a list, not a table. A list row wraps at narrow widths, and a four-column table does not fit 320 CSS pixels.
+- Delete uses the browser's own confirmation box, as every other delete in the app does. It works by keyboard and is read by screen readers.
+- Each group deletes through the path the rest of the app already uses. Attachment deletion was written for the chat on screen only, so it was widened into `deleteAttachmentEverywhere()`, which both the chat and the dialog call.
+- A model's time is the time it last loaded. The browser keeps no download time for a cached file, so the app now stores the load time in the flag it already kept per model.
+- With the store locked, chats and attachments are not listed. The app cannot tell which file belongs to which chat until the PIN is entered, and listing files as ownerless would invite deleting them by mistake.
+- The runtime files that the model libraries share are not listed. They belong to no single model, and deleting them would slow the next load of every model.
+
+- Each group's heading shows the total size of the group. A count of items next to the size was removed, because two numbers side by side were hard to read.
+- A pinned chat cannot be deleted from the dialog. The pin button sits to the left of **Delete**, and unpinning makes **Delete** work again. The **Delete** button of a pinned chat is marked `aria-disabled` and keeps its place in the Tab order, so that a person using a keyboard or a screen reader can reach it and learn why it does nothing. The close button on a chat's tab still deletes a pinned chat after a confirmation.
+
+Not built: downloading an attachment's file from the dialog, and deleting several items at once.
+
+## Rename in Place
+
+A chat or a saved prompt was renamed with a double-click, in a box the browser opened over the page. The double-click also acted as a click, which opened the chat, and the box covered the page.
+
+Decision:
+
+- **Rename** turns the name into a text box in the same place, with the whole name selected. Enter or leaving the box keeps the new name, and Escape keeps the old one.
+- Double-click no longer renames a tab or a chip. In the Storage dialog a double-click on a chat's name still does, next to the pencil, because a click on that name does nothing else.
+- Renaming does not open the chat, and it is allowed while a reply is being written.
+- A redraw of the tab bar or the chip row keeps an edit in progress, with the text typed so far.
+- The app no longer moves focus to the prompt box at the end of a reply while a name is being edited or a dialog is open. Before, the end of a reply would have closed the text box in the middle of typing, and it took focus out of an open dialog.
+- In the Storage dialog the pencil is drawn at 75% strength. Fainter than that, it falls under 3 to 1 contrast against the white panel.
+
+### One Menu Button per Tab and Chip
+
+The first version of this change gave each chat tab three buttons, for rename, pin, and delete, and each saved prompt chip two. Each was 24 by 24 CSS pixels, the WCAG 2.2 minimum, so together they took about 76 pixels of every tab. Hiding them until the pointer passed over the tab was considered and rejected: the project's accessibility rules keep essential controls out from behind hover, touch screens have no hover, and a tab that grows on hover moves its neighbours.
+
+Decision:
+
+- Each tab and each chip has one ⋯ button. It opens a small menu with **Rename**, **Pin** or **Unpin**, and **Delete**, or **Rename** and **Delete** for a chip. A right-click on the tab or chip opens the same menu.
+- The menu follows the menu button pattern: the button is labeled and says it opens a menu, focus moves to the first entry, the arrow keys move through the entries, Escape closes the menu and puts focus back on the button, and a click elsewhere closes it.
+- A pinned chat shows a small pin before its name. It is a mark, not a button, so it takes about 15 pixels rather than 24.
+- The ✕ was not kept next to the menu button. One extra click for a delete is a fair price, and it ends accidental presses on a small ✕ when reaching for a tab.
+- Menu entries are one or two words. The explanation of what pinning does is a tooltip on the entry, not part of its label.
+- A redraw of the tab bar or the chip row closes an open menu, and puts focus on the button's replacement when focus was in the menu. The app does not move focus to the prompt box at the end of a reply while the menu is open.
+
+### Startup Cleanup Deleted Models in Use
+
+Work on the dialog found a defect in the startup cleanup, which removes cached files of models the app no longer offers. The cleanup knew chat models by the app's names for them, such as `webllm:SmolLM2-360M-Instruct-q4f16_1-MLC`. Their files are cached under repository names, such as `mlc-ai/SmolLM2-360M-Instruct-q4f16_1-MLC`. No name matched, so the cleanup deleted every chat model's weights on each page load, and the model downloaded again. The excerpt ranking model and the small model for browsers without WebGPU were missing from the list as well, with the same result.
+
+The cleanup now knows every model by the name its files are cached under. A static test checks the list. In the test browser, the chat model's cache held no files after a page load before the change, and 10 files after it.
+
 ## Documentation Rule
 
 When these areas change, update this file and the relevant user or developer doc:

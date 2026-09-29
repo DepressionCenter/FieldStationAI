@@ -243,6 +243,43 @@ For browser-based Python workflows:
 - Prefer aggregate metadata: row counts, column counts, column names, exception type.
 - Keep real data previews limited to UI where needed and review PHI risk.
 
+## Storage Dialog
+
+The dialog is the section `Storage dialog` in `index.html`. It has four list functions, one per group: `listStoredChats()`, `listStoredAttachments()`, `listCachedModels()`, and `listCachedCompendiums()`. Each returns rows of `{ name, details, bytes, time, deleteLabel, remove }`. `remove()` asks for confirmation, deletes, and resolves `true` when the item is gone.
+
+Rules for changes:
+
+- Delete through the app's existing paths: `deleteChat()`, `deleteAttachmentEverywhere()`, `purgeModelFromCache()`, and `purgeCompendiumEntry()`. Do not write a second way to delete the same thing.
+- Build rows with `createElement` and `textContent`. Names are untrusted input.
+- To add a group, add a `<section>` with a `data-group` value to the dialog's markup, an entry to `STORAGE_GROUPS`, and a list function to `refreshStorage()`.
+- A model's files are found by the address they were downloaded from, not by the cache they are in, because the cache names belong to the model libraries and have changed between versions.
+- A chat model is named `webllm:<name>` in the app, and its files are cached under the repository `mlc-ai/<name>`. `webllmRepoId()` and `modelFlagIds()` map between the two. `knownModelIds()` must name every model the app uses by the name its files are cached under. The startup cleanup deletes the files of any model that is missing from it.
+- `markCached()` stores the time of the last successful load. A flag from an earlier release holds `1`, which `storageTime()` reads as no time.
+- A chat's row carries `chatId` and `pinned`. That gives the row a pencil button, a pin button, and a **Delete** button that is marked `aria-disabled` while the chat is pinned.
+
+## Rename in Place
+
+Chat tabs, saved prompt chips, and chat rows in the Storage dialog all rename through `beginInlineRename()`. It puts a text box in place of the name. `renameChat()` and `renameTemplate()` call it with a `commit` function that stores the name and redraws.
+
+Rules for changes:
+
+- Give the item's name element a `data-rename-label` value and the button that starts the rename the same value in `data-rename`, such as `chat:<id>`. Focus goes back to that button when the edit ends. In the Storage dialog that button is a pencil, built with `buildRenameButton()`. On a tab or a chip it is the ⋯ menu button, built with `buildItemMenuButton()`.
+- A function that redraws a container with renamable items calls `holdInlineRename()` before it clears the container and `resumeInlineRename()` after it fills it. Without the pair, a redraw in the middle of typing loses the text. `renderTabs()` and `renderChips()` show how.
+- Code that moves focus to the prompt box by itself, such as at the end of a reply, calls `focusPromptWhenFree()`. It leaves focus alone while a name is being edited or a dialog is open.
+- Do not use `prompt()` for a name.
+
+## Item Menu
+
+A chat tab and a saved prompt chip each carry one ⋯ button, built with `buildItemMenuButton()`. It opens `#item-menu`, one element at the end of the page that `openItemMenu()` fills and places next to the button each time. The entries come from a function, so they show the item's state at that moment, such as **Pin** or **Unpin**.
+
+Rules for changes:
+
+- Pass the entries as `{ label, action, danger?, title? }`. Keep labels to a word or two; a longer explanation goes in `title`, which the browser shows as a tooltip.
+- After an entry's action, focus goes to the button's replacement if the action redrew the bar, unless the action put focus somewhere itself, as **Rename** does.
+- A function that redraws a container with such buttons calls `holdItemMenu()` before it clears the container and `resumeItemMenu()` after it fills it, as `renderTabs()` and `renderChips()` do.
+- `openItemMenuOnContextMenu()` makes a right-click on the tab or chip open the same menu.
+- The menu closes when its row scrolls or the window changes size, because the button moves and the menu would be left floating in the old place.
+
 ## Run the Tests
 
 The tests live under `tests/` and use Node's own test runner, so nothing is installed for the fast suite. You need Node 22 or newer.
@@ -251,9 +288,9 @@ The tests live under `tests/` and use Node's own test runner, so nothing is inst
 node --test tests/
 ```
 
-That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, **Paste text** tab wiring, and skill offer wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, and the skill offer's helpers and lists. The model-backed tests skip themselves unless their dependency is installed.
+That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, **Paste text** tab wiring, and skill offer wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, the skill offer's helpers and lists, and the storage dialog's helpers and wiring. The model-backed tests skip themselves unless their dependency is installed.
 
-Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are six such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, and the Field Kit paste text helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
+Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are seven such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, the Field Kit paste text helpers, and the storage dialog's helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
 
 To score the crisis and skill offer prompt fixtures with the real embedding and tiebreak models, and the reranker with synthetic passages, on your CPU. The crisis test runs with both sets of embedding weights:
 

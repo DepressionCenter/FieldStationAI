@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 data-files-and-compendiums.md: Documentation of data handling and compendium (knowledge bundle) integration in Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-28
+Last Modified: 2026-09-29
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -57,6 +57,31 @@ Recommended practice:
 - Avoid using shared browser profiles.
 - Avoid participant identifiers in filenames.
 - Treat generated outputs as sensitive until reviewed.
+
+### Where Each Kind of Data Is Kept
+
+| Data | Where the browser keeps it | How the app removes it |
+| --- | --- | --- |
+| Chats | Local storage, as one record for all chats | Delete on the chat's tab, **Clear all chats**, the Storage dialog, or the 30-day cleanup of chats that are not pinned |
+| Attached files | IndexedDB, encrypted, in the database `fieldstation_attachments_v1` | Delete on the file, deleting its chat, or the Storage dialog |
+| Search vectors of attached files | The same database, in a second store | Removed together with the file |
+| Attachment index | Local storage. One line per file, with the time it was added and its chat | Removed together with the file |
+| Model files | Cache Storage, in caches that the model libraries name | The Storage dialog, or the startup cleanup of models the app no longer offers |
+| Compendium files | Cache Storage, in the cache `fieldstation-compendium-v1` | The Storage dialog. An external compendium also expires after 7 days |
+
+### The Storage Dialog
+
+The Storage dialog lists all of the above in one place. Open it from the menu with **Manage storage**. See the [User Guide](user-guide.md#manage-storage) for the steps.
+
+- The dialog reads the lists from the browser each time it opens and after each delete. It shows what is stored, not what the app remembers storing.
+- Deleting an attachment removes the file, its search vectors, its line in the attachment index, and its entry in the chat. The chat keeps a note that the file was deleted.
+- A stored file that no chat owns is listed as **File with no chat**. This can happen when a delete was interrupted. You can delete it there, without waiting for the cleanup.
+- Deleting a model removes its files from every cache, and the app's own notes about it. For a chat model this includes the compiled library that comes from a second site.
+- Deleting a compendium removes the saved copy only. The compendium already loaded in the page keeps working until you reload.
+- The size of an attachment is the size of the file plus its search vectors. The size of a model or compendium is the total of its cached files.
+- The usage total comes from the browser's own estimate. It covers IndexedDB and Cache Storage, and leaves out local storage, where chat text is kept.
+
+The dialog does not list the runtime files that the model libraries share, such as the WebAssembly runtime. They count toward the total at the top.
 
 ## What a Compendium Is
 

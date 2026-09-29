@@ -255,17 +255,40 @@ with this program. If not, see https://www.gnu.org/licenses/.
         #tab-bar { display: flex; gap: 6px; align-items: center; overflow-x: auto; flex-grow: 1; scrollbar-width: none; }
         #tab-bar::-webkit-scrollbar { display: none; }
         .tab {
-            display: flex; align-items: center; gap: 6px; padding: 5px 8px 5px 12px;
+            display: flex; align-items: center; gap: 2px; padding: 1px 4px 1px 12px;
             border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
             font-size: 0.78rem; cursor: pointer; white-space: nowrap; flex-shrink: 0;
         }
         .tab.active { border-color: var(--accent); background: rgba(0, 39, 76, 0.07); font-weight: 600; }
-        .tab button { border: none; background: none; cursor: pointer; font-size: 0.8rem; padding: 0 2px; color: var(--muted); line-height: 1; }
+        /* Each button is a 24 by 24 CSS pixel target, the WCAG 2.2 minimum. */
+        .tab button {
+            border: none; background: none; cursor: pointer; font-size: 0.8rem; padding: 0; color: var(--muted); line-height: 1;
+            min-width: 24px; min-height: 24px; border-radius: 50%;
+        }
         .tab button:hover { color: var(--accent-dark); }
-        /* Pin is dimmed/grayscale until actually pinned */
-        .tab .tab-pin { opacity: 0.3; filter: grayscale(1); }
-        .tab .tab-pin.pinned { opacity: 1; filter: none; color: var(--accent); }
         .tab .tab-x:hover { color: #B91C1C; }
+        /* A pinned chat shows a small pin before its name. It is a mark, not
+           a button, so it takes less room than a target would. */
+        .tab .tab-pin-mark { font-size: 0.7rem; line-height: 1; margin-right: 2px; }
+
+        /* The "more" button on a tab or a chip, and the menu it opens. The
+           menu is one element at the end of the page, placed next to the
+           button, because the tab bar and the chip row clip anything that
+           hangs outside them. Same visual language as #menu-popup. */
+        .item-menu-btn { font-weight: 700; }
+        .item-menu-btn[aria-expanded="true"] { color: var(--accent); background: var(--bg); }
+        .item-menu {
+            position: fixed; z-index: 95; min-width: 140px; padding: 4px;
+            background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+            box-shadow: 0 8px 24px rgba(23, 38, 59, 0.14);
+        }
+        .item-menu button {
+            display: block; width: 100%; text-align: left; min-height: 32px;
+            padding: 6px 12px; border: none; background: none; border-radius: 6px;
+            font-family: inherit; font-size: 0.85rem; color: var(--ink); cursor: pointer;
+        }
+        .item-menu button:hover { background: var(--bg); color: var(--accent); }
+        .item-menu button.item-menu-danger { color: var(--danger); }
 
         #progress-wrap { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 10px 14px; margin-bottom: 0.6rem; }
         #progress-msg { font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; }
@@ -459,8 +482,25 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
         .template-chip span.label { cursor: pointer; color: var(--accent-dark); }
         .template-chip span.label:hover { text-decoration: underline; }
-        .template-chip button { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 0.75rem; padding: 2px; }
+        .template-chip button {
+            border: none; background: none; cursor: pointer; color: var(--muted); font-size: 0.75rem; padding: 0;
+            min-width: 24px; min-height: 24px; border-radius: 50%;
+        }
         .template-chip button:hover { color: var(--accent); }
+
+        /* Rename in place: a faint pencil button next to a name, and the text
+           box that takes the name's place while it is edited. The pencil is
+           faint until the pointer or the keyboard reaches it, and no fainter
+           than 3:1 contrast against the white panel. */
+        .rename-btn { opacity: 0.75; }
+        .rename-btn:hover, .rename-btn:focus-visible { opacity: 1; }
+        .renaming > .rename-btn, .renaming > .item-menu-btn { display: none; }
+        .rename-input {
+            font: inherit; color: var(--ink); background: var(--panel);
+            border: 1px solid var(--muted); border-radius: 6px; padding: 2px 6px;
+            min-height: 24px; max-width: 100%; min-width: 0;
+        }
+        .rename-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
         #input-area { display: flex; gap: 8px; align-items: flex-end; }
         /* Single wrapper around the 4 composer siblings, toggled as one unit
@@ -1026,6 +1066,80 @@ with this program. If not, see https://www.gnu.org/licenses/.
             font-family: inherit; font-size: 0.75rem; cursor: pointer;
         }
         .setting-reset:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* ============ Storage dialog ============ */
+        /* Each stored item is a list row, not a table row: a name, one line
+           of details under it, and a Delete button. A row wraps at narrow
+           widths, so nothing scrolls sideways at 320 CSS pixels. */
+        #storage-modal {
+            position: fixed; inset: 0; z-index: 105;
+            background: rgba(23, 38, 59, 0.55);
+            display: none; align-items: center; justify-content: center; padding: 16px;
+        }
+        #storage-modal.open { display: flex; }
+        .storage-dialog {
+            position: relative;
+            background: var(--panel); border-radius: 14px; padding: 16px 18px 18px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+            width: 100%; max-width: 480px; max-height: 96vh; overflow-y: auto;
+            /* Keeps a focused button clear of the status line at the bottom. */
+            scroll-padding-bottom: 96px;
+        }
+        .storage-dialog:focus, .storage-group-name:focus { outline: none; }
+        .storage-intro, .storage-usage, .storage-note { font-size: 0.8rem; line-height: 1.5; margin: 0; color: var(--muted); }
+        .storage-usage { color: var(--ink); font-weight: 600; margin-top: 4px; }
+        .storage-group { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+        .storage-group-name { font-family: inherit; font-size: 0.9rem; font-weight: 600; margin: 0 0 2px; color: var(--ink); }
+        .storage-group-total { font-weight: 400; font-size: 0.78rem; color: var(--muted); }
+        .storage-list { list-style: none; margin: 0; padding: 0; }
+        .storage-item {
+            display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+            padding: 6px 0; border-top: 1px dashed var(--line);
+        }
+        .storage-item:first-child { border-top: none; }
+        .storage-item-text { flex: 1 1 110px; min-width: 0; }
+        /* The pin and Delete stay side by side when a row wraps. */
+        .storage-item-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+        .storage-item-name { display: block; font-size: 0.85rem; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
+        .storage-item-meta { display: block; font-size: 0.75rem; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+        .storage-delete {
+            flex: 0 0 auto; min-height: 32px; padding: 4px 12px; border-radius: 8px;
+            border: 1px solid var(--danger); background: var(--panel); color: var(--danger);
+            font-family: inherit; font-size: 0.8rem; cursor: pointer;
+        }
+        .storage-delete:hover { background: var(--danger); color: #fff; }
+        /* The Delete button of a pinned chat stays focusable (aria-disabled,
+           not disabled) so that it can say why it does nothing. The dashed
+           border marks the state without relying on color. */
+        .storage-delete[aria-disabled="true"], .storage-delete[aria-disabled="true"]:hover {
+            color: var(--muted); border-color: var(--muted); border-style: dashed;
+            background: var(--bg); cursor: not-allowed;
+        }
+        .storage-item-name .rename-btn {
+            border: none; background: none; cursor: pointer; color: var(--muted); font-size: 0.85rem; padding: 0;
+            min-width: 24px; min-height: 24px; border-radius: 50%; margin-left: 2px; vertical-align: middle;
+        }
+        .storage-item-name .rename-btn:hover { color: var(--accent); }
+        .storage-item-name .rename-input { font-size: 0.85rem; width: 100%; box-sizing: border-box; min-height: 32px; }
+        /* Pinned: a filled button with the pin in color. Not pinned: an empty
+           button with a dashed border and the pin in gray. */
+        .storage-pin {
+            flex: 0 0 32px; width: 32px; height: 32px; padding: 0; border-radius: 8px;
+            border: 1px dashed var(--muted); background: var(--panel);
+            font-size: 0.9rem; line-height: 1; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .storage-pin span { opacity: 0.45; filter: grayscale(1); }
+        .storage-pin:hover { border-color: var(--accent); }
+        .storage-pin[aria-pressed="true"] { border: 1px solid var(--accent); background: rgba(0, 39, 76, 0.12); }
+        .storage-pin[aria-pressed="true"] span { opacity: 1; filter: none; }
+        /* The result of a delete, in view wherever the list is scrolled to. */
+        /* It covers the dialog's bottom padding too, so no row shows under it. */
+        .storage-status {
+            position: sticky; bottom: -18px; margin: 0; background: var(--panel);
+            font-size: 0.8rem; line-height: 1.5; color: var(--ink);
+        }
+        .storage-status:not(:empty) { margin: 10px 0 -18px; padding: 6px 0 18px; border-top: 1px solid var(--line); }
     </style>
 </head>
 <body>
@@ -1196,6 +1310,47 @@ with this program. If not, see https://www.gnu.org/licenses/.
             </section>
 
             <div class="settings-sr" id="settings-live" aria-live="polite" aria-atomic="true"></div>
+        </div>
+    </div>
+
+    <!-- Menu for one chat tab or one saved prompt chip. Filled and placed by
+         the "Item menu" script section each time it opens. -->
+    <div id="item-menu" class="item-menu" role="menu" hidden></div>
+
+    <!-- Storage dialog. Wired up in the "Storage dialog" script section, which
+         fills each list from what this browser holds when the dialog opens. -->
+    <div id="storage-modal">
+        <div class="storage-dialog" id="storage-dialog" role="dialog" aria-modal="true" aria-labelledby="storage-title" aria-describedby="storage-intro" tabindex="-1">
+            <button type="button" class="settings-close" id="storage-close" aria-label="Close">✕</button>
+            <h2 class="settings-title" id="storage-title">Storage</h2>
+            <p class="storage-intro" id="storage-intro">Saved in this browser only. A deleted item cannot be brought back.</p>
+            <p class="storage-usage" id="storage-usage"></p>
+
+            <section class="storage-group" data-group="chats" aria-labelledby="storage-chats-name">
+                <h3 class="storage-group-name" id="storage-chats-name" tabindex="-1">Chats <span class="storage-group-total"></span></h3>
+                <p class="storage-note" hidden></p>
+                <ul class="storage-list"></ul>
+            </section>
+
+            <section class="storage-group" data-group="attachments" aria-labelledby="storage-attachments-name">
+                <h3 class="storage-group-name" id="storage-attachments-name" tabindex="-1">Attachments <span class="storage-group-total"></span></h3>
+                <p class="storage-note" hidden></p>
+                <ul class="storage-list"></ul>
+            </section>
+
+            <section class="storage-group" data-group="models" aria-labelledby="storage-models-name">
+                <h3 class="storage-group-name" id="storage-models-name" tabindex="-1">Models <span class="storage-group-total"></span></h3>
+                <p class="storage-note" hidden></p>
+                <ul class="storage-list"></ul>
+            </section>
+
+            <section class="storage-group" data-group="compendiums" aria-labelledby="storage-compendiums-name">
+                <h3 class="storage-group-name" id="storage-compendiums-name" tabindex="-1">Compendiums <span class="storage-group-total"></span></h3>
+                <p class="storage-note" hidden></p>
+                <ul class="storage-list"></ul>
+            </section>
+
+            <p class="storage-status" id="storage-live" aria-live="polite" aria-atomic="true"></p>
         </div>
     </div>
 
@@ -1770,7 +1925,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // message (already in Cache Storage - just wiring things up).
         const CACHED_PREFIX = 'fieldstation_model_cached::';
         const cachedFlag = id => CACHED_PREFIX + id;
-        function markCached(id) { try { localStorage.setItem(cachedFlag(id), '1'); } catch {} }
+        // The flag's value is the time of the last successful load, in
+        // milliseconds since 1970 UTC, which the storage dialog shows. A flag
+        // written by an earlier release holds '1', and reads as no time.
+        function markCached(id) { try { localStorage.setItem(cachedFlag(id), String(Date.now())); } catch {} }
         function isCached(id) { return !!localStorage.getItem(cachedFlag(id)); }
 
         // Per-model "last successful (device, dtype)" memo. When a model
@@ -3002,6 +3160,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
             async function deleteAttachment(id) { await Promise.all([deleteBlob(id), deleteVectors(id)]); }
             async function listStoredIds() { return idbGetAllKeys('blobs'); }
 
+            // Size in bytes of one stored record as encrypted, or 0 when
+            // there is none. Nothing is decrypted, so this works while the
+            // store is locked.
+            async function recordBytes(storeName, id) {
+                const rec = await idbGet(storeName, id);
+                if (!rec || !rec.ciphertext) return 0;
+                return rec.ciphertext.byteLength + (rec.iv ? rec.iv.byteLength : 0);
+            }
+            const blobBytes = (id) => recordBytes('blobs', id);
+            const vectorBytes = (id) => recordBytes('vectors', id);
+
             // Hard per-kind cap first (no async needed to reject an obviously
             // oversized file), then remaining browser-storage headroom. Never
             // throws - callers show `message` and refuse the file up front,
@@ -3026,7 +3195,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 ready, checkQuota,
                 putBlob, getBlob, deleteBlob,
                 putVectors, getVectors, deleteVectors,
-                deleteAttachment, listStoredIds,
+                deleteAttachment, listStoredIds, blobBytes, vectorBytes,
                 persistDekWrapped, persistDekPlaintext, unwrapDekIntoMemory,
                 isUnlocked: () => dekBytes !== null
             };
@@ -3327,7 +3496,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // still open (its display no longer blocks the boot sequence); skip stealing
         // focus from its CTA in that case.
         function focusInputUnlessWelcoming() {
-            if (!welcomeModal.classList.contains('open')) input.focus();
+            if (!welcomeModal.classList.contains('open')) focusPromptWhenFree();
+        }
+
+        // Moves focus to the prompt box when the app, not the person, wants
+        // it there, such as at the end of a reply. Focus is left alone while
+        // a name is being edited or a dialog is open, so that typing is not
+        // cut short and focus does not leave a dialog.
+        function focusPromptWhenFree() {
+            if (inlineRename || itemMenuState) return;
+            if (document.querySelector('#settings-modal.open, #storage-modal.open, #pin-modal.open')) return;
+            input.focus();
         }
 
         // ---------- Chat store ----------
@@ -3576,17 +3755,288 @@ with this program. If not, see https://www.gnu.org/licenses/.
             renderTabs();
         }
 
-        function renameChat(id) {
-            if (busy) return;
+        // ---------- Rename in place ----------
+        // A name is edited where it is shown: a text box takes the place of
+        // the name, with all of its text selected. Enter or leaving the box
+        // keeps the new name, and Escape keeps the old one. Chat tabs and
+        // saved prompt chips rename this way from their menu, and the chats
+        // in the storage dialog from a small pencil button.
+
+        const RENAME_MAX_CHARS = 40;
+        // The edit in progress, or null. There is at most one.
+        let inlineRename = null;
+
+        /**
+         * Starts editing a name in place.
+         * @param {HTMLElement} label The element that shows the name. It is
+         * hidden while the text box is shown.
+         * @param {object} options
+         * @param {string} options.key Names the item, such as 'chat:<id>'. The
+         * item's pencil button carries it in data-rename, and its label in
+         * data-rename-label.
+         * @param {HTMLElement} options.scope The element that holds the item
+         * and is redrawn when a name changes.
+         * @param {string} options.value The name as it is now.
+         * @param {string} options.ariaLabel Accessible name of the text box.
+         * @param {function(string): (void|Promise)} options.commit Stores a new
+         * name and redraws. Called only with a name that is not empty and
+         * differs from the old one.
+         * @param {string} [options.draft] Text to start with, when an edit is
+         * carried over a redraw.
+         * @param {boolean} [options.focus=true] Whether the box takes focus.
+         * Side effects: ends any other edit in progress, keeping its text.
+         */
+        function beginInlineRename(label, options) {
+            if (inlineRename) inlineRename.finish(true, false);
+            const field = document.createElement('input');
+            field.type = 'text';
+            field.className = 'rename-input';
+            field.maxLength = RENAME_MAX_CHARS;
+            field.value = options.draft !== undefined ? options.draft : options.value;
+            field.size = Math.max(8, Math.min(RENAME_MAX_CHARS, field.value.length + 2));
+            field.spellcheck = false;
+            field.autocomplete = 'off';
+            field.setAttribute('aria-label', options.ariaLabel);
+            let finished = false;
+            const finish = async (save, viaKey, next) => {
+                if (finished) return;
+                finished = true;
+                inlineRename = null;
+                const name = field.value.trim().slice(0, RENAME_MAX_CHARS);
+                field.remove();
+                label.hidden = false;
+                holder.classList.remove('renaming');
+                const changed = save && name !== '' && name !== options.value;
+                if (changed) await options.commit(name);
+                // Focus goes back to the pencil after a key press. After a
+                // click or a Tab away it stays where the person put it,
+                // unless the redraw removed that element.
+                if (!viaKey && !(changed && next && !next.isConnected)) return;
+                const button = options.scope.querySelector('button[data-rename="' + CSS.escape(options.key) + '"]');
+                if (button) button.focus();
+            };
+            field.addEventListener('keydown', (e) => {
+                // Keys typed into the box are for the box alone: Escape must
+                // not close a dialog, and Enter must not send a prompt.
+                e.stopPropagation();
+                if (e.key === 'Enter') { e.preventDefault(); finish(true, true); }
+                else if (e.key === 'Escape') { e.preventDefault(); finish(false, true); }
+            });
+            field.addEventListener('blur', (e) => finish(true, false, e.relatedTarget));
+            // A click in the box must not reach the tab or chip around it.
+            for (const type of ['click', 'dblclick', 'mousedown', 'pointerdown']) {
+                field.addEventListener(type, (e) => e.stopPropagation());
+            }
+            // The pencil is hidden while the box is open, to leave it room.
+            const holder = label.parentElement;
+            holder.classList.add('renaming');
+            label.hidden = true;
+            label.after(field);
+            inlineRename = { options, field, finish, abandon: () => { finished = true; inlineRename = null; } };
+            if (options.focus !== false) { field.focus(); field.select(); }
+        }
+
+        // Before a container is redrawn: takes the edit in progress inside it
+        // out of play, so that removing its text box stores nothing, and
+        // returns what is needed to start it again. Null when there is none.
+        function holdInlineRename(container) {
+            if (!inlineRename || !container.contains(inlineRename.field)) return null;
+            const held = {
+                options: inlineRename.options,
+                draft: inlineRename.field.value,
+                focus: document.activeElement === inlineRename.field
+            };
+            inlineRename.abandon();
+            return held;
+        }
+
+        // After the redraw: starts the held edit again on the item's new
+        // label, with the text typed so far. Does nothing when the item is gone.
+        function resumeInlineRename(container, held) {
+            if (!held) return;
+            const label = container.querySelector('[data-rename-label="' + CSS.escape(held.options.key) + '"]');
+            if (label) beginInlineRename(label, { ...held.options, draft: held.draft, focus: held.focus });
+        }
+
+        // A faint pencil button that starts a rename. The click does not
+        // reach the tab or chip around the button.
+        function buildRenameButton(key, itemName, start) {
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'rename-btn';
+            edit.dataset.rename = key;
+            edit.textContent = '✎';
+            edit.title = 'Rename';
+            edit.setAttribute('aria-label', 'Rename ' + itemName);
+            edit.addEventListener('click', (e) => { e.stopPropagation(); start(); });
+            return edit;
+        }
+
+        /**
+         * Starts renaming a chat in place. A reply that is being written is
+         * not interrupted, and the chat on screen does not change.
+         * @param {string} id Chat id.
+         * @param {HTMLElement} label The element that shows the chat's name.
+         * @param {HTMLElement} scope The element that holds the label and is
+         * redrawn when the name changes.
+         */
+        function renameChat(id, label, scope) {
             const chat = store.chats.find(c => c.id === id);
             if (!chat) return;
-            const name = prompt('Rename chat:', chat.name);
-            if (name && name.trim()) {
-                chat.name = name.trim().slice(0, 40);
-                chat.renamed = true; // manual rename wins; auto-rename disabled
-                saveStore();
-                renderTabs();
+            beginInlineRename(label, {
+                key: 'chat:' + id,
+                scope,
+                value: chat.name,
+                ariaLabel: 'New name for chat ' + chat.name,
+                commit: (name) => {
+                    chat.name = name;
+                    chat.renamed = true; // manual rename wins; auto-rename disabled
+                    saveStore();
+                    renderTabs();
+                    if (storageModal.classList.contains('open')) return refreshStorage();
+                }
+            });
+        }
+
+        // ---------- Item menu ----------
+        // One small menu serves every chat tab and every saved prompt chip.
+        // Each has a "more" button that opens it, and a right-click on the
+        // tab or chip opens it too. Rename, pin, and delete live in the menu,
+        // so a tab carries one button rather than three.
+
+        const itemMenu = document.getElementById('item-menu');
+        let itemMenuState = null; // { anchor, key, scope } while the menu is open
+
+        /**
+         * The "more" button of a tab or a chip.
+         * @param {string} key Names the item, such as 'chat:<id>'. Carried in
+         * data-rename, so that a rename can put focus back on this button.
+         * @param {string} itemName What the button is for, in its label.
+         * @param {function(): {label: string, action: function, danger?: boolean}[]} items
+         * Builds the menu's entries when the menu opens, so that they show
+         * the item's state at that moment.
+         * @param {HTMLElement} scope The element that holds the item and is
+         * redrawn when it changes.
+         */
+        function buildItemMenuButton(key, itemName, items, scope) {
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'item-menu-btn';
+            more.dataset.rename = key;
+            more.textContent = '⋯';
+            more.title = 'More';
+            more.setAttribute('aria-label', 'Options for ' + itemName);
+            more.setAttribute('aria-haspopup', 'menu');
+            more.setAttribute('aria-expanded', 'false');
+            more.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (itemMenuState && itemMenuState.anchor === more) closeItemMenu(true);
+                else openItemMenu(more, items(), { key, scope });
+            });
+            return more;
+        }
+
+        // Opens the menu next to its button and puts focus on the first entry.
+        function openItemMenu(anchor, items, { key, scope }) {
+            closeItemMenu(false);
+            itemMenu.replaceChildren();
+            for (const item of items) {
+                const entry = document.createElement('button');
+                entry.type = 'button';
+                entry.setAttribute('role', 'menuitem');
+                entry.className = item.danger ? 'item-menu-danger' : '';
+                entry.textContent = item.label;
+                if (item.title) entry.title = item.title;
+                entry.addEventListener('click', () => {
+                    closeItemMenu(false);
+                    item.action();
+                    // The action may have redrawn the bar and taken the
+                    // button with it. Focus goes to its replacement, unless
+                    // the action put focus somewhere itself. A focused
+                    // element that the menu still held, or that a redraw
+                    // removed, counts as no focus.
+                    const now = document.activeElement;
+                    if (now && now !== document.body && now.isConnected && !itemMenu.contains(now)) return;
+                    const again = scope.querySelector('button[data-rename="' + CSS.escape(key) + '"]');
+                    (again || scope.querySelector('button') || input).focus();
+                });
+                itemMenu.appendChild(entry);
             }
+            itemMenu.hidden = false;
+            placeItemMenu(anchor);
+            anchor.setAttribute('aria-expanded', 'true');
+            itemMenuState = { anchor, key, scope };
+            itemMenu.addEventListener('keydown', onItemMenuKey);
+            document.addEventListener('click', onItemMenuDocClick);
+            document.addEventListener('scroll', onItemMenuMove, true);
+            window.addEventListener('resize', onItemMenuMove);
+            itemMenu.querySelector('button').focus();
+        }
+
+        function closeItemMenu(refocus) {
+            if (!itemMenuState) return;
+            const { anchor } = itemMenuState;
+            itemMenuState = null;
+            itemMenu.hidden = true;
+            anchor.setAttribute('aria-expanded', 'false');
+            itemMenu.removeEventListener('keydown', onItemMenuKey);
+            document.removeEventListener('click', onItemMenuDocClick);
+            document.removeEventListener('scroll', onItemMenuMove, true);
+            window.removeEventListener('resize', onItemMenuMove);
+            if (refocus && anchor.isConnected) anchor.focus();
+        }
+
+        // Below the button, or above it when the button sits near the bottom
+        // of the window, as the chip row does. Kept inside the window sideways.
+        function placeItemMenu(anchor) {
+            const at = anchor.getBoundingClientRect();
+            const width = itemMenu.offsetWidth, height = itemMenu.offsetHeight;
+            const left = Math.max(8, Math.min(at.left, window.innerWidth - width - 8));
+            let top = at.bottom + 4;
+            if (top + height > window.innerHeight - 8) top = Math.max(8, at.top - height - 4);
+            itemMenu.style.left = left + 'px';
+            itemMenu.style.top = top + 'px';
+        }
+
+        function onItemMenuKey(e) {
+            const entries = Array.from(itemMenu.querySelectorAll('button'));
+            const at = entries.indexOf(document.activeElement);
+            if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); closeItemMenu(true); return; }
+            if (e.key === 'ArrowDown') { e.preventDefault(); entries[(at + 1) % entries.length].focus(); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); entries[(at - 1 + entries.length) % entries.length].focus(); }
+            else if (e.key === 'Home') { e.preventDefault(); entries[0].focus(); }
+            else if (e.key === 'End') { e.preventDefault(); entries[entries.length - 1].focus(); }
+        }
+        function onItemMenuDocClick(e) {
+            if (!itemMenu.contains(e.target) && e.target !== itemMenuState.anchor) closeItemMenu(false);
+        }
+        // The button moves when its row scrolls or the window changes size,
+        // and a menu left floating in the old place would mislead.
+        function onItemMenuMove() { closeItemMenu(false); }
+
+        // Before a container is redrawn: closes a menu opened from inside it
+        // and says whether focus was in that menu, so that the redraw can put
+        // focus on the button's replacement.
+        function holdItemMenu(container) {
+            if (!itemMenuState || !container.contains(itemMenuState.anchor)) return null;
+            const held = { key: itemMenuState.key, focus: itemMenu.contains(document.activeElement) };
+            closeItemMenu(false);
+            return held;
+        }
+        function resumeItemMenu(container, held) {
+            if (!held || !held.focus) return;
+            const again = container.querySelector('button[data-rename="' + CSS.escape(held.key) + '"]');
+            if (again) again.focus();
+        }
+
+        // A right-click on a tab or a chip opens the same menu as its button.
+        function openItemMenuOnContextMenu(element, more) {
+            element.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (itemMenuState && itemMenuState.anchor === more) return;
+                more.click();
+            });
         }
 
         // ---------- Saved prompt templates ----------
@@ -3607,16 +4057,21 @@ with this program. If not, see https://www.gnu.org/licenses/.
             input.focus();
         }
 
-        function renameTemplate(id) {
+        function renameTemplate(id, label) {
             const t = store.templates.find(t => t.id === id);
             if (!t) return;
-            const name = prompt('Rename saved prompt:', t.name);
-            if (name && name.trim()) {
-                t.name = name.trim().slice(0, 40);
-                t.renamed = true;
-                saveStore();
-                renderChips();
-            }
+            beginInlineRename(label, {
+                key: 'template:' + id,
+                scope: chipsRow,
+                value: t.name,
+                ariaLabel: 'New name for saved prompt ' + t.name,
+                commit: (name) => {
+                    t.name = name;
+                    t.renamed = true;
+                    saveStore();
+                    renderChips();
+                }
+            });
         }
 
         function deleteTemplate(id) {
@@ -3648,33 +4103,42 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const updateChipArrows = wireScrollArrows(chipsRow, chipsScrollLeft, chipsScrollRight);
 
         function renderTabs() {
+            const heldRename = holdInlineRename(tabBar);
+            const heldMenu = holdItemMenu(tabBar);
             tabBar.innerHTML = '';
             for (const chat of store.chats) {
                 const tab = document.createElement('div');
                 tab.className = 'tab' + (activeSurface === 'chat' && chat.id === store.activeId ? ' active' : '');
-                tab.title = 'Click to open, double-click to rename';
+                tab.title = 'Click to open';
 
+                if (chat.pinned) {
+                    const mark = document.createElement('span');
+                    mark.className = 'tab-pin-mark';
+                    mark.setAttribute('role', 'img');
+                    mark.setAttribute('aria-label', 'Pinned');
+                    mark.title = 'Pinned: this chat never expires';
+                    mark.textContent = '📌';
+                    tab.appendChild(mark);
+                }
                 const name = document.createElement('span');
                 name.textContent = chat.name;
-
-                const pin = document.createElement('button');
-                pin.className = 'tab-pin' + (chat.pinned ? ' pinned' : '');
-                pin.textContent = '📌';
-                pin.title = chat.pinned ? 'Unpin (pinned chats never expire)' : `Pin (max ${MAX_PINNED}; unpinned chats expire after 30 days)`;
-                pin.addEventListener('click', (e) => { e.stopPropagation(); togglePin(chat.id); });
-
-                const x = document.createElement('button');
-                x.className = 'tab-x';
-                x.textContent = '✕';
-                x.title = 'Delete chat';
-                x.addEventListener('click', (e) => { e.stopPropagation(); deleteChat(chat.id); });
+                name.dataset.renameLabel = 'chat:' + chat.id;
+                const more = buildItemMenuButton('chat:' + chat.id, 'chat ' + chat.name, () => [
+                    { label: 'Rename', action: () => renameChat(chat.id, name, tabBar) },
+                    chat.pinned
+                        ? { label: 'Unpin', title: 'An unpinned chat expires 30 days after its last change', action: () => togglePin(chat.id) }
+                        : { label: 'Pin', title: `A pinned chat never expires. Up to ${MAX_PINNED} chats can be pinned.`, action: () => togglePin(chat.id) },
+                    { label: 'Delete', danger: true, action: () => deleteChat(chat.id) }
+                ], tabBar);
+                openItemMenuOnContextMenu(tab, more);
 
                 tab.addEventListener('click', () => setActive(chat.id));
-                tab.addEventListener('dblclick', () => renameChat(chat.id));
 
-                tab.append(name, pin, x);
+                tab.append(name, more);
                 tabBar.appendChild(tab);
             }
+            resumeInlineRename(tabBar, heldRename);
+            resumeItemMenu(tabBar, heldMenu);
             // Field Kit tab entry. Present from first open until its own
             // close-x - a mere tab switch away is not a close, so this stays
             // in the bar regardless of activeSurface. Never
@@ -3800,6 +4264,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         function renderChips() {
+            const heldRename = holdInlineRename(chipsRow);
+            const heldMenu = holdItemMenu(chipsRow);
             chipsRow.innerHTML = '';
             const chat = activeChat();
             if (!chat) { updateChipArrows(); return; }
@@ -3818,6 +4284,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             // Saved prompt templates: reusable across all tabs, any chat state
             for (const t of store.templates) addTemplateChip(t);
+            resumeInlineRename(chipsRow, heldRename);
+            resumeItemMenu(chipsRow, heldMenu);
             updateChipArrows();
         }
 
@@ -3832,20 +4300,20 @@ with this program. If not, see https://www.gnu.org/licenses/.
         function addTemplateChip(t) {
             const div = document.createElement('div');
             div.className = 'template-chip';
-            div.title = 'Click to load, double-click to rename';
+            div.title = 'Click to load';
 
             const label = document.createElement('span');
             label.className = 'label';
             label.textContent = '🔖 ' + t.name;
+            label.dataset.renameLabel = 'template:' + t.id;
             label.addEventListener('click', () => useTemplate(t.id));
-            label.addEventListener('dblclick', (e) => { e.stopPropagation(); renameTemplate(t.id); });
+            const more = buildItemMenuButton('template:' + t.id, 'saved prompt ' + t.name, () => [
+                { label: 'Rename', action: () => renameTemplate(t.id, label) },
+                { label: 'Delete', danger: true, action: () => deleteTemplate(t.id) }
+            ], chipsRow);
+            openItemMenuOnContextMenu(div, more);
 
-            const del = document.createElement('button');
-            del.textContent = '✕';
-            del.title = 'Delete';
-            del.addEventListener('click', (e) => { e.stopPropagation(); deleteTemplate(t.id); });
-
-            div.append(label, del);
+            div.append(label, more);
             chipsRow.appendChild(div);
         }
 
@@ -5888,14 +6356,33 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         async function deleteAttachmentChip(id) {
             const chat = activeChat();
-            if (!chat) return;
-            const idx = chat.attachments.findIndex(a => a.id === id);
-            if (idx === -1) return;
-            const att = chat.attachments[idx];
+            if (!chat || !chat.attachments.some(a => a.id === id)) return;
+            await deleteAttachmentEverywhere(id);
+        }
+
+        // Removes one attachment and every record kept for it: the stored
+        // file, its search vectors, its line in the attachment index, and its
+        // entry in the chat that owns it, whichever chat that is. The chat
+        // keeps a note that the file was deleted. A file that no chat owns
+        // is removed the same way.
+        async function deleteAttachmentEverywhere(id) {
             await AttachmentStore.deleteAttachment(id);
             removeAttachmentIndex(id);
+            const chat = store.chats.find(c => (c.attachments || []).some(a => a.id === id));
+            if (!chat) return;
+            const idx = chat.attachments.findIndex(a => a.id === id);
+            const att = chat.attachments[idx];
             chat.attachments.splice(idx, 1);
-            appendAttachmentNote(chat, `Deleted ${att.name}`);
+            const note = `Deleted ${att.name}`;
+            if (chat === activeChat()) {
+                appendAttachmentNote(chat, note);
+            } else {
+                // Same record appendAttachmentNote keeps, without drawing it
+                // in the transcript on screen, which belongs to another chat.
+                const ts = Date.now();
+                chat.messages.push({ role: 'note', content: note, ts });
+                chat.updated = ts;
+            }
             saveStore();
             renderAttachmentBar();
         }
@@ -6120,7 +6607,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 clearInterval(timerId);
                 busy = false;
                 setControls(true);
-                input.focus();
+                focusPromptWhenFree();
             }
         }
 
@@ -8889,7 +9376,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     stopBtn.hidden = true;
                     setControls(true);
                     renderChips();
-                    input.focus();
+                    focusPromptWhenFree();
                     return;
                 }
             }
@@ -9108,7 +9595,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                             stopBtn.hidden = true;
                             setControls(true);
                             renderChips();
-                            input.focus();
+                            focusPromptWhenFree();
                         }
                         return;
                     }
@@ -9290,7 +9777,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     stopBtn.hidden = true;
                     setControls(true);
                     renderChips();
-                    input.focus();
+                    focusPromptWhenFree();
                 }
                 cancelledForNewChat = false;
             }
@@ -16360,15 +16847,13 @@ Feeling anxious about work."></textarea>
         const menuBtn = document.getElementById('menu-btn');
         const menuPopup = document.getElementById('menu-popup');
 
-        // TODO(storage-management-ui): a future entry here should let a user
-        // view/delete individually cached models (CACHED_PREFIX/RUNG_PREFIX
-        // localStorage entries), delete chats, and delete/download attachment
-        // files. AttachmentStore (see the "Attachment storage" section above)
-        // is the piece such a surface would read from - not built yet.
+        // TODO: let a person download an attachment's file from the storage
+        // dialog. AttachmentStore.getBlob() returns the decrypted bytes.
         const MENU_ITEMS = [
             { label: 'Field Kit', action: () => openSkills() },
             { label: 'Load models from local Ollama server', action: () => detectOllama(true) },
             { label: 'Advanced settings', action: () => openSettings() },
+            { label: 'Manage storage', action: () => openStorage() },
             { label: 'Clear all chats', action: () => wipeAllChats() },
             { label: 'About Field Station AI', action: () => showWelcome() }
         ];
@@ -16533,6 +17018,573 @@ Feeling anxious about work."></textarea>
         }
         document.getElementById('settings-close').addEventListener('click', closeSettings);
 
+        // ---------- Storage dialog ----------
+        // Lists what this browser holds for the app, in four groups: chats,
+        // attachments, downloaded models, and saved compendiums. Every list
+        // is read fresh when the dialog opens and after each delete, so it
+        // shows what is stored, not what the app remembers storing. Names
+        // come from files and chats a person supplied, so every row is built
+        // with createElement and textContent, never from a markup string.
+
+        // ### Storage dialog: pure helpers (start) ###
+
+        const STORAGE_BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
+        // A stored time earlier than this is not a time: a model flag written
+        // by an earlier release holds '1'. Milliseconds since 1970 UTC.
+        const STORAGE_MIN_TIME_MS = Date.UTC(2020, 0, 1);
+        // A chat model is named 'webllm:<name>' in the app, and its weights
+        // are cached under the Hugging Face repository 'mlc-ai/<name>'.
+        const WEBLLM_ID_PREFIX = 'webllm:';
+        const WEBLLM_REPO_PREFIX = 'mlc-ai/';
+        const MODEL_WEIGHTS_HOST_RE = /(?:^|\.)huggingface\.co$/;
+        // Where the compiled library that each chat model needs comes from.
+        const WEBLLM_LIB_HOST = 'raw.githubusercontent.com';
+        const WEBLLM_LIB_REPO = 'mlc-ai/binary-mlc-llm-libs';
+
+        /**
+         * Writes a size in bytes with a binary unit, such as '1.5 MB'.
+         * @param {number} bytes Size in bytes.
+         * @returns {string} The size, or 'Size unknown' for anything that is
+         * not a number of zero or more.
+         */
+        function formatStorageBytes(bytes) {
+            if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return 'Size unknown';
+            let value = bytes, unit = 0;
+            // The second test keeps a value that would round up to 1024.0
+            // from being written in the smaller unit.
+            while ((value >= 1024 || (unit > 0 && value.toFixed(1) === '1024.0')) && unit < STORAGE_BYTE_UNITS.length - 1) {
+                value /= 1024;
+                unit++;
+            }
+            return (unit === 0 ? String(Math.round(value)) : value.toFixed(1)) + ' ' + STORAGE_BYTE_UNITS[unit];
+        }
+
+        /**
+         * The sentence that reports the space in use.
+         * @param {number} usage Bytes in use, as the browser estimates it.
+         * @param {number} quota Bytes the browser allows this site.
+         * @returns {string} One sentence of plain text.
+         */
+        function storageUsageText(usage, quota) {
+            const isCount = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+            if (!isCount(usage)) return 'This browser does not report the space in use.';
+            if (!isCount(quota) || quota === 0) return 'Using ' + formatStorageBytes(usage) + '.';
+            return 'Using ' + formatStorageBytes(usage) + ' of ' + formatStorageBytes(quota) + '.';
+        }
+
+        /**
+         * Reads a stored time.
+         * @param {*} value Milliseconds since 1970 UTC, as a number or text.
+         * @returns {number|null} The time, or null when the value is not one.
+         */
+        function storageTime(value) {
+            if (value === null || value === undefined || value === '') return null;
+            const time = Number(value);
+            return Number.isFinite(time) && time >= STORAGE_MIN_TIME_MS ? time : null;
+        }
+
+        // Host and path segments of an http(s) URL, or null. Written with a
+        // pattern so that these helpers need nothing but the language itself.
+        function splitCacheUrl(url) {
+            const match = /^https?:\/\/([^\/?#:]+)(?::\d+)?\/([^?#]*)/i.exec(typeof url === 'string' ? url : '');
+            if (!match) return null;
+            return { host: match[1].toLowerCase(), parts: match[2].split('/').filter(Boolean) };
+        }
+
+        /**
+         * The repository a chat model's weights are cached under.
+         * @param {string} modelId A model id as the app names it.
+         * @returns {string|null} 'mlc-ai/<name>', or null when the id is not
+         * a chat model's.
+         */
+        function webllmRepoId(modelId) {
+            if (typeof modelId !== 'string' || !modelId.startsWith(WEBLLM_ID_PREFIX)) return null;
+            const name = modelId.slice(WEBLLM_ID_PREFIX.length);
+            return name ? WEBLLM_REPO_PREFIX + name : null;
+        }
+
+        /**
+         * The ids the app may have kept its own notes under for a model: the
+         * repository name, and for a chat model the app's name for it.
+         * @param {string} repoId Repository name, 'owner/name'.
+         * @returns {string[]} One or two ids.
+         */
+        function modelFlagIds(repoId) {
+            const ids = [repoId];
+            if (repoId.startsWith(WEBLLM_REPO_PREFIX) && repoId.length > WEBLLM_REPO_PREFIX.length) {
+                ids.push(WEBLLM_ID_PREFIX + repoId.slice(WEBLLM_REPO_PREFIX.length));
+            }
+            return ids;
+        }
+
+        // The repository a cached model file came from, or null when the URL
+        // is not a model file's.
+        function modelRepoOfCacheUrl(url) {
+            const parsed = splitCacheUrl(url);
+            if (!parsed || !MODEL_WEIGHTS_HOST_RE.test(parsed.host) || parsed.parts.length < 2) return null;
+            return parsed.parts[0] + '/' + parsed.parts[1];
+        }
+
+        // The file name of a cached chat model library, or null when the URL
+        // is not one.
+        function webllmLibFileOfCacheUrl(url) {
+            const parsed = splitCacheUrl(url);
+            if (!parsed || parsed.host !== WEBLLM_LIB_HOST || parsed.parts.length < 3) return null;
+            if (parsed.parts[0] + '/' + parsed.parts[1] !== WEBLLM_LIB_REPO) return null;
+            return parsed.parts[parsed.parts.length - 1];
+        }
+
+        // Whether a library file was built for a repository's model. The file
+        // name begins with the model's name without its '-MLC' ending.
+        function libBelongsToRepo(fileName, repoId) {
+            if (!repoId.startsWith(WEBLLM_REPO_PREFIX)) return false;
+            const stem = repoId.slice(WEBLLM_REPO_PREFIX.length).replace(/-MLC$/, '');
+            if (!stem || !fileName.startsWith(stem)) return false;
+            const next = fileName.charAt(stem.length);
+            return next === '_' || next === '-';
+        }
+
+        /**
+         * Groups cached files by the model they belong to.
+         * Grain of the input: one entry per cached file. Grain of the result:
+         * one group per model repository, sorted by repository name.
+         * @param {{cacheName: string, url: string, bytes: number}[]} entries
+         * Cached files from any cache. A file that belongs to no model is
+         * left out, and so is a library whose model has no cached weights.
+         * @returns {{repoId: string, bytes: number, entries: {cacheName: string, url: string}[]}[]}
+         */
+        function groupModelCacheEntries(entries) {
+            const groups = new Map();
+            const libs = [];
+            const add = (group, entry) => {
+                group.bytes += (typeof entry.bytes === 'number' && entry.bytes > 0) ? entry.bytes : 0;
+                group.entries.push({ cacheName: entry.cacheName, url: entry.url });
+            };
+            for (const entry of Array.isArray(entries) ? entries : []) {
+                if (!entry || typeof entry.url !== 'string') continue;
+                const repoId = modelRepoOfCacheUrl(entry.url);
+                if (!repoId) {
+                    if (webllmLibFileOfCacheUrl(entry.url)) libs.push(entry);
+                    continue;
+                }
+                if (!groups.has(repoId)) groups.set(repoId, { repoId, bytes: 0, entries: [] });
+                add(groups.get(repoId), entry);
+            }
+            for (const lib of libs) {
+                const fileName = webllmLibFileOfCacheUrl(lib.url);
+                for (const group of groups.values()) {
+                    if (libBelongsToRepo(fileName, group.repoId)) { add(group, lib); break; }
+                }
+            }
+            return Array.from(groups.values()).sort((a, b) => (a.repoId < b.repoId ? -1 : a.repoId > b.repoId ? 1 : 0));
+        }
+
+        // ### Storage dialog: pure helpers (end) ###
+
+        const STORAGE_LOCKED_NOTE = 'Locked. Reload the page and enter your PIN to see these.';
+        const STORAGE_UNREADABLE_NOTE = 'This list could not be read.';
+        const STORAGE_GROUPS = {
+            chats: { empty: 'No chats.', timeWord: 'Changed' },
+            attachments: { empty: 'No attachments.', timeWord: 'Added' },
+            models: { empty: 'No downloaded models.', timeWord: 'Last loaded' },
+            compendiums: { empty: 'No saved compendiums.', timeWord: 'Saved' }
+        };
+        // What each helper model is for, shown in place of a repository name.
+        // Chat and image models take their names from the model list, and
+        // Field Kit models from the tools that use them.
+        const STORAGE_HELPER_MODEL_NAMES = {
+            [COMPENDIUM_EMBED_ID]: 'Search helper',
+            [COMPENDIUM_RERANK_MODEL_ID]: 'Excerpt ranking helper',
+            [ROUTER_NLI_ID]: 'Question type helper',
+            [DAISY_AUDIO_ID]: 'Speech to text helper',
+            [CPU_FALLBACK_TJS_ID]: 'Small chat model for browsers without WebGPU'
+        };
+        const storageModal = document.getElementById('storage-modal');
+        const storageDialog = document.getElementById('storage-dialog');
+        const storageLive = document.getElementById('storage-live');
+        const storageUsage = document.getElementById('storage-usage');
+        let storageRefreshCount = 0; // a refresh that was overtaken by a later one draws nothing
+
+        function announceStorage(text) {
+            // Cleared first so repeating the same sentence is still announced.
+            storageLive.textContent = '';
+            setTimeout(() => { storageLive.textContent = text; }, 30);
+        }
+
+        function storageModelName(repoId) {
+            for (const id of modelFlagIds(repoId)) {
+                const label = friendlyModelName(id);
+                if (label !== 'the model') return label;
+            }
+            if (STORAGE_HELPER_MODEL_NAMES[repoId]) return STORAGE_HELPER_MODEL_NAMES[repoId];
+            const tools = SKILLS.filter(s => s.modelId === repoId).map(s => s.name);
+            if (!tools.length) return repoId;
+            return 'Field Kit: ' + tools[0] + (tools.length > 1 ? ', and ' + (tools.length - 1) + ' more' : '');
+        }
+
+        // Latest time the app recorded a successful load of a model, or null.
+        function modelLastLoaded(repoId) {
+            let latest = null;
+            for (const id of modelFlagIds(repoId)) {
+                let rungTime = null;
+                try { rungTime = storageTime((JSON.parse(localStorage.getItem(rungKey(id))) || {}).at); } catch {}
+                let flagTime = null;
+                try { flagTime = storageTime(localStorage.getItem(cachedFlag(id))); } catch {}
+                for (const time of [rungTime, flagTime]) if (time !== null && (latest === null || time > latest)) latest = time;
+            }
+            return latest;
+        }
+
+        // Size of one cached file. The stored header is used when it can be
+        // trusted; a file without one, or one that was compressed in
+        // transit, is measured.
+        async function cachedResponseBytes(cache, request) {
+            const response = await cache.match(request);
+            if (!response) return 0;
+            const declared = Number(response.headers.get('content-length'));
+            if (Number.isFinite(declared) && declared > 0 && !response.headers.get('content-encoding')) return declared;
+            try { return (await response.blob()).size; } catch { return 0; }
+        }
+
+        // Each list function returns rows of { name, details, bytes, time,
+        // deleteLabel, remove }. remove() asks for confirmation, deletes
+        // through the app's own delete path, and resolves true when the item
+        // is gone. A chat's row also carries chatId and pinned, which give it
+        // a pencil button, a pin button, and a Delete button that waits for
+        // the chat to be unpinned.
+
+        // Grain: one row per chat.
+        function listStoredChats() {
+            return store.chats.map(chat => {
+                const files = (chat.attachments || []).length;
+                return {
+                    chatId: chat.id,
+                    pinned: !!chat.pinned,
+                    name: chat.name,
+                    details: files ? [files + (files === 1 ? ' attachment' : ' attachments')] : [],
+                    // The chat as saved text. A PIN adds about a third.
+                    bytes: new Blob([JSON.stringify(chat)]).size,
+                    time: storageTime(chat.updated) || storageTime(chat.created),
+                    deleteLabel: 'Delete chat ' + chat.name,
+                    remove: async () => {
+                        deleteChat(chat.id); // asks for confirmation itself
+                        return !store.chats.some(c => c.id === chat.id);
+                    }
+                };
+            }).sort((a, b) => (b.time || 0) - (a.time || 0));
+        }
+
+        // Grain: one row per stored file. A file whose chat is gone is listed
+        // too, so that it can be removed without waiting for the sweep.
+        async function listStoredAttachments() {
+            await AttachmentStore.ready();
+            const rows = [];
+            const linked = new Set();
+            for (const chat of store.chats) {
+                for (const att of (chat.attachments || [])) {
+                    linked.add(att.id);
+                    rows.push({
+                        name: att.name,
+                        details: ['In ' + chat.name],
+                        bytes: (att.sizeBytes || 0) + await AttachmentStore.vectorBytes(att.id),
+                        time: storageTime(att.addedAt),
+                        deleteLabel: 'Delete attachment ' + att.name,
+                        remove: async () => {
+                            if (!confirm(`Delete "${att.name}" from "${chat.name}"?`)) return false;
+                            await deleteAttachmentEverywhere(att.id);
+                            return true;
+                        }
+                    });
+                }
+            }
+            const index = readAttachmentIndex();
+            for (const id of await AttachmentStore.listStoredIds()) {
+                if (linked.has(id)) continue;
+                rows.push({
+                    name: 'File with no chat',
+                    details: [],
+                    bytes: await AttachmentStore.blobBytes(id) + await AttachmentStore.vectorBytes(id),
+                    time: storageTime(index[id] && index[id].addedAt),
+                    deleteLabel: 'Delete file with no chat',
+                    remove: async () => {
+                        if (!confirm('Delete this file? No chat uses it.')) return false;
+                        await deleteAttachmentEverywhere(id);
+                        return true;
+                    }
+                });
+            }
+            return rows.sort((a, b) => (b.time || 0) - (a.time || 0));
+        }
+
+        // Grain: one row per model repository with files in Cache Storage.
+        async function listCachedModels() {
+            if (!('caches' in window)) return [];
+            const entries = [];
+            for (const cacheName of await caches.keys()) {
+                if (cacheName === COMPENDIUM_CACHE_NAME) continue;
+                const cache = await caches.open(cacheName);
+                for (const request of await cache.keys()) {
+                    if (!modelRepoOfCacheUrl(request.url) && !webllmLibFileOfCacheUrl(request.url)) continue;
+                    entries.push({ cacheName, url: request.url, bytes: await cachedResponseBytes(cache, request) });
+                }
+            }
+            return groupModelCacheEntries(entries).map(group => {
+                const name = storageModelName(group.repoId);
+                return {
+                    name,
+                    details: name === group.repoId ? [] : [group.repoId],
+                    bytes: group.bytes,
+                    time: modelLastLoaded(group.repoId),
+                    deleteLabel: 'Delete model ' + name,
+                    remove: async () => {
+                        if (!confirm(`Delete the downloaded files for "${name}"? They download again the next time the model is needed.`)) return false;
+                        await deleteCachedModel(group);
+                        return true;
+                    }
+                };
+            });
+        }
+
+        // Removes a model's cached files and the app's own notes about it.
+        async function deleteCachedModel(group) {
+            await purgeModelFromCache(group.repoId);
+            // The chat model's library is not on the weights' host, so the
+            // purge above does not reach it.
+            for (const entry of group.entries) {
+                try { await (await caches.open(entry.cacheName)).delete(entry.url); }
+                catch (e) { console.warn('Could not delete a cached model file:', e); }
+            }
+            for (const id of modelFlagIds(group.repoId)) {
+                try { localStorage.removeItem(cachedFlag(id)); } catch {}
+                clearModelRung(id);
+            }
+        }
+
+        // Grain: one row per compendium file in Cache Storage.
+        async function listCachedCompendiums() {
+            if (!('caches' in window)) return [];
+            const bundled = new Set(BUNDLED_COMPENDIUM_URLS.map(name => new URL(name, location.href).href));
+            // The notes about an external compendium are kept under the URL
+            // as it was typed, and the cache under the URL as the browser
+            // resolved it.
+            const notes = new Map();
+            for (const key of enumerateCompendiumMetaKeys()) {
+                const typedUrl = key.slice(COMPENDIUM_META_PREFIX.length);
+                try { notes.set(new URL(typedUrl, location.href).href, { typedUrl, meta: readCompendiumMeta(typedUrl) || {} }); } catch {}
+            }
+            const cache = await caches.open(COMPENDIUM_CACHE_NAME);
+            const rows = [];
+            for (const request of await cache.keys()) {
+                const response = await cache.match(request);
+                const note = notes.get(request.url);
+                const where = new URL(request.url);
+                const isBundled = bundled.has(request.url);
+                const site = note && typeof note.meta.site === 'string' ? note.meta.site.trim() : '';
+                const name = isBundled ? 'Bundled compendium' : (site || 'Compendium from ' + where.host);
+                rows.push({
+                    name,
+                    // The query string is left out: a link to a private file
+                    // may carry an access token there.
+                    details: [isBundled ? where.pathname.split('/').pop() : where.host + where.pathname],
+                    bytes: await cachedResponseBytes(cache, request),
+                    time: storageTime(note && note.meta.fetchedAt) || storageTime(Date.parse((response && response.headers.get('date')) || '')),
+                    deleteLabel: 'Delete ' + name,
+                    remove: async () => {
+                        if (!confirm(`Delete the saved copy of "${name}"? It is saved again the next time it loads.`)) return false;
+                        await purgeCompendiumEntry(request.url);
+                        if (note && note.typedUrl !== request.url) await purgeCompendiumEntry(note.typedUrl);
+                        return true;
+                    }
+                });
+            }
+            return rows;
+        }
+
+        function storageGroupElement(groupName) {
+            return storageModal.querySelector('.storage-group[data-group="' + groupName + '"]');
+        }
+
+        function buildStorageRow(groupName, row, position) {
+            const item = document.createElement('li');
+            item.className = 'storage-item';
+            const text = document.createElement('div');
+            text.className = 'storage-item-text';
+            const name = document.createElement('span');
+            name.className = 'storage-item-name';
+            const nameText = document.createElement('span');
+            nameText.textContent = row.name;
+            name.appendChild(nameText);
+            if (row.chatId) {
+                const startRename = () => renameChat(row.chatId, nameText, storageDialog);
+                nameText.dataset.renameLabel = 'chat:' + row.chatId;
+                nameText.addEventListener('dblclick', startRename);
+                name.appendChild(buildRenameButton('chat:' + row.chatId, 'chat ' + row.name, startRename));
+            }
+            const meta = document.createElement('span');
+            meta.className = 'storage-item-meta';
+            const when = row.time === null ? 'Time not recorded' : STORAGE_GROUPS[groupName].timeWord + ' ' + formatTimestamp(row.time);
+            meta.textContent = [...row.details, when, formatStorageBytes(row.bytes)].join(' · ');
+            text.append(name, meta);
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'storage-delete';
+            remove.textContent = 'Delete';
+            remove.setAttribute('aria-label', row.deleteLabel);
+            // Two rows may carry the same name, so the details are read
+            // out with the button as well.
+            meta.id = 'storage-' + groupName + '-meta-' + position;
+            remove.setAttribute('aria-describedby', meta.id);
+            // click fires on pointer-up, so a mis-press can still be
+            // abandoned by sliding off the button.
+            remove.addEventListener('click', () => deleteStorageRow(groupName, row, position));
+            item.appendChild(text);
+            const actions = document.createElement('div');
+            actions.className = 'storage-item-actions';
+            if (row.chatId) {
+                const pin = document.createElement('button');
+                pin.type = 'button';
+                pin.className = 'storage-pin';
+                pin.dataset.pin = row.chatId;
+                pin.setAttribute('aria-pressed', String(row.pinned));
+                pin.setAttribute('aria-label', 'Pin chat ' + row.name);
+                pin.title = row.pinned ? 'Pinned. Press to unpin.' : 'Not pinned. Press to pin.';
+                const icon = document.createElement('span');
+                icon.setAttribute('aria-hidden', 'true');
+                icon.textContent = '📌';
+                pin.appendChild(icon);
+                pin.addEventListener('click', () => toggleStoragePin(row));
+                if (row.pinned) remove.setAttribute('aria-disabled', 'true');
+                actions.appendChild(pin);
+            }
+            actions.appendChild(remove);
+            item.appendChild(actions);
+            return item;
+        }
+
+        // Pins or unpins a chat from its row, then puts focus back on the
+        // row's pin button, which the redraw replaced.
+        async function toggleStoragePin(row) {
+            togglePin(row.chatId);
+            const chat = store.chats.find(c => c.id === row.chatId);
+            if (!chat) return;
+            if (!!chat.pinned === row.pinned) {
+                announceStorage(`Pin limit reached (${MAX_PINNED}). Unpin another chat first.`);
+                setStatus(''); // togglePin wrote the same words to the main screen, behind the dialog
+                return;
+            }
+            await refreshStorage();
+            announceStorage(chat.pinned
+                ? 'Pinned ' + chat.name + '. Unpin it to delete it.'
+                : 'Unpinned ' + chat.name + '. It can be deleted.');
+            const pin = storageDialog.querySelector('button[data-pin="' + CSS.escape(row.chatId) + '"]');
+            if (pin) pin.focus();
+        }
+
+        // Draws one group: its rows, or one line that says why there are none.
+        function renderStorageGroup(groupName, rows, note) {
+            const group = storageGroupElement(groupName);
+            const list = group.querySelector('.storage-list');
+            const line = group.querySelector('.storage-note');
+            const total = group.querySelector('.storage-group-total');
+            list.replaceChildren();
+            const message = note || (rows.length ? '' : STORAGE_GROUPS[groupName].empty);
+            line.textContent = message;
+            line.hidden = !message;
+            total.textContent = rows.length
+                ? '(' + formatStorageBytes(rows.reduce((sum, row) => sum + row.bytes, 0)) + ')'
+                : '';
+            rows.forEach((row, position) => list.appendChild(buildStorageRow(groupName, row, position)));
+        }
+
+        async function refreshStorage() {
+            const mine = ++storageRefreshCount;
+            let usageText = storageUsageText();
+            try {
+                if (navigator.storage && typeof navigator.storage.estimate === 'function') {
+                    const { usage, quota } = await navigator.storage.estimate();
+                    usageText = storageUsageText(usage, quota);
+                }
+            } catch (e) { console.warn('Storage estimate failed:', e); }
+            // With the store locked the app has not read the chats, so it
+            // cannot tell which stored file belongs to which chat.
+            const readers = {
+                chats: locked ? null : async () => listStoredChats(),
+                attachments: locked ? null : listStoredAttachments,
+                models: listCachedModels,
+                compendiums: listCachedCompendiums
+            };
+            const drawn = {};
+            for (const [groupName, read] of Object.entries(readers)) {
+                if (!read) { drawn[groupName] = { rows: [], note: STORAGE_LOCKED_NOTE }; continue; }
+                try { drawn[groupName] = { rows: await read(), note: '' }; }
+                catch (e) {
+                    console.warn('Could not list stored ' + groupName + ':', e);
+                    drawn[groupName] = { rows: [], note: STORAGE_UNREADABLE_NOTE };
+                }
+            }
+            if (mine !== storageRefreshCount) return;
+            storageUsage.textContent = usageText;
+            for (const [groupName, { rows, note }] of Object.entries(drawn)) renderStorageGroup(groupName, rows, note);
+        }
+
+        async function deleteStorageRow(groupName, row, position) {
+            if (row.pinned) { announceStorage('Unpin ' + row.name + ' to delete it.'); return; }
+            if (busy) { announceStorage('Wait for the reply to finish, then delete.'); return; }
+            if (groupName === 'models' && anyLoadInProgress) { announceStorage('Wait for the model to finish loading, then delete.'); return; }
+            let removed = false;
+            try { removed = await row.remove(); }
+            catch (e) {
+                console.error('Storage delete failed:', e);
+                announceStorage('Could not delete ' + row.name + '.');
+                await refreshStorage();
+                return;
+            }
+            if (!removed) return;
+            await refreshStorage();
+            announceStorage('Deleted ' + row.name + '.');
+            // The button that was pressed is gone. Focus goes to the row
+            // that took its place, or to the group's heading.
+            const group = storageGroupElement(groupName);
+            const buttons = group.querySelectorAll('.storage-delete');
+            (buttons[position] || buttons[buttons.length - 1] || group.querySelector('.storage-group-name')).focus();
+        }
+
+        function onStorageKey(e) {
+            if (e.key === 'Escape') { e.preventDefault(); closeStorage(); return; }
+            if (e.key !== 'Tab') return;
+            // Keeps Tab inside the dialog while it is open (aria-modal only
+            // hides the page behind it from assistive technology).
+            // Focus may also rest on the dialog or on a group's heading, so
+            // the test is whether a button lies further on, not whether
+            // focus is on the first or last one.
+            const items = Array.from(storageDialog.querySelectorAll('button'));
+            const active = document.activeElement;
+            if (!storageDialog.contains(active)) { e.preventDefault(); items[0].focus(); return; }
+            const lies = (side) => items.some(b => b !== active && (active.compareDocumentPosition(b) & side));
+            if (e.shiftKey && !lies(Node.DOCUMENT_POSITION_PRECEDING)) { e.preventDefault(); items[items.length - 1].focus(); }
+            else if (!e.shiftKey && !lies(Node.DOCUMENT_POSITION_FOLLOWING)) { e.preventDefault(); items[0].focus(); }
+        }
+        function onStorageBackdrop(e) { if (e.target === storageModal) closeStorage(); }
+        function openStorage() {
+            storageLive.textContent = '';
+            storageUsage.textContent = 'Checking the space in use...';
+            storageModal.classList.add('open');
+            document.addEventListener('keydown', onStorageKey);
+            storageModal.addEventListener('click', onStorageBackdrop);
+            // Focus lands on the dialog itself, so its title and intro are
+            // read before any control.
+            storageDialog.focus();
+            refreshStorage();
+        }
+        function closeStorage() {
+            storageRefreshCount++; // a refresh still running draws nothing
+            storageModal.classList.remove('open');
+            document.removeEventListener('keydown', onStorageKey);
+            storageModal.removeEventListener('click', onStorageBackdrop);
+            menuBtn.focus(); // back to the control that opened the dialog
+        }
+        document.getElementById('storage-close').addEventListener('click', closeStorage);
+
         // ---------- Model cache cleanup ----------
 
         // Retired models can otherwise sit in Cache Storage indefinitely as the
@@ -16544,7 +17596,7 @@ Feeling anxious about work."></textarea>
         // SmolVLM-500M even when the selected vision option is Qwen2-VL) and
         // drop cache entries for anything else.
         function knownModelIds() {
-            const ids = new Set([ROUTER_NLI_ID, DAISY_VISION_ID, DAISY_AUDIO_ID, COMPENDIUM_EMBED_ID]);
+            const ids = new Set([ROUTER_NLI_ID, DAISY_VISION_ID, DAISY_AUDIO_ID, COMPENDIUM_EMBED_ID, COMPENDIUM_RERANK_MODEL_ID, CPU_FALLBACK_TJS_ID]);
             for (const s of SKILLS) if (s.modelId) ids.add(s.modelId);
             for (const opt of modelSelect.querySelectorAll('option')) {
                 let v = opt.value;
@@ -16552,6 +17604,10 @@ Feeling anxious about work."></textarea>
                 if (v.startsWith('router:')) v = v.slice(7);
                 else if (v.startsWith('vision:')) v = v.slice(7);
                 ids.add(v);
+                // A chat model's weights are cached under its repository
+                // name, which is not the name in the dropdown.
+                const repoId = webllmRepoId(v);
+                if (repoId) ids.add(repoId);
             }
             return ids;
         }

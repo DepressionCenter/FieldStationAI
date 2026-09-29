@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 user-guide.md: Guide for users of Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-28
+Last Modified: 2026-09-29
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -34,6 +34,24 @@ Do not treat the app as a compliance certification. If your data may contain PHI
 5. Use **Stop** to interrupt a response when available.
 
 Use **New chat** for a separate conversation. Each chat should keep its own messages and attachments.
+
+### Rename, Pin, or Delete a Chat
+
+Each chat tab has one small button at its right end (⋯). It opens a menu with **Rename**, **Pin** or **Unpin**, and **Delete**. A right-click on the tab opens the same menu. With the keyboard, reach the button with Tab, press **Enter**, and move through the menu with the arrow keys. **Esc** closes it.
+
+To rename:
+
+1. Choose **Rename**. The name turns into a text box, with the whole name selected.
+2. Type the new name. A name can be up to 40 characters long.
+3. Press **Enter** to keep the new name, or **Esc** to keep the old one. Clicking somewhere else also keeps the new name.
+
+Renaming a chat does not open it, and it does not stop a reply that is being written. You can rename chats in the Storage dialog too. See [Manage Storage](#manage-storage).
+
+A chat that is not pinned is removed 30 days after its last change. Choose **Pin** to keep the chat. A pinned chat shows a small pin before its name. You can pin up to 5 chats.
+
+**Delete** asks before it deletes the chat and the files attached to it.
+
+Each saved prompt below the chat has the same button, with **Rename** and **Delete**.
 
 ## If You May Be in Crisis
 
@@ -154,6 +172,45 @@ The smallest model runs 0.15 below the creativity number shown, because small mo
 Some compendium files carry their own recommended match strictness, measured when the file was built. When such a file is loaded, the **Reset** button shows that value, and the app uses it until you change the setting yourself. A value you set yourself stays until you press **Reset**.
 
 If answers ignore the compendium, first look at the Sources row under the answer. If it lists the right pages, the model is the weak link, so try a larger model. If it lists nothing, try a slightly lower match strictness.
+
+## Manage Storage
+
+The app saves chats, attachments, downloaded models, and compendiums in this browser. The Storage dialog shows what is saved and lets you delete items one at a time.
+
+To open it, choose the menu button at the top right (three lines), then **Manage storage**.
+
+The top line shows how much space the app uses and how much this browser allows. Below it are four groups:
+
+| Group | What it lists | Time shown |
+| --- | --- | --- |
+| Chats | Every saved chat, with the number of files attached to it | When the chat last changed |
+| Attachments | Every file you attached, and the chat it belongs to | When you added the file |
+| Models | Every AI model this browser has downloaded | When the model last loaded |
+| Compendiums | Every compendium file this browser has saved | When the file was saved |
+
+Each row shows a size and a **Delete** button. Next to the name of each group is the total size of that group.
+
+To delete an item:
+
+1. Choose **Delete** on its row.
+2. Confirm in the box that appears. Choose **Cancel** to keep the item.
+
+Each chat row has two more controls:
+
+- **The pencil** next to the name renames the chat. You can also double-click the name. The tab in the main screen shows the new name.
+- **The pin** to the left of **Delete** pins or unpins the chat. A gray pin with a dashed border means the chat is not pinned. A pin in color with a solid border means it is pinned.
+
+A pinned chat cannot be deleted here. Its **Delete** button is gray with a dashed border. Choose the pin to unpin the chat, and **Delete** works again.
+
+Things to know before you delete:
+
+- A deleted item cannot be brought back.
+- Deleting a chat also deletes the files attached to it.
+- A deleted model or compendium downloads again the next time the app needs it. That takes time and a network connection.
+- You cannot delete while the AI is writing a reply. Wait for the reply to finish.
+- If you set a PIN and did not enter it, the Chats and Attachments groups stay hidden. Reload the page and enter your PIN to see them.
+
+Sizes are close, not exact. The size of a chat is the size of its text, and a PIN adds about a third. The total at the top comes from the browser, and it leaves out chat text.
 
 ## Export Data
 
