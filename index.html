@@ -266,10 +266,29 @@ with this program. If not, see https://www.gnu.org/licenses/.
             min-width: 24px; min-height: 24px; border-radius: 50%;
         }
         .tab button:hover { color: var(--accent-dark); }
-        /* Pin is dimmed/grayscale until actually pinned */
-        .tab .tab-pin { opacity: 0.3; filter: grayscale(1); }
-        .tab .tab-pin.pinned { opacity: 1; filter: none; color: var(--accent); }
         .tab .tab-x:hover { color: #B91C1C; }
+        /* A pinned chat shows a small pin before its name. It is a mark, not
+           a button, so it takes less room than a target would. */
+        .tab .tab-pin-mark { font-size: 0.7rem; line-height: 1; margin-right: 2px; }
+
+        /* The "more" button on a tab or a chip, and the menu it opens. The
+           menu is one element at the end of the page, placed next to the
+           button, because the tab bar and the chip row clip anything that
+           hangs outside them. Same visual language as #menu-popup. */
+        .item-menu-btn { font-weight: 700; }
+        .item-menu-btn[aria-expanded="true"] { color: var(--accent); background: var(--bg); }
+        .item-menu {
+            position: fixed; z-index: 95; min-width: 140px; padding: 4px;
+            background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+            box-shadow: 0 8px 24px rgba(23, 38, 59, 0.14);
+        }
+        .item-menu button {
+            display: block; width: 100%; text-align: left; min-height: 32px;
+            padding: 6px 12px; border: none; background: none; border-radius: 6px;
+            font-family: inherit; font-size: 0.85rem; color: var(--ink); cursor: pointer;
+        }
+        .item-menu button:hover { background: var(--bg); color: var(--accent); }
+        .item-menu button.item-menu-danger { color: var(--danger); }
 
         #progress-wrap { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 10px 14px; margin-bottom: 0.6rem; }
         #progress-msg { font-size: 0.82rem; font-weight: 600; margin-bottom: 6px; }
@@ -475,7 +494,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
            than 3:1 contrast against the white panel. */
         .rename-btn { opacity: 0.75; }
         .rename-btn:hover, .rename-btn:focus-visible { opacity: 1; }
-        .renaming > .rename-btn { display: none; }
+        .renaming > .rename-btn, .renaming > .item-menu-btn { display: none; }
         .rename-input {
             font: inherit; color: var(--ink); background: var(--panel);
             border: 1px solid var(--muted); border-radius: 6px; padding: 2px 6px;
@@ -1293,6 +1312,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
             <div class="settings-sr" id="settings-live" aria-live="polite" aria-atomic="true"></div>
         </div>
     </div>
+
+    <!-- Menu for one chat tab or one saved prompt chip. Filled and placed by
+         the "Item menu" script section each time it opens. -->
+    <div id="item-menu" class="item-menu" role="menu" hidden></div>
 
     <!-- Storage dialog. Wired up in the "Storage dialog" script section, which
          fills each list from what this browser holds when the dialog opens. -->
@@ -3481,7 +3504,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // a name is being edited or a dialog is open, so that typing is not
         // cut short and focus does not leave a dialog.
         function focusPromptWhenFree() {
-            if (inlineRename) return;
+            if (inlineRename || itemMenuState) return;
             if (document.querySelector('#settings-modal.open, #storage-modal.open, #pin-modal.open')) return;
             input.focus();
         }
@@ -3735,9 +3758,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // ---------- Rename in place ----------
         // A name is edited where it is shown: a text box takes the place of
         // the name, with all of its text selected. Enter or leaving the box
-        // keeps the new name, and Escape keeps the old one. Chat tabs, saved
-        // prompt chips, and the chats in the storage dialog all rename this
-        // way, each through a small pencil button.
+        // keeps the new name, and Escape keeps the old one. Chat tabs and
+        // saved prompt chips rename this way from their menu, and the chats
+        // in the storage dialog from a small pencil button.
 
         const RENAME_MAX_CHARS = 40;
         // The edit in progress, or null. There is at most one.
@@ -3875,6 +3898,147 @@ with this program. If not, see https://www.gnu.org/licenses/.
             });
         }
 
+        // ---------- Item menu ----------
+        // One small menu serves every chat tab and every saved prompt chip.
+        // Each has a "more" button that opens it, and a right-click on the
+        // tab or chip opens it too. Rename, pin, and delete live in the menu,
+        // so a tab carries one button rather than three.
+
+        const itemMenu = document.getElementById('item-menu');
+        let itemMenuState = null; // { anchor, key, scope } while the menu is open
+
+        /**
+         * The "more" button of a tab or a chip.
+         * @param {string} key Names the item, such as 'chat:<id>'. Carried in
+         * data-rename, so that a rename can put focus back on this button.
+         * @param {string} itemName What the button is for, in its label.
+         * @param {function(): {label: string, action: function, danger?: boolean}[]} items
+         * Builds the menu's entries when the menu opens, so that they show
+         * the item's state at that moment.
+         * @param {HTMLElement} scope The element that holds the item and is
+         * redrawn when it changes.
+         */
+        function buildItemMenuButton(key, itemName, items, scope) {
+            const more = document.createElement('button');
+            more.type = 'button';
+            more.className = 'item-menu-btn';
+            more.dataset.rename = key;
+            more.textContent = '⋯';
+            more.title = 'More';
+            more.setAttribute('aria-label', 'Options for ' + itemName);
+            more.setAttribute('aria-haspopup', 'menu');
+            more.setAttribute('aria-expanded', 'false');
+            more.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (itemMenuState && itemMenuState.anchor === more) closeItemMenu(true);
+                else openItemMenu(more, items(), { key, scope });
+            });
+            return more;
+        }
+
+        // Opens the menu next to its button and puts focus on the first entry.
+        function openItemMenu(anchor, items, { key, scope }) {
+            closeItemMenu(false);
+            itemMenu.replaceChildren();
+            for (const item of items) {
+                const entry = document.createElement('button');
+                entry.type = 'button';
+                entry.setAttribute('role', 'menuitem');
+                entry.className = item.danger ? 'item-menu-danger' : '';
+                entry.textContent = item.label;
+                if (item.title) entry.title = item.title;
+                entry.addEventListener('click', () => {
+                    closeItemMenu(false);
+                    item.action();
+                    // The action may have redrawn the bar and taken the
+                    // button with it. Focus goes to its replacement, unless
+                    // the action put focus somewhere itself. A focused
+                    // element that the menu still held, or that a redraw
+                    // removed, counts as no focus.
+                    const now = document.activeElement;
+                    if (now && now !== document.body && now.isConnected && !itemMenu.contains(now)) return;
+                    const again = scope.querySelector('button[data-rename="' + CSS.escape(key) + '"]');
+                    (again || scope.querySelector('button') || input).focus();
+                });
+                itemMenu.appendChild(entry);
+            }
+            itemMenu.hidden = false;
+            placeItemMenu(anchor);
+            anchor.setAttribute('aria-expanded', 'true');
+            itemMenuState = { anchor, key, scope };
+            itemMenu.addEventListener('keydown', onItemMenuKey);
+            document.addEventListener('click', onItemMenuDocClick);
+            document.addEventListener('scroll', onItemMenuMove, true);
+            window.addEventListener('resize', onItemMenuMove);
+            itemMenu.querySelector('button').focus();
+        }
+
+        function closeItemMenu(refocus) {
+            if (!itemMenuState) return;
+            const { anchor } = itemMenuState;
+            itemMenuState = null;
+            itemMenu.hidden = true;
+            anchor.setAttribute('aria-expanded', 'false');
+            itemMenu.removeEventListener('keydown', onItemMenuKey);
+            document.removeEventListener('click', onItemMenuDocClick);
+            document.removeEventListener('scroll', onItemMenuMove, true);
+            window.removeEventListener('resize', onItemMenuMove);
+            if (refocus && anchor.isConnected) anchor.focus();
+        }
+
+        // Below the button, or above it when the button sits near the bottom
+        // of the window, as the chip row does. Kept inside the window sideways.
+        function placeItemMenu(anchor) {
+            const at = anchor.getBoundingClientRect();
+            const width = itemMenu.offsetWidth, height = itemMenu.offsetHeight;
+            const left = Math.max(8, Math.min(at.left, window.innerWidth - width - 8));
+            let top = at.bottom + 4;
+            if (top + height > window.innerHeight - 8) top = Math.max(8, at.top - height - 4);
+            itemMenu.style.left = left + 'px';
+            itemMenu.style.top = top + 'px';
+        }
+
+        function onItemMenuKey(e) {
+            const entries = Array.from(itemMenu.querySelectorAll('button'));
+            const at = entries.indexOf(document.activeElement);
+            if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); closeItemMenu(true); return; }
+            if (e.key === 'ArrowDown') { e.preventDefault(); entries[(at + 1) % entries.length].focus(); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); entries[(at - 1 + entries.length) % entries.length].focus(); }
+            else if (e.key === 'Home') { e.preventDefault(); entries[0].focus(); }
+            else if (e.key === 'End') { e.preventDefault(); entries[entries.length - 1].focus(); }
+        }
+        function onItemMenuDocClick(e) {
+            if (!itemMenu.contains(e.target) && e.target !== itemMenuState.anchor) closeItemMenu(false);
+        }
+        // The button moves when its row scrolls or the window changes size,
+        // and a menu left floating in the old place would mislead.
+        function onItemMenuMove() { closeItemMenu(false); }
+
+        // Before a container is redrawn: closes a menu opened from inside it
+        // and says whether focus was in that menu, so that the redraw can put
+        // focus on the button's replacement.
+        function holdItemMenu(container) {
+            if (!itemMenuState || !container.contains(itemMenuState.anchor)) return null;
+            const held = { key: itemMenuState.key, focus: itemMenu.contains(document.activeElement) };
+            closeItemMenu(false);
+            return held;
+        }
+        function resumeItemMenu(container, held) {
+            if (!held || !held.focus) return;
+            const again = container.querySelector('button[data-rename="' + CSS.escape(held.key) + '"]');
+            if (again) again.focus();
+        }
+
+        // A right-click on a tab or a chip opens the same menu as its button.
+        function openItemMenuOnContextMenu(element, more) {
+            element.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (itemMenuState && itemMenuState.anchor === more) return;
+                more.click();
+            });
+        }
+
         // ---------- Saved prompt templates ----------
 
         function saveCurrentAsTemplate() {
@@ -3940,35 +4104,41 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         function renderTabs() {
             const heldRename = holdInlineRename(tabBar);
+            const heldMenu = holdItemMenu(tabBar);
             tabBar.innerHTML = '';
             for (const chat of store.chats) {
                 const tab = document.createElement('div');
                 tab.className = 'tab' + (activeSurface === 'chat' && chat.id === store.activeId ? ' active' : '');
                 tab.title = 'Click to open';
 
+                if (chat.pinned) {
+                    const mark = document.createElement('span');
+                    mark.className = 'tab-pin-mark';
+                    mark.setAttribute('role', 'img');
+                    mark.setAttribute('aria-label', 'Pinned');
+                    mark.title = 'Pinned: this chat never expires';
+                    mark.textContent = '📌';
+                    tab.appendChild(mark);
+                }
                 const name = document.createElement('span');
                 name.textContent = chat.name;
                 name.dataset.renameLabel = 'chat:' + chat.id;
-                const edit = buildRenameButton('chat:' + chat.id, 'chat ' + chat.name, () => renameChat(chat.id, name, tabBar));
-
-                const pin = document.createElement('button');
-                pin.className = 'tab-pin' + (chat.pinned ? ' pinned' : '');
-                pin.textContent = '📌';
-                pin.title = chat.pinned ? 'Unpin (pinned chats never expire)' : `Pin (max ${MAX_PINNED}; unpinned chats expire after 30 days)`;
-                pin.addEventListener('click', (e) => { e.stopPropagation(); togglePin(chat.id); });
-
-                const x = document.createElement('button');
-                x.className = 'tab-x';
-                x.textContent = '✕';
-                x.title = 'Delete chat';
-                x.addEventListener('click', (e) => { e.stopPropagation(); deleteChat(chat.id); });
+                const more = buildItemMenuButton('chat:' + chat.id, 'chat ' + chat.name, () => [
+                    { label: 'Rename', action: () => renameChat(chat.id, name, tabBar) },
+                    chat.pinned
+                        ? { label: 'Unpin', title: 'An unpinned chat expires 30 days after its last change', action: () => togglePin(chat.id) }
+                        : { label: 'Pin', title: `A pinned chat never expires. Up to ${MAX_PINNED} chats can be pinned.`, action: () => togglePin(chat.id) },
+                    { label: 'Delete', danger: true, action: () => deleteChat(chat.id) }
+                ], tabBar);
+                openItemMenuOnContextMenu(tab, more);
 
                 tab.addEventListener('click', () => setActive(chat.id));
 
-                tab.append(name, edit, pin, x);
+                tab.append(name, more);
                 tabBar.appendChild(tab);
             }
             resumeInlineRename(tabBar, heldRename);
+            resumeItemMenu(tabBar, heldMenu);
             // Field Kit tab entry. Present from first open until its own
             // close-x - a mere tab switch away is not a close, so this stays
             // in the bar regardless of activeSurface. Never
@@ -4095,6 +4265,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         function renderChips() {
             const heldRename = holdInlineRename(chipsRow);
+            const heldMenu = holdItemMenu(chipsRow);
             chipsRow.innerHTML = '';
             const chat = activeChat();
             if (!chat) { updateChipArrows(); return; }
@@ -4114,6 +4285,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // Saved prompt templates: reusable across all tabs, any chat state
             for (const t of store.templates) addTemplateChip(t);
             resumeInlineRename(chipsRow, heldRename);
+            resumeItemMenu(chipsRow, heldMenu);
             updateChipArrows();
         }
 
@@ -4135,14 +4307,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
             label.textContent = '🔖 ' + t.name;
             label.dataset.renameLabel = 'template:' + t.id;
             label.addEventListener('click', () => useTemplate(t.id));
-            const edit = buildRenameButton('template:' + t.id, 'saved prompt ' + t.name, () => renameTemplate(t.id, label));
+            const more = buildItemMenuButton('template:' + t.id, 'saved prompt ' + t.name, () => [
+                { label: 'Rename', action: () => renameTemplate(t.id, label) },
+                { label: 'Delete', danger: true, action: () => deleteTemplate(t.id) }
+            ], chipsRow);
+            openItemMenuOnContextMenu(div, more);
 
-            const del = document.createElement('button');
-            del.textContent = '✕';
-            del.title = 'Delete';
-            del.addEventListener('click', (e) => { e.stopPropagation(); deleteTemplate(t.id); });
-
-            div.append(label, edit, del);
+            div.append(label, more);
             chipsRow.appendChild(div);
         }
 

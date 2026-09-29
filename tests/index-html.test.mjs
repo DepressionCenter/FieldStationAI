@@ -427,10 +427,37 @@ test('renaming a chat does not open it or wait for a reply', () => {
     assert.ok(button.includes("edit.setAttribute('aria-label', 'Rename ' + itemName)"), 'the pencil is labeled');
     const tabs = functionSource('renderTabs');
     assert.ok(!tabs.includes("'dblclick'"), 'a tab has no double-click action');
-    assert.ok(tabs.includes('buildRenameButton('), 'a tab has a pencil button');
+    assert.ok(tabs.includes('buildItemMenuButton('), 'a tab has one menu button');
+    // The Field Kit tab keeps its own close button; a chat tab has none.
+    assert.ok(!tabs.includes("className = 'tab-pin'") && !tabs.includes("x.title = 'Delete chat'"), 'a chat tab has no pin or delete button of its own');
     assert.ok(tabs.includes('holdInlineRename(tabBar)') && tabs.includes('resumeInlineRename(tabBar, heldRename)'), 'a redraw keeps an edit in progress');
     const chip = functionSource('addTemplateChip');
     assert.ok(!chip.includes("'dblclick'"), 'a chip has no double-click action');
-    assert.ok(chip.includes('buildRenameButton('), 'a chip has a pencil button');
+    assert.ok(chip.includes('buildItemMenuButton('), 'a chip has one menu button');
     assert.ok(functionSource('buildStorageRow').includes('renameChat(row.chatId, nameText, storageDialog)'), 'the storage dialog renames the same way');
+});
+
+// ### Item Menu ###
+
+// One button per tab and per chip opens a menu with the actions. The menu
+// follows the menu button pattern: labeled, keyboard operable, and closed
+// with Escape, with focus back on the button.
+test('the item menu is labeled, keyboard operable, and returns focus', () => {
+    assert.ok(/<div id="item-menu" class="item-menu" role="menu" hidden><\/div>/.test(html), 'the menu element is in the page');
+    const button = functionSource('buildItemMenuButton');
+    assert.ok(button.includes("more.setAttribute('aria-label', 'Options for ' + itemName)"), 'the button is labeled');
+    assert.ok(button.includes("more.setAttribute('aria-haspopup', 'menu')") && button.includes("more.setAttribute('aria-expanded', 'false')"), 'the button says it opens a menu');
+    assert.ok(button.includes('e.stopPropagation()'), 'a press on the button does not reach the tab');
+    const open = functionSource('openItemMenu');
+    for (const sink of OFFER_SINKS) assert.ok(!open.includes(sink), `openItemMenu does not use ${sink}`);
+    assert.ok(open.includes("entry.setAttribute('role', 'menuitem')"), 'entries are menu items');
+    assert.ok(open.includes("itemMenu.querySelector('button').focus()"), 'focus moves into the menu');
+    const keys = functionSource('onItemMenuKey');
+    for (const key of ['Escape', 'ArrowDown', 'ArrowUp', 'Home', 'End']) assert.ok(keys.includes(`'${key}'`), `${key} is handled`);
+    assert.ok(functionSource('closeItemMenu').includes('anchor.focus()'), 'closing can put focus back on the button');
+    const tabs = functionSource('renderTabs');
+    for (const label of ["'Rename'", "'Unpin'", "'Delete'"]) assert.ok(tabs.includes(label), `a tab's menu has ${label}`);
+    assert.ok(tabs.includes("mark.setAttribute('aria-label', 'Pinned')"), 'a pinned tab shows a labeled pin mark');
+    assert.ok(tabs.includes('openItemMenuOnContextMenu(tab, more)'), 'a right-click opens the same menu');
+    assert.ok(tabs.includes('holdItemMenu(tabBar)') && tabs.includes('resumeItemMenu(tabBar, heldMenu)'), 'a redraw closes the menu and keeps focus in the bar');
 });
