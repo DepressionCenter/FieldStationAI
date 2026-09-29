@@ -255,12 +255,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
         #tab-bar { display: flex; gap: 6px; align-items: center; overflow-x: auto; flex-grow: 1; scrollbar-width: none; }
         #tab-bar::-webkit-scrollbar { display: none; }
         .tab {
-            display: flex; align-items: center; gap: 6px; padding: 5px 8px 5px 12px;
+            display: flex; align-items: center; gap: 2px; padding: 1px 4px 1px 12px;
             border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
             font-size: 0.78rem; cursor: pointer; white-space: nowrap; flex-shrink: 0;
         }
         .tab.active { border-color: var(--accent); background: rgba(0, 39, 76, 0.07); font-weight: 600; }
-        .tab button { border: none; background: none; cursor: pointer; font-size: 0.8rem; padding: 0 2px; color: var(--muted); line-height: 1; }
+        /* Each button is a 24 by 24 CSS pixel target, the WCAG 2.2 minimum. */
+        .tab button {
+            border: none; background: none; cursor: pointer; font-size: 0.8rem; padding: 0; color: var(--muted); line-height: 1;
+            min-width: 24px; min-height: 24px; border-radius: 50%;
+        }
         .tab button:hover { color: var(--accent-dark); }
         /* Pin is dimmed/grayscale until actually pinned */
         .tab .tab-pin { opacity: 0.3; filter: grayscale(1); }
@@ -459,8 +463,25 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
         .template-chip span.label { cursor: pointer; color: var(--accent-dark); }
         .template-chip span.label:hover { text-decoration: underline; }
-        .template-chip button { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 0.75rem; padding: 2px; }
+        .template-chip button {
+            border: none; background: none; cursor: pointer; color: var(--muted); font-size: 0.75rem; padding: 0;
+            min-width: 24px; min-height: 24px; border-radius: 50%;
+        }
         .template-chip button:hover { color: var(--accent); }
+
+        /* Rename in place: a faint pencil button next to a name, and the text
+           box that takes the name's place while it is edited. The pencil is
+           faint until the pointer or the keyboard reaches it, and no fainter
+           than 3:1 contrast against the white panel. */
+        .rename-btn { opacity: 0.75; }
+        .rename-btn:hover, .rename-btn:focus-visible { opacity: 1; }
+        .renaming > .rename-btn { display: none; }
+        .rename-input {
+            font: inherit; color: var(--ink); background: var(--panel);
+            border: 1px solid var(--muted); border-radius: 6px; padding: 2px 6px;
+            min-height: 24px; max-width: 100%; min-width: 0;
+        }
+        .rename-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
         #input-area { display: flex; gap: 8px; align-items: flex-end; }
         /* Single wrapper around the 4 composer siblings, toggled as one unit
@@ -1043,7 +1064,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
             width: 100%; max-width: 480px; max-height: 96vh; overflow-y: auto;
             /* Keeps a focused button clear of the status line at the bottom. */
-            scroll-padding-bottom: 56px;
+            scroll-padding-bottom: 96px;
         }
         .storage-dialog:focus, .storage-group-name:focus { outline: none; }
         .storage-intro, .storage-usage, .storage-note { font-size: 0.8rem; line-height: 1.5; margin: 0; color: var(--muted); }
@@ -1057,7 +1078,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
             padding: 6px 0; border-top: 1px dashed var(--line);
         }
         .storage-item:first-child { border-top: none; }
-        .storage-item-text { flex: 1 1 150px; min-width: 0; }
+        .storage-item-text { flex: 1 1 110px; min-width: 0; }
+        /* The pin and Delete stay side by side when a row wraps. */
+        .storage-item-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
         .storage-item-name { display: block; font-size: 0.85rem; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
         .storage-item-meta { display: block; font-size: 0.75rem; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
         .storage-delete {
@@ -1066,6 +1089,31 @@ with this program. If not, see https://www.gnu.org/licenses/.
             font-family: inherit; font-size: 0.8rem; cursor: pointer;
         }
         .storage-delete:hover { background: var(--danger); color: #fff; }
+        /* The Delete button of a pinned chat stays focusable (aria-disabled,
+           not disabled) so that it can say why it does nothing. The dashed
+           border marks the state without relying on color. */
+        .storage-delete[aria-disabled="true"], .storage-delete[aria-disabled="true"]:hover {
+            color: var(--muted); border-color: var(--muted); border-style: dashed;
+            background: var(--bg); cursor: not-allowed;
+        }
+        .storage-item-name .rename-btn {
+            border: none; background: none; cursor: pointer; color: var(--muted); font-size: 0.85rem; padding: 0;
+            min-width: 24px; min-height: 24px; border-radius: 50%; margin-left: 2px; vertical-align: middle;
+        }
+        .storage-item-name .rename-btn:hover { color: var(--accent); }
+        .storage-item-name .rename-input { font-size: 0.85rem; width: 100%; box-sizing: border-box; min-height: 32px; }
+        /* Pinned: a filled button with the pin in color. Not pinned: an empty
+           button with a dashed border and the pin in gray. */
+        .storage-pin {
+            flex: 0 0 32px; width: 32px; height: 32px; padding: 0; border-radius: 8px;
+            border: 1px dashed var(--muted); background: var(--panel);
+            font-size: 0.9rem; line-height: 1; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .storage-pin span { opacity: 0.45; filter: grayscale(1); }
+        .storage-pin:hover { border-color: var(--accent); }
+        .storage-pin[aria-pressed="true"] { border: 1px solid var(--accent); background: rgba(0, 39, 76, 0.12); }
+        .storage-pin[aria-pressed="true"] span { opacity: 1; filter: none; }
         /* The result of a delete, in view wherever the list is scrolled to. */
         /* It covers the dialog's bottom padding too, so no row shows under it. */
         .storage-status {
@@ -3425,7 +3473,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // still open (its display no longer blocks the boot sequence); skip stealing
         // focus from its CTA in that case.
         function focusInputUnlessWelcoming() {
-            if (!welcomeModal.classList.contains('open')) input.focus();
+            if (!welcomeModal.classList.contains('open')) focusPromptWhenFree();
+        }
+
+        // Moves focus to the prompt box when the app, not the person, wants
+        // it there, such as at the end of a reply. Focus is left alone while
+        // a name is being edited or a dialog is open, so that typing is not
+        // cut short and focus does not leave a dialog.
+        function focusPromptWhenFree() {
+            if (inlineRename) return;
+            if (document.querySelector('#settings-modal.open, #storage-modal.open, #pin-modal.open')) return;
+            input.focus();
         }
 
         // ---------- Chat store ----------
@@ -3674,17 +3732,147 @@ with this program. If not, see https://www.gnu.org/licenses/.
             renderTabs();
         }
 
-        function renameChat(id) {
-            if (busy) return;
+        // ---------- Rename in place ----------
+        // A name is edited where it is shown: a text box takes the place of
+        // the name, with all of its text selected. Enter or leaving the box
+        // keeps the new name, and Escape keeps the old one. Chat tabs, saved
+        // prompt chips, and the chats in the storage dialog all rename this
+        // way, each through a small pencil button.
+
+        const RENAME_MAX_CHARS = 40;
+        // The edit in progress, or null. There is at most one.
+        let inlineRename = null;
+
+        /**
+         * Starts editing a name in place.
+         * @param {HTMLElement} label The element that shows the name. It is
+         * hidden while the text box is shown.
+         * @param {object} options
+         * @param {string} options.key Names the item, such as 'chat:<id>'. The
+         * item's pencil button carries it in data-rename, and its label in
+         * data-rename-label.
+         * @param {HTMLElement} options.scope The element that holds the item
+         * and is redrawn when a name changes.
+         * @param {string} options.value The name as it is now.
+         * @param {string} options.ariaLabel Accessible name of the text box.
+         * @param {function(string): (void|Promise)} options.commit Stores a new
+         * name and redraws. Called only with a name that is not empty and
+         * differs from the old one.
+         * @param {string} [options.draft] Text to start with, when an edit is
+         * carried over a redraw.
+         * @param {boolean} [options.focus=true] Whether the box takes focus.
+         * Side effects: ends any other edit in progress, keeping its text.
+         */
+        function beginInlineRename(label, options) {
+            if (inlineRename) inlineRename.finish(true, false);
+            const field = document.createElement('input');
+            field.type = 'text';
+            field.className = 'rename-input';
+            field.maxLength = RENAME_MAX_CHARS;
+            field.value = options.draft !== undefined ? options.draft : options.value;
+            field.size = Math.max(8, Math.min(RENAME_MAX_CHARS, field.value.length + 2));
+            field.spellcheck = false;
+            field.autocomplete = 'off';
+            field.setAttribute('aria-label', options.ariaLabel);
+            let finished = false;
+            const finish = async (save, viaKey, next) => {
+                if (finished) return;
+                finished = true;
+                inlineRename = null;
+                const name = field.value.trim().slice(0, RENAME_MAX_CHARS);
+                field.remove();
+                label.hidden = false;
+                holder.classList.remove('renaming');
+                const changed = save && name !== '' && name !== options.value;
+                if (changed) await options.commit(name);
+                // Focus goes back to the pencil after a key press. After a
+                // click or a Tab away it stays where the person put it,
+                // unless the redraw removed that element.
+                if (!viaKey && !(changed && next && !next.isConnected)) return;
+                const button = options.scope.querySelector('button[data-rename="' + CSS.escape(options.key) + '"]');
+                if (button) button.focus();
+            };
+            field.addEventListener('keydown', (e) => {
+                // Keys typed into the box are for the box alone: Escape must
+                // not close a dialog, and Enter must not send a prompt.
+                e.stopPropagation();
+                if (e.key === 'Enter') { e.preventDefault(); finish(true, true); }
+                else if (e.key === 'Escape') { e.preventDefault(); finish(false, true); }
+            });
+            field.addEventListener('blur', (e) => finish(true, false, e.relatedTarget));
+            // A click in the box must not reach the tab or chip around it.
+            for (const type of ['click', 'dblclick', 'mousedown', 'pointerdown']) {
+                field.addEventListener(type, (e) => e.stopPropagation());
+            }
+            // The pencil is hidden while the box is open, to leave it room.
+            const holder = label.parentElement;
+            holder.classList.add('renaming');
+            label.hidden = true;
+            label.after(field);
+            inlineRename = { options, field, finish, abandon: () => { finished = true; inlineRename = null; } };
+            if (options.focus !== false) { field.focus(); field.select(); }
+        }
+
+        // Before a container is redrawn: takes the edit in progress inside it
+        // out of play, so that removing its text box stores nothing, and
+        // returns what is needed to start it again. Null when there is none.
+        function holdInlineRename(container) {
+            if (!inlineRename || !container.contains(inlineRename.field)) return null;
+            const held = {
+                options: inlineRename.options,
+                draft: inlineRename.field.value,
+                focus: document.activeElement === inlineRename.field
+            };
+            inlineRename.abandon();
+            return held;
+        }
+
+        // After the redraw: starts the held edit again on the item's new
+        // label, with the text typed so far. Does nothing when the item is gone.
+        function resumeInlineRename(container, held) {
+            if (!held) return;
+            const label = container.querySelector('[data-rename-label="' + CSS.escape(held.options.key) + '"]');
+            if (label) beginInlineRename(label, { ...held.options, draft: held.draft, focus: held.focus });
+        }
+
+        // A faint pencil button that starts a rename. The click does not
+        // reach the tab or chip around the button.
+        function buildRenameButton(key, itemName, start) {
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'rename-btn';
+            edit.dataset.rename = key;
+            edit.textContent = '✎';
+            edit.title = 'Rename';
+            edit.setAttribute('aria-label', 'Rename ' + itemName);
+            edit.addEventListener('click', (e) => { e.stopPropagation(); start(); });
+            return edit;
+        }
+
+        /**
+         * Starts renaming a chat in place. A reply that is being written is
+         * not interrupted, and the chat on screen does not change.
+         * @param {string} id Chat id.
+         * @param {HTMLElement} label The element that shows the chat's name.
+         * @param {HTMLElement} scope The element that holds the label and is
+         * redrawn when the name changes.
+         */
+        function renameChat(id, label, scope) {
             const chat = store.chats.find(c => c.id === id);
             if (!chat) return;
-            const name = prompt('Rename chat:', chat.name);
-            if (name && name.trim()) {
-                chat.name = name.trim().slice(0, 40);
-                chat.renamed = true; // manual rename wins; auto-rename disabled
-                saveStore();
-                renderTabs();
-            }
+            beginInlineRename(label, {
+                key: 'chat:' + id,
+                scope,
+                value: chat.name,
+                ariaLabel: 'New name for chat ' + chat.name,
+                commit: (name) => {
+                    chat.name = name;
+                    chat.renamed = true; // manual rename wins; auto-rename disabled
+                    saveStore();
+                    renderTabs();
+                    if (storageModal.classList.contains('open')) return refreshStorage();
+                }
+            });
         }
 
         // ---------- Saved prompt templates ----------
@@ -3705,16 +3893,21 @@ with this program. If not, see https://www.gnu.org/licenses/.
             input.focus();
         }
 
-        function renameTemplate(id) {
+        function renameTemplate(id, label) {
             const t = store.templates.find(t => t.id === id);
             if (!t) return;
-            const name = prompt('Rename saved prompt:', t.name);
-            if (name && name.trim()) {
-                t.name = name.trim().slice(0, 40);
-                t.renamed = true;
-                saveStore();
-                renderChips();
-            }
+            beginInlineRename(label, {
+                key: 'template:' + id,
+                scope: chipsRow,
+                value: t.name,
+                ariaLabel: 'New name for saved prompt ' + t.name,
+                commit: (name) => {
+                    t.name = name;
+                    t.renamed = true;
+                    saveStore();
+                    renderChips();
+                }
+            });
         }
 
         function deleteTemplate(id) {
@@ -3746,14 +3939,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const updateChipArrows = wireScrollArrows(chipsRow, chipsScrollLeft, chipsScrollRight);
 
         function renderTabs() {
+            const heldRename = holdInlineRename(tabBar);
             tabBar.innerHTML = '';
             for (const chat of store.chats) {
                 const tab = document.createElement('div');
                 tab.className = 'tab' + (activeSurface === 'chat' && chat.id === store.activeId ? ' active' : '');
-                tab.title = 'Click to open, double-click to rename';
+                tab.title = 'Click to open';
 
                 const name = document.createElement('span');
                 name.textContent = chat.name;
+                name.dataset.renameLabel = 'chat:' + chat.id;
+                const edit = buildRenameButton('chat:' + chat.id, 'chat ' + chat.name, () => renameChat(chat.id, name, tabBar));
 
                 const pin = document.createElement('button');
                 pin.className = 'tab-pin' + (chat.pinned ? ' pinned' : '');
@@ -3768,11 +3964,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 x.addEventListener('click', (e) => { e.stopPropagation(); deleteChat(chat.id); });
 
                 tab.addEventListener('click', () => setActive(chat.id));
-                tab.addEventListener('dblclick', () => renameChat(chat.id));
 
-                tab.append(name, pin, x);
+                tab.append(name, edit, pin, x);
                 tabBar.appendChild(tab);
             }
+            resumeInlineRename(tabBar, heldRename);
             // Field Kit tab entry. Present from first open until its own
             // close-x - a mere tab switch away is not a close, so this stays
             // in the bar regardless of activeSurface. Never
@@ -3898,6 +4094,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
 
         function renderChips() {
+            const heldRename = holdInlineRename(chipsRow);
             chipsRow.innerHTML = '';
             const chat = activeChat();
             if (!chat) { updateChipArrows(); return; }
@@ -3916,6 +4113,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             // Saved prompt templates: reusable across all tabs, any chat state
             for (const t of store.templates) addTemplateChip(t);
+            resumeInlineRename(chipsRow, heldRename);
             updateChipArrows();
         }
 
@@ -3930,20 +4128,21 @@ with this program. If not, see https://www.gnu.org/licenses/.
         function addTemplateChip(t) {
             const div = document.createElement('div');
             div.className = 'template-chip';
-            div.title = 'Click to load, double-click to rename';
+            div.title = 'Click to load';
 
             const label = document.createElement('span');
             label.className = 'label';
             label.textContent = '🔖 ' + t.name;
+            label.dataset.renameLabel = 'template:' + t.id;
             label.addEventListener('click', () => useTemplate(t.id));
-            label.addEventListener('dblclick', (e) => { e.stopPropagation(); renameTemplate(t.id); });
+            const edit = buildRenameButton('template:' + t.id, 'saved prompt ' + t.name, () => renameTemplate(t.id, label));
 
             const del = document.createElement('button');
             del.textContent = '✕';
             del.title = 'Delete';
             del.addEventListener('click', (e) => { e.stopPropagation(); deleteTemplate(t.id); });
 
-            div.append(label, del);
+            div.append(label, edit, del);
             chipsRow.appendChild(div);
         }
 
@@ -6237,7 +6436,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 clearInterval(timerId);
                 busy = false;
                 setControls(true);
-                input.focus();
+                focusPromptWhenFree();
             }
         }
 
@@ -9006,7 +9205,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     stopBtn.hidden = true;
                     setControls(true);
                     renderChips();
-                    input.focus();
+                    focusPromptWhenFree();
                     return;
                 }
             }
@@ -9225,7 +9424,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                             stopBtn.hidden = true;
                             setControls(true);
                             renderChips();
-                            input.focus();
+                            focusPromptWhenFree();
                         }
                         return;
                     }
@@ -9407,7 +9606,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     stopBtn.hidden = true;
                     setControls(true);
                     renderChips();
-                    input.focus();
+                    focusPromptWhenFree();
                 }
                 cancelledForNewChat = false;
             }
@@ -16879,13 +17078,17 @@ Feeling anxious about work."></textarea>
         // Each list function returns rows of { name, details, bytes, time,
         // deleteLabel, remove }. remove() asks for confirmation, deletes
         // through the app's own delete path, and resolves true when the item
-        // is gone.
+        // is gone. A chat's row also carries chatId and pinned, which give it
+        // a pencil button, a pin button, and a Delete button that waits for
+        // the chat to be unpinned.
 
         // Grain: one row per chat.
         function listStoredChats() {
             return store.chats.map(chat => {
                 const files = (chat.attachments || []).length;
                 return {
+                    chatId: chat.id,
+                    pinned: !!chat.pinned,
                     name: chat.name,
                     details: files ? [files + (files === 1 ? ' attachment' : ' attachments')] : [],
                     // The chat as saved text. A PIN adds about a third.
@@ -17037,7 +17240,15 @@ Feeling anxious about work."></textarea>
             text.className = 'storage-item-text';
             const name = document.createElement('span');
             name.className = 'storage-item-name';
-            name.textContent = row.name;
+            const nameText = document.createElement('span');
+            nameText.textContent = row.name;
+            name.appendChild(nameText);
+            if (row.chatId) {
+                const startRename = () => renameChat(row.chatId, nameText, storageDialog);
+                nameText.dataset.renameLabel = 'chat:' + row.chatId;
+                nameText.addEventListener('dblclick', startRename);
+                name.appendChild(buildRenameButton('chat:' + row.chatId, 'chat ' + row.name, startRename));
+            }
             const meta = document.createElement('span');
             meta.className = 'storage-item-meta';
             const when = row.time === null ? 'Time not recorded' : STORAGE_GROUPS[groupName].timeWord + ' ' + formatTimestamp(row.time);
@@ -17055,8 +17266,47 @@ Feeling anxious about work."></textarea>
             // click fires on pointer-up, so a mis-press can still be
             // abandoned by sliding off the button.
             remove.addEventListener('click', () => deleteStorageRow(groupName, row, position));
-            item.append(text, remove);
+            item.appendChild(text);
+            const actions = document.createElement('div');
+            actions.className = 'storage-item-actions';
+            if (row.chatId) {
+                const pin = document.createElement('button');
+                pin.type = 'button';
+                pin.className = 'storage-pin';
+                pin.dataset.pin = row.chatId;
+                pin.setAttribute('aria-pressed', String(row.pinned));
+                pin.setAttribute('aria-label', 'Pin chat ' + row.name);
+                pin.title = row.pinned ? 'Pinned. Press to unpin.' : 'Not pinned. Press to pin.';
+                const icon = document.createElement('span');
+                icon.setAttribute('aria-hidden', 'true');
+                icon.textContent = '📌';
+                pin.appendChild(icon);
+                pin.addEventListener('click', () => toggleStoragePin(row));
+                if (row.pinned) remove.setAttribute('aria-disabled', 'true');
+                actions.appendChild(pin);
+            }
+            actions.appendChild(remove);
+            item.appendChild(actions);
             return item;
+        }
+
+        // Pins or unpins a chat from its row, then puts focus back on the
+        // row's pin button, which the redraw replaced.
+        async function toggleStoragePin(row) {
+            togglePin(row.chatId);
+            const chat = store.chats.find(c => c.id === row.chatId);
+            if (!chat) return;
+            if (!!chat.pinned === row.pinned) {
+                announceStorage(`Pin limit reached (${MAX_PINNED}). Unpin another chat first.`);
+                setStatus(''); // togglePin wrote the same words to the main screen, behind the dialog
+                return;
+            }
+            await refreshStorage();
+            announceStorage(chat.pinned
+                ? 'Pinned ' + chat.name + '. Unpin it to delete it.'
+                : 'Unpinned ' + chat.name + '. It can be deleted.');
+            const pin = storageDialog.querySelector('button[data-pin="' + CSS.escape(row.chatId) + '"]');
+            if (pin) pin.focus();
         }
 
         // Draws one group: its rows, or one line that says why there are none.
@@ -17070,7 +17320,7 @@ Feeling anxious about work."></textarea>
             line.textContent = message;
             line.hidden = !message;
             total.textContent = rows.length
-                ? '(' + rows.length + ', ' + formatStorageBytes(rows.reduce((sum, row) => sum + row.bytes, 0)) + ')'
+                ? '(' + formatStorageBytes(rows.reduce((sum, row) => sum + row.bytes, 0)) + ')'
                 : '';
             rows.forEach((row, position) => list.appendChild(buildStorageRow(groupName, row, position)));
         }
@@ -17107,6 +17357,7 @@ Feeling anxious about work."></textarea>
         }
 
         async function deleteStorageRow(groupName, row, position) {
+            if (row.pinned) { announceStorage('Unpin ' + row.name + ' to delete it.'); return; }
             if (busy) { announceStorage('Wait for the reply to finish, then delete.'); return; }
             if (groupName === 'models' && anyLoadInProgress) { announceStorage('Wait for the model to finish loading, then delete.'); return; }
             let removed = false;

@@ -11,7 +11,8 @@
 // parsed as markup or stored, the chat's skill offer hands text to a
 // skill without writing to chat history or storage, the storage dialog
 // shows names as text and deletes through the app's own paths, and the
-// startup cleanup keeps the files of every model the app uses.
+// startup cleanup keeps the files of every model the app uses, and names
+// are edited in place, with no dialog and without opening the chat.
 // Runs with Node's built-in test runner and no dependencies.
 // Notes: See README file for documentation and full license information.
 //
@@ -288,14 +289,14 @@ test('items in the Sources row can shrink and break, and the row has no scrollba
 // The dialog shows names that came from a person's files and chats, which
 // are untrusted input. Rows are built element by element.
 test('the storage dialog never parses a name as markup', () => {
-    for (const name of ['buildStorageRow', 'renderStorageGroup', 'refreshStorage', 'announceStorage']) {
+    for (const name of ['buildStorageRow', 'renderStorageGroup', 'refreshStorage', 'announceStorage', 'toggleStoragePin']) {
         const source = functionSource(name);
         for (const sink of OFFER_SINKS) {
             assert.ok(!source.includes(sink), `${name} does not use ${sink}`);
         }
     }
     const row = functionSource('buildStorageRow');
-    assert.ok(row.includes('name.textContent = row.name'), 'the name is set as text');
+    assert.ok(row.includes('nameText.textContent = row.name'), 'the name is set as text');
     assert.ok(row.includes("remove.setAttribute('aria-label', row.deleteLabel)"), 'the button is labeled with the item it deletes');
     assert.ok(row.includes("document.createElement('button')"), 'delete is a button element');
     assert.ok(row.includes("remove.type = 'button'"), 'the button does not submit anything');
@@ -367,4 +368,69 @@ test('the startup cleanup keeps the files of every model the app uses', () => {
         assert.ok(source.includes(id), `${id} is kept`);
     }
     assert.ok(source.includes('for (const s of SKILLS) if (s.modelId) ids.add(s.modelId)'), 'Field Kit models are kept');
+});
+
+test('a storage group shows its total size and no count', () => {
+    const source = functionSource('renderStorageGroup');
+    assert.ok(source.includes("'(' + formatStorageBytes(rows.reduce((sum, row) => sum + row.bytes, 0)) + ')'"), 'the total is the size alone');
+    assert.ok(!source.includes('rows.length +'), 'the number of rows is not shown');
+});
+
+// A pinned chat is protected: its Delete button does nothing until the
+// chat is unpinned. The button stays focusable so that it can say why.
+test('a pinned chat cannot be deleted from the storage dialog', () => {
+    const row = functionSource('buildStorageRow');
+    assert.ok(row.includes("if (row.pinned) remove.setAttribute('aria-disabled', 'true')"), 'Delete is marked as disabled');
+    assert.ok(!row.includes('remove.disabled'), 'Delete stays focusable');
+    assert.ok(row.includes("pin.setAttribute('aria-pressed', String(row.pinned))"), 'the pin button carries its state');
+    assert.ok(row.includes("pin.setAttribute('aria-label', 'Pin chat ' + row.name)"), 'the pin button is labeled');
+    const remove = functionSource('deleteStorageRow');
+    const guard = remove.indexOf('if (row.pinned)');
+    assert.ok(guard !== -1, 'a delete checks the pin');
+    assert.ok(guard < remove.indexOf('row.remove()'), 'the pin is checked before anything is deleted');
+    assert.ok(functionSource('toggleStoragePin').includes('togglePin(row.chatId)'), 'the dialog pins through the existing path');
+    assert.ok(functionSource('listStoredChats').includes('pinned: !!chat.pinned'), 'a chat row knows whether it is pinned');
+});
+
+// ### Rename In Place ###
+
+// A name is typed by a person and shown in tabs, chips, and the storage
+// dialog. It is edited in a text box, never in a browser dialog, and
+// never built into markup.
+test('names are edited in place, in a text box with a size limit', () => {
+    const source = functionSource('beginInlineRename');
+    for (const sink of OFFER_SINKS) {
+        assert.ok(!source.includes(sink), `beginInlineRename does not use ${sink}`);
+    }
+    assert.ok(source.includes("document.createElement('input')"), 'the editor is an input element');
+    assert.ok(source.includes('field.maxLength = RENAME_MAX_CHARS'), 'the box has the size limit');
+    assert.ok(source.includes('.slice(0, RENAME_MAX_CHARS)'), 'the stored name has the size limit');
+    assert.equal(numberConstant('RENAME_MAX_CHARS'), 40);
+    assert.ok(source.includes('field.select()'), 'the text is selected when the box opens');
+    assert.ok(source.includes("field.setAttribute('aria-label', options.ariaLabel)"), 'the box is labeled');
+    assert.ok(source.includes("e.key === 'Enter'") && source.includes("e.key === 'Escape'"), 'Enter keeps and Escape cancels');
+    assert.ok(source.includes("name !== ''"), 'an empty name is not stored');
+    for (const name of ['renameChat', 'renameTemplate']) {
+        const rename = functionSource(name);
+        assert.ok(!rename.includes('prompt('), `${name} opens no dialog`);
+        assert.ok(rename.includes('beginInlineRename('), `${name} edits in place`);
+    }
+});
+
+test('renaming a chat does not open it or wait for a reply', () => {
+    const rename = functionSource('renameChat');
+    assert.ok(!rename.includes('setActive'), 'renaming does not switch chats');
+    assert.ok(!rename.includes('busy'), 'renaming does not depend on a reply');
+    assert.ok(!rename.includes('stopAll') && !rename.includes('interrupt'), 'renaming stops nothing');
+    const button = functionSource('buildRenameButton');
+    assert.ok(button.includes('e.stopPropagation()'), 'a press on the pencil does not reach the tab');
+    assert.ok(button.includes("edit.setAttribute('aria-label', 'Rename ' + itemName)"), 'the pencil is labeled');
+    const tabs = functionSource('renderTabs');
+    assert.ok(!tabs.includes("'dblclick'"), 'a tab has no double-click action');
+    assert.ok(tabs.includes('buildRenameButton('), 'a tab has a pencil button');
+    assert.ok(tabs.includes('holdInlineRename(tabBar)') && tabs.includes('resumeInlineRename(tabBar, heldRename)'), 'a redraw keeps an edit in progress');
+    const chip = functionSource('addTemplateChip');
+    assert.ok(!chip.includes("'dblclick'"), 'a chip has no double-click action');
+    assert.ok(chip.includes('buildRenameButton('), 'a chip has a pencil button');
+    assert.ok(functionSource('buildStorageRow').includes('renameChat(row.chatId, nameText, storageDialog)'), 'the storage dialog renames the same way');
 });
