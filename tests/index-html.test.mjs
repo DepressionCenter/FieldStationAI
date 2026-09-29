@@ -8,8 +8,10 @@
 // module script, the crisis notice constants point at the 988 Lifeline,
 // the excerpt reranker is wired the way that yields real scores, the
 // Field Kit text skills offer a "Paste text" tab whose text is never
-// parsed as markup or stored, and the chat's skill offer hands text to a
-// skill without writing to chat history or storage.
+// parsed as markup or stored, the chat's skill offer hands text to a
+// skill without writing to chat history or storage, the storage dialog
+// shows names as text and deletes through the app's own paths, and the
+// startup cleanup keeps the files of every model the app uses.
 // Runs with Node's built-in test runner and no dependencies.
 // Notes: See README file for documentation and full license information.
 //
@@ -279,4 +281,90 @@ test('items in the Sources row can shrink and break, and the row has no scrollba
     assert.ok(row, 'index.html has no rule for the Sources row');
     assert.ok(/flex-wrap:\s*wrap\b/.test(row[1]), 'items wrap onto new lines');
     assert.ok(!/overflow|max-height|white-space:\s*nowrap/.test(row[1]), 'the row grows taller and never scrolls');
+});
+
+// ### Storage Dialog ###
+
+// The dialog shows names that came from a person's files and chats, which
+// are untrusted input. Rows are built element by element.
+test('the storage dialog never parses a name as markup', () => {
+    for (const name of ['buildStorageRow', 'renderStorageGroup', 'refreshStorage', 'announceStorage']) {
+        const source = functionSource(name);
+        for (const sink of OFFER_SINKS) {
+            assert.ok(!source.includes(sink), `${name} does not use ${sink}`);
+        }
+    }
+    const row = functionSource('buildStorageRow');
+    assert.ok(row.includes('name.textContent = row.name'), 'the name is set as text');
+    assert.ok(row.includes("remove.setAttribute('aria-label', row.deleteLabel)"), 'the button is labeled with the item it deletes');
+    assert.ok(row.includes("document.createElement('button')"), 'delete is a button element');
+    assert.ok(row.includes("remove.type = 'button'"), 'the button does not submit anything');
+});
+
+test('the storage dialog is a labeled modal that is opened from the menu', () => {
+    assert.ok(/<div class="storage-dialog" id="storage-dialog" role="dialog" aria-modal="true" aria-labelledby="storage-title"/.test(html), 'the dialog has a role and a label');
+    assert.ok(/<h2 class="settings-title" id="storage-title">/.test(html), 'the label is the dialog title');
+    assert.ok(/<button type="button" class="settings-close" id="storage-close" aria-label="Close">/.test(html), 'the close button is labeled');
+    assert.ok(/<p class="storage-status" id="storage-live" aria-live="polite"/.test(html), 'results are written to a live region');
+    assert.ok(html.includes("{ label: 'Manage storage', action: () => openStorage() }"), 'the menu opens the dialog');
+    for (const group of ['chats', 'attachments', 'models', 'compendiums']) {
+        assert.ok(html.includes(`<section class="storage-group" data-group="${group}" aria-labelledby="storage-${group}-name">`), `the ${group} group is in the page`);
+    }
+    const keys = functionSource('onStorageKey');
+    assert.ok(keys.includes("e.key === 'Escape'"), 'Escape closes the dialog');
+    assert.ok(keys.includes("e.key !== 'Tab'"), 'Tab is kept inside the dialog');
+    assert.ok(functionSource('closeStorage').includes('menuBtn.focus()'), 'focus returns to the menu button');
+});
+
+// Each group deletes through the path the rest of the app uses, so that
+// no related record is left behind, and asks before it deletes.
+test('every storage group deletes through the app\'s own path and asks first', () => {
+    const chats = functionSource('listStoredChats');
+    assert.ok(chats.includes('deleteChat(chat.id)'), 'a chat is deleted by deleteChat');
+    assert.ok(functionSource('deleteChat').includes('confirm('), 'deleteChat asks first');
+    assert.ok(functionSource('deleteChat').includes('deleteAttachmentsForChat(chat)'), 'a chat takes its attachments with it');
+
+    const attachments = functionSource('listStoredAttachments');
+    assert.ok(attachments.includes('deleteAttachmentEverywhere('), 'an attachment is deleted by deleteAttachmentEverywhere');
+    const everywhere = functionSource('deleteAttachmentEverywhere');
+    assert.ok(everywhere.includes('AttachmentStore.deleteAttachment(id)'), 'the file and its vectors are removed');
+    assert.ok(everywhere.includes('removeAttachmentIndex(id)'), 'the index line is removed');
+    assert.ok(everywhere.includes('chat.attachments.splice('), 'the chat lets go of the file');
+    assert.ok(functionSource('deleteAttachmentChip').includes('deleteAttachmentEverywhere(id)'), 'the chat uses the same path');
+
+    const model = functionSource('deleteCachedModel');
+    assert.ok(model.includes('purgeModelFromCache(group.repoId)'), 'a model is deleted by purgeModelFromCache');
+    assert.ok(model.includes('localStorage.removeItem(cachedFlag(id))'), 'the downloaded flag is removed');
+    assert.ok(model.includes('clearModelRung(id)'), 'the saved load settings are removed');
+
+    const compendiums = functionSource('listCachedCompendiums');
+    assert.ok(compendiums.includes('purgeCompendiumEntry(request.url)'), 'a compendium is deleted by purgeCompendiumEntry');
+
+    for (const [name, source] of Object.entries({ listStoredAttachments: attachments, listCachedModels: functionSource('listCachedModels'), listCachedCompendiums: compendiums })) {
+        const removals = source.split('remove: async () => {').slice(1);
+        assert.ok(removals.length > 0, `${name} can delete`);
+        for (const body of removals) {
+            assert.ok(/^\s*if \(!confirm\(/.test(body), `${name} asks before it deletes`);
+        }
+    }
+});
+
+// A link to a private compendium may carry an access token in its query.
+test('the storage dialog leaves the query out of a compendium address', () => {
+    const source = functionSource('listCachedCompendiums');
+    assert.ok(source.includes('where.host + where.pathname'), 'the row shows the host and the path');
+    assert.ok(!/where\.(search|href)/.test(source), 'the row shows no query');
+    assert.ok(!/details: \[[^\]]*request\.url/.test(source), 'the row does not show the whole address');
+});
+
+// The startup cleanup removes files of models the app no longer offers. It
+// must know every model the app does use by the name its files are cached
+// under, or it deletes them on each load.
+test('the startup cleanup keeps the files of every model the app uses', () => {
+    const source = functionSource('knownModelIds');
+    assert.ok(source.includes('webllmRepoId(v)'), 'chat models are known by their repository names');
+    for (const id of ['ROUTER_NLI_ID', 'DAISY_VISION_ID', 'DAISY_AUDIO_ID', 'COMPENDIUM_EMBED_ID', 'COMPENDIUM_RERANK_MODEL_ID', 'CPU_FALLBACK_TJS_ID']) {
+        assert.ok(source.includes(id), `${id} is kept`);
+    }
+    assert.ok(source.includes('for (const s of SKILLS) if (s.modelId) ids.add(s.modelId)'), 'Field Kit models are kept');
 });
