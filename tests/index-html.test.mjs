@@ -6,9 +6,10 @@
 // Summary: Static checks on index.html, the whole application: the file
 // header carries the project and license notice, the app is still one
 // module script, the crisis notice constants point at the 988 Lifeline,
-// the excerpt reranker is wired the way that yields real scores, and the
+// the excerpt reranker is wired the way that yields real scores, the
 // Field Kit text skills offer a "Paste text" tab whose text is never
-// parsed as markup or stored.
+// parsed as markup or stored, and the chat's skill offer hands text to a
+// skill without writing to chat history or storage.
 // Runs with Node's built-in test runner and no dependencies.
 // Notes: See README file for documentation and full license information.
 //
@@ -50,7 +51,8 @@ function numberConstant(name) {
 // at the script's base indent, and the functions inside them sit deeper.
 const TOP_LEVEL_INDENT = '        ';
 function functionSource(name) {
-    const start = html.indexOf('\n' + TOP_LEVEL_INDENT + 'function ' + name + '(');
+    let start = html.indexOf('\n' + TOP_LEVEL_INDENT + 'function ' + name + '(');
+    if (start === -1) start = html.indexOf('\n' + TOP_LEVEL_INDENT + 'async function ' + name + '(');
     assert.ok(start !== -1, `index.html does not define the function ${name}`);
     const rest = html.slice(start + 1);
     const next = rest.search(new RegExp('\\n' + TOP_LEVEL_INDENT + '(?:async )?function \\w+\\('));
@@ -162,4 +164,103 @@ test('the paste box turns spell checking off and carries a label and a size limi
     assert.ok(source.includes('textarea.spellcheck = false'), 'spell checking is off');
     assert.ok(source.includes('label.htmlFor = textarea.id'), 'the label points at the box');
     assert.ok(source.includes('textarea.maxLength = PASTED_TEXT_MAX_CHARS'), 'the box has the size limit');
+});
+
+// ### Skill Offer ###
+
+const OFFER_SINKS = ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write', 'eval('];
+const OFFER_EXITS = ['chat.messages', 'saveStore', 'chatBridge', 'localStorage', 'sessionStorage', 'indexedDB', 'fetch(', 'XMLHttpRequest', 'sendBeacon'];
+
+// The skills a chat offer can open, with the function that mounts each.
+const OFFERED_SKILLS = {
+    'emotions': 'mountEmotionsSkill',
+    'pain-level': 'mountPainLevelSkill',
+    'ner': 'mountNerSkill',
+    'taxonomy-classify': 'mountTaxonomySkill'
+};
+
+// The offer sits in the chat next to a prompt, which is untrusted input.
+// It must show fixed wording and the skill's name only, built element by
+// element.
+test('the skill offer never parses text as markup and shows none of the prompt', () => {
+    const source = functionSource('appendSkillOffer');
+    for (const sink of OFFER_SINKS) {
+        assert.ok(!source.includes(sink), `appendSkillOffer does not use ${sink}`);
+    }
+    assert.ok(source.includes('note.textContent = SKILL_OFFER_NOTE'), 'the line is the fixed note');
+    assert.ok(source.includes("open.textContent = 'Open in ' + skill.name"), 'the button names the skill');
+    assert.ok(!/textContent = [^;]*offer\.text/.test(source), 'the prompt text is never shown in the offer');
+    assert.ok(stringConstant('SKILL_OFFER_NOTE').length > 0, 'the note is not empty');
+});
+
+test('the skill offer is a real button and is read out when it appears', () => {
+    const source = functionSource('appendSkillOffer');
+    assert.ok(source.includes("document.createElement('button')"), 'the offer is a button element');
+    assert.ok(source.includes("open.type = 'button'"), 'the button does not submit anything');
+    assert.ok(source.includes('chatLivePolite.textContent'), 'the offer is written to the polite live region');
+    assert.ok(/<div class="chat-sr" id="chat-live-polite" aria-live="polite"/.test(html), 'the polite live region is in the page');
+});
+
+// Opening a skill from the chat moves text one way, into the skill's
+// paste box. It must not write to chat history, storage, or the network.
+test('opening a skill from chat writes nothing to chat, storage, or the network', () => {
+    for (const name of ['openSkillWithText', 'skillOfferForPrompt', 'rememberSkillOffer', 'appendSkillOffer']) {
+        const source = functionSource(name);
+        for (const exit of OFFER_EXITS) {
+            assert.ok(!source.includes(exit), `${name} does not use ${exit}`);
+        }
+    }
+});
+
+test('an offer is kept in memory only and leaves with its chat', () => {
+    assert.ok(html.includes('const skillOffersByChat = new Map();'), 'offers live in a Map');
+    assert.ok(functionSource('deleteChat').includes('skillOffersByChat.delete(id)'), 'deleting a chat drops its offers');
+    assert.ok(!/skillOffer\w*\s*:/.test(functionSource('createChat')), 'a chat record has no offer field');
+});
+
+// An offer must come from what the prompt says. A file attached to the
+// chat must not produce one, and a skill that is not ready must not be
+// offered.
+test('the offer check reads the prompt only and offers ready skills only', () => {
+    const check = functionSource('skillOfferForPrompt');
+    assert.ok(!check.includes('attachment'), 'the check does not look at attachments');
+    assert.ok(check.includes('skillRequestCandidates(prompt)'), 'the check reads the prompt');
+    assert.ok(check.includes('skillCanTakeText(skillId)'), 'the check asks whether the skill can be offered');
+    assert.ok(functionSource('skillCanTakeText').includes("skill.status === 'ready'"), 'only a ready skill is offered');
+    assert.ok(functionSource('openSkillWithText').includes('skillCanTakeText(skillId)'), 'only a ready skill is opened');
+});
+
+test('the offer check runs with the router on and never blocks the reply', () => {
+    const send = functionSource('handleSend');
+    const at = send.indexOf('await skillOfferForPrompt(text)');
+    assert.ok(at !== -1, 'handleSend runs the offer check');
+    const before = send.slice(0, at);
+    assert.ok(before.lastIndexOf('if (routerActive) {') > before.lastIndexOf('await routeIntent(text, chat)'), 'the check sits inside a router-only branch, after routing');
+    assert.ok(before.lastIndexOf('try {') > before.lastIndexOf('if (routerActive) {'), 'a failed check is caught, so the reply still runs');
+    assert.ok(send.indexOf('promptSignalsCrisis(text)') < at, 'the crisis check comes first');
+});
+
+test('every offered skill can take text into its paste box', () => {
+    for (const [skillId, mount] of Object.entries(OFFERED_SKILLS)) {
+        const source = functionSource(mount);
+        assert.ok(source.includes('skillTextReceiver = {'), `${mount} registers a text receiver`);
+        assert.ok(source.includes("id: '" + skillId + "'"), `${mount} registers it under ${skillId}`);
+    }
+    assert.ok(functionSource('mountClassifierInputTabs').includes("tabStrip.open('paste')"), 'the shared tabs open the paste tab');
+    assert.ok(functionSource('mountTaxonomySkill').includes("inputTabStrip.open('paste')"), 'the category sorter opens the paste tab');
+});
+
+// Text that arrives from the chat is set as the box's value, the same
+// as typed text, and replaces other text only after the person agrees.
+test('text from the chat goes through the paste box and asks before replacing', () => {
+    const source = functionSource('mountPasteTextPane');
+    assert.ok(source.includes('const next = normalizePastedText(incoming)'), 'incoming text is cleaned and capped');
+    assert.ok(source.includes('textarea.value = next'), 'incoming text is set as the value of the box');
+    assert.ok(source.includes("confirm('Replace the text already in the box?')"), 'the person is asked before text is replaced');
+});
+
+test('leaving another skill for an offer asks before its work is discarded', () => {
+    const source = functionSource('openSkillWithText');
+    assert.ok(source.includes('skillHasStateToPreserve(skillsCurrentId)'), 'the open skill is asked for unsaved work');
+    assert.ok(source.includes('confirm('), 'the person is asked first');
 });

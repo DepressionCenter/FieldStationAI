@@ -1,0 +1,440 @@
+{
+  "_license": "This file is part of Field Station AI. tests/fixtures/skill-offer-prompts.json. Author(s): Gabriel Mongefranco. Created: 2026-09-28. Last Modified: 2026-09-28. Summary: Synthetic prompts for the skill offer tests and for manual browser testing. Every prompt, name, and place is invented; none quotes or names a real person. Notes: See README file for documentation and full license information. Copyright (c) 2026 The Regents of the University of Michigan. This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details. You should have received a copy of the GNU General Public License along with this program. If not, see https://www.gnu.org/licenses/.",
+  "_about": {
+    "offer": "Prompts that must get an offer for the named skill. When text is given, it is the part of the prompt that must reach the skill.",
+    "noOffer": "Prompts that must get no offer: questions about a subject, requests for advice, other jobs done on a text, and everyday chat.",
+    "knownMisses": "Requests the check does not catch today. Listed for the record and not asserted. Move one to offer once the lists catch it."
+  },
+  "offer": [
+    {
+      "skill": "emotions",
+      "prompt": "analyze this text for sentiment"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Analyze the following text for sentiment"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "What emotions does this person express?"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "can you tell me if this feedback is positive or negative"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Please run sentiment analysis on the paragraph below"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "what feelings come through in this diary entry"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Identify the emotions in the text I am pasting"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "How is the participant feeling in this answer?"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "analyze this text for sentiment: I had a wonderful day at the park with my family and I cannot wait to go back.",
+      "text": "I had a wonderful day at the park with my family and I cannot wait to go back."
+    },
+    {
+      "skill": "emotions",
+      "prompt": "what is the sentiment of \"I hate waiting in line at the pharmacy\"",
+      "text": "I hate waiting in line at the pharmacy"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Analyze the sentiment of the following text. The new clinic hours are great and the staff were kind, but parking was a mess and I left feeling worn out.",
+      "text": "The new clinic hours are great and the staff were kind, but parking was a mess and I left feeling worn out."
+    },
+    {
+      "skill": "emotions",
+      "prompt": "What emotions are in this text? I could not sleep again last night. My mind kept racing about the move and I felt dread about starting over in a new city.",
+      "text": "I could not sleep again last night. My mind kept racing about the move and I felt dread about starting over in a new city."
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Detect emotions in the text below\n\nWe finally got the grant! I cried when I read the email. After three years of trying, the whole team went out to celebrate and nobody wanted the night to end. I am proud of every one of them, and a little scared about how much work is coming.",
+      "text": "We finally got the grant! I cried when I read the email. After three years of trying, the whole team went out to celebrate and nobody wanted the night to end. I am proud of every one of them, and a little scared about how much work is coming."
+    },
+    {
+      "skill": "emotions",
+      "prompt": "The bus was late again and I missed the first ten minutes of class. Nobody saved me a seat. I sat in the back and could not hear anything.\n\nWhat is the sentiment here?",
+      "text": "The bus was late again and I missed the first ten minutes of class. Nobody saved me a seat. I sat in the back and could not hear anything."
+    },
+    {
+      "skill": "emotions",
+      "prompt": "I loved the new garden at the community center. It made my whole week. How does the writer feel in this passage?",
+      "text": "I loved the new garden at the community center. It made my whole week."
+    },
+    {
+      "skill": "ner",
+      "prompt": "find the names in this text"
+    },
+    {
+      "skill": "ner",
+      "prompt": "Who is mentioned in the following paragraph?"
+    },
+    {
+      "skill": "ner",
+      "prompt": "Extract all people and places from the text below"
+    },
+    {
+      "skill": "ner",
+      "prompt": "list the organizations that appear in this report"
+    },
+    {
+      "skill": "ner",
+      "prompt": "pull the named entities out of this"
+    },
+    {
+      "skill": "ner",
+      "prompt": "which cities and hospitals does this passage name"
+    },
+    {
+      "skill": "ner",
+      "prompt": "Find names and places: Dr. Rivera met the team from Lakeside Clinic in Toledo on Monday.",
+      "text": "Dr. Rivera met the team from Lakeside Clinic in Toledo on Monday."
+    },
+    {
+      "skill": "ner",
+      "prompt": "List the people and places in this text.\nAlex Morgan drove from Flint to Grand Rapids to meet Priya Shah of the Riverbend Health Collective.",
+      "text": "Alex Morgan drove from Flint to Grand Rapids to meet Priya Shah of the Riverbend Health Collective."
+    },
+    {
+      "skill": "ner",
+      "prompt": "Jordan Lee works at Northfield University in Traverse City. Which people and organizations are named here?",
+      "text": "Jordan Lee works at Northfield University in Traverse City."
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "rate this pain description from 1 to 10"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "What pain level is described in the following text?"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "estimate how much pain this person is in"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "give me a pain score for this note"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "On a scale of 1 to 10, how severe is the pain described below"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "Estimate the pain level: my lower back aches all day and I cannot bend to tie my shoes.",
+      "text": "my lower back aches all day and I cannot bend to tie my shoes."
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "Rate the pain in this note from 1 to 10\nThe participant reports a dull ache in the left knee that gets worse on stairs and keeps them awake some nights.",
+      "text": "The participant reports a dull ache in the left knee that gets worse on stairs and keeps them awake some nights."
+    },
+    {
+      "skill": "taxonomy-classify",
+      "prompt": "sort this text into categories"
+    },
+    {
+      "skill": "taxonomy-classify",
+      "prompt": "Classify the following response by topic"
+    },
+    {
+      "skill": "taxonomy-classify",
+      "prompt": "Sort this abstract into categories: We studied sleep and step counts in 40 adults who wore a wrist device for six weeks.",
+      "text": "We studied sleep and step counts in 40 adults who wore a wrist device for six weeks."
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Is the person who wrote this happy or upset?"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Tell me the overall tone of the comment below:\nThe workshop ran long, but the speaker was funny and I learned a lot.",
+      "text": "The workshop ran long, but the speaker was funny and I learned a lot."
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Check the sentiment of these survey answers"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "which feelings show up in this interview answer"
+    },
+    {
+      "skill": "ner",
+      "prompt": "Give me a list of every person named in this text"
+    },
+    {
+      "skill": "ner",
+      "prompt": "What organizations and locations appear in the note below?"
+    },
+    {
+      "skill": "ner",
+      "prompt": "Pick out the names of people and places from the following: Sam Ortiz flew from Lansing to Marquette to visit the Pinecrest Wellness Center.",
+      "text": "Sam Ortiz flew from Lansing to Marquette to visit the Pinecrest Wellness Center."
+    },
+    {
+      "skill": "ner",
+      "prompt": "tag the people, places and organizations in this paragraph"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "How much pain does this description suggest, from 1 to 10?"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "Put a number on the pain in this note"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "Pain rating for this text please: sharp stabbing in my shoulder whenever I lift my arm, it takes my breath away.",
+      "text": "sharp stabbing in my shoulder whenever I lift my arm, it takes my breath away."
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "how intense is the pain this participant describes"
+    },
+    {
+      "skill": "taxonomy-classify",
+      "prompt": "Which category does this comment belong in?"
+    },
+    {
+      "skill": "taxonomy-classify",
+      "prompt": "assign this response to one of my categories"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Does this message sound angry to you?"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "What is the emotional tone of the following response?"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "I need the sentiment for this open-ended survey comment"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Look at the text below and tell me what the person is feeling\nI have been smiling all morning since my sister called with the news.",
+      "text": "I have been smiling all morning since my sister called with the news."
+    },
+    {
+      "skill": "emotions",
+      "prompt": "positive, negative or neutral? The food was cold but the nurse was very kind to my father."
+    },
+    {
+      "skill": "ner",
+      "prompt": "Show me the people and places that this paragraph talks about"
+    },
+    {
+      "skill": "ner",
+      "prompt": "Can you extract names of persons and organizations from the text below?"
+    },
+    {
+      "skill": "ner",
+      "prompt": "Which names of people appear in this email?"
+    },
+    {
+      "skill": "ner",
+      "prompt": "Get the locations out of this text: The team drove from Saginaw to Bay City and then on to Midland for the health fair.",
+      "text": "The team drove from Saginaw to Bay City and then on to Midland for the health fair."
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "What pain rating would you give this description?"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "From this text, estimate the pain on a ten point scale"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "how severe does the pain sound in the passage below"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "Rate the pain, 1 to 10: a constant burning in both feet that makes it hard to walk to the mailbox.",
+      "text": "a constant burning in both feet that makes it hard to walk to the mailbox."
+    },
+    {
+      "skill": "taxonomy-classify",
+      "prompt": "Put this comment into the right category"
+    },
+    {
+      "skill": "taxonomy-classify",
+      "prompt": "what topic label fits the following text"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Read this and tell me if the writer seems worried"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Sentiment of the following tweet?"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "What mood is this person in, judging by their message below?"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Find the emotions in this caregiver diary entry: Today was hard. He did not know my name, and I went out to the car and cried.",
+      "text": "Today was hard. He did not know my name, and I went out to the car and cried."
+    },
+    {
+      "skill": "ner",
+      "prompt": "Who are the people mentioned in the note below?"
+    },
+    {
+      "skill": "ner",
+      "prompt": "Spot every place name in the following text"
+    },
+    {
+      "skill": "ner",
+      "prompt": "I need all the organization names from this paragraph"
+    },
+    {
+      "skill": "ner",
+      "prompt": "Names and places in this: Taylor Brooks left Kalamazoo for a job at Harborview Medical Group in Muskegon.",
+      "text": "Taylor Brooks left Kalamazoo for a job at Harborview Medical Group in Muskegon."
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "Estimate a 1 to 10 pain score from what this patient wrote"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "How painful does this sound on a scale of ten?"
+    },
+    {
+      "skill": "pain-level",
+      "prompt": "Give the pain level for the text below\nMy wrist throbs after typing for an hour and I have to stop and ice it.",
+      "text": "My wrist throbs after typing for an hour and I have to stop and ice it."
+    },
+    {
+      "skill": "taxonomy-classify",
+      "prompt": "Sort the response below into one of my categories"
+    }
+  ],
+  "noOffer": [
+    "what causes chronic pain",
+    "how do I manage lower back pain",
+    "what is sentiment analysis",
+    "how does named entity recognition work",
+    "who discovered penicillin",
+    "write a poem about sadness",
+    "summarize this article for me",
+    "give me the key points of the text below",
+    "I feel sad today",
+    "my back hurts, what should I do",
+    "what is the capital of France",
+    "find outliers in this data",
+    "what is the average of this column",
+    "how many participants dropped out",
+    "what does the protocol say about pain medication",
+    "what did she say about sleep in the interview",
+    "explain this python error",
+    "write a function that counts words",
+    "translate this sentence into Spanish",
+    "fix the grammar in this paragraph",
+    "rewrite this email to sound more friendly",
+    "what is the difference between emotion and mood",
+    "what are the symptoms of depression",
+    "how is pain measured in clinical trials",
+    "list three places to visit in Michigan",
+    "who is the director of the center",
+    "combine these two csvs",
+    "hello there",
+    "is this statement true",
+    "what is the PHQ-9",
+    "proofread the text below",
+    "make this paragraph shorter",
+    "what does this document say about funding",
+    "how many words are in this text",
+    "what year was the hospital founded",
+    "Summarize the following: The committee met on Tuesday to review the budget. Members felt hopeful about the new funding, though some were worried about staffing.",
+    "Translate to Spanish: I am very happy to see you and I hope you feel better soon.",
+    "Fix the grammar in this note. Me and him was going to the clinic because his knee hurt real bad.",
+    "I have had a headache for three days and I am worried. What could be causing it?",
+    "What is the best way to measure mood in a daily survey?",
+    "Write a short story about a nurse named Carla who moves to Detroit.",
+    "Here is my code:\nfor item in rows:\n    print(item)\nWhy does it print nothing?",
+    "Can you recommend a validated pain questionnaire for adults?",
+    "What is the difference between the PHQ-9 and the GAD-7?",
+    "Give me three ideas for a study about loneliness in college students.",
+    "Explain what a wearable device measures during sleep.",
+    "who wrote this paper and where do they work",
+    "Draft an email to Dr. Alvarez at Lakeside Clinic about the meeting in Toledo.",
+    "My knee pain is about a 7 today. Should I still go for a walk?",
+    "how do I feel better when I am anxious",
+    "What time does the pharmacy close?",
+    "Write a thank you note to my study team",
+    "What are good questions to ask in an interview about stress?",
+    "Explain the 1 to 10 pain scale to a new research assistant",
+    "How do I export my chat?",
+    "Tell me a joke about spreadsheets",
+    "what is the tone of voice I should use in a consent form",
+    "Who are the leading researchers in sleep science?",
+    "Where is the nearest hospital to Ann Arbor?",
+    "I am so frustrated with this software",
+    "Can you make this sound more positive: The results were not what we hoped for.",
+    "how many people live in Detroit",
+    "Outline a plan for coding interview transcripts by theme",
+    "What is the difference between a category and a theme in qualitative research?",
+    "Create a table of my weekly step counts",
+    "Does exercise reduce pain in older adults?",
+    "What helps with trouble sleeping?",
+    "Summarize the text below in two sentences",
+    "Who founded the University of Michigan?",
+    "Write a friendly reminder about the survey deadline",
+    "How do I attach a file to this chat?",
+    "What does a score of 15 on the PHQ-9 mean?",
+    "I am excited to start my new study next week",
+    "List the steps to clean a wearable data export",
+    "What are common emotions people report after surgery?",
+    "Is it normal for pain to get worse at night?",
+    "How should I name the columns in my spreadsheet?",
+    "Turn these notes into a bulleted list: met with team, agreed on timeline, next check-in Friday",
+    "What places in Michigan have the most clinics?",
+    "Describe the difference between positive and negative reinforcement",
+    "make a haiku about a calm morning",
+    "What should I eat before a long run?",
+    "Convert 72 inches to centimeters",
+    "Write a cover letter for a research coordinator job",
+    "Why is my spreadsheet showing the wrong dates?",
+    "Give me a short definition of burnout",
+    "How can I tell if a survey question is biased?",
+    "Shorten this sentence: The committee has made the decision to postpone the meeting until a later date.",
+    "What are the names of the five stages of grief?",
+    "Plan a weekly schedule for data collection visits",
+    "I had a great weekend at the lake",
+    "Which pain medications are safe to take together?",
+    "Make an outline from the text below",
+    "What is a good name for our new study?",
+    "Compare these two paragraphs and tell me which is clearer",
+    "Please check my math: 14 plus 29 is 43"
+  ],
+  "knownMisses": [
+    {
+      "skill": "taxonomy-classify",
+      "prompt": "label this paragraph with the best matching category"
+    },
+    {
+      "skill": "emotions",
+      "prompt": "Emotion check: I keep telling myself it will be fine, but my stomach drops every time the phone rings."
+    }
+  ]
+}
