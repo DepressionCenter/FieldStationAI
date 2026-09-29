@@ -291,7 +291,7 @@ The pieces exist in separate places. Attachments live in IndexedDB (`ATTACHMENT_
 - **Manage storage** in the menu opens the dialog. The top line shows the space in use and the space the browser allows.
 - Four groups: Chats, Attachments, Models, and Compendiums. Each row shows a name, a time, a size, and a **Delete** button. Each group's heading shows the group's total size.
 - A chat's row has a pencil button that renames the chat in place, and a pin button. A pinned chat cannot be deleted until it is unpinned.
-- Chat tabs and saved prompt chips in the main screen rename the same way, through a pencil button. The double-click and the browser's box are gone.
+- Chat tabs and saved prompt chips in the main screen each carry one ⋯ button that opens a menu with **Rename**, **Pin** or **Unpin**, and **Delete**. Rename works in place, the same way. The double-click, the browser's box, and the separate pin and delete buttons are gone.
 - The pure helpers live in a marked block, `Storage dialog: pure helpers`. The list functions, the rows, and the dialog's open and close code follow it.
 - `deleteAttachmentEverywhere()` deletes an attachment of any chat. `deleteAttachmentChip()`, which the chat uses, now calls it.
 - `AttachmentStore` gained `blobBytes()` and `vectorBytes()`, which read the size of a stored record without decrypting it.
@@ -357,6 +357,17 @@ Browser, second round on 2026-09-29, same setup, after the rename and pin change
 - At 320 CSS pixels wide, with a text box open, nothing scrolled sideways in the dialog or in the page.
 - axe-core 4.10.2 scans of the dialog with a pinned row and an open text box, of the tab bar, and of the chip row found no violations. They asked for manual contrast checks of the pencil and close buttons.
 - No console errors were logged. The chats and the saved prompt the checks created were deleted afterwards, and the pins were left as they were.
+
+Browser, third round on 2026-09-29, same setup, after the three buttons on a tab became one menu button:
+
+- A tab had one labeled 24 by 24 pixel button that says it opens a menu. Enter opened the menu with focus on **Rename**, without switching chats. The menu had **Rename**, **Pin**, and **Delete**. The arrow keys, Home, and End moved through the entries and wrapped. Escape closed the menu and put focus back on the button.
+- **Rename** opened the text box with the name selected, and focus returned to the button afterwards. **Pin** pinned the chat, a small labeled pin mark 15 pixels wide appeared before the name, and focus was on the button's replacement. The menu then offered **Unpin**, which removed the pin and the mark.
+- A click opened the menu and a second click closed it. A right-click on the tab opened the menu without switching chats. A click elsewhere and a scroll of the tab bar closed it.
+- With the menu open while a reply was being written, the reply ended with the menu still open and focus still inside it.
+- A saved prompt chip had one labeled button with **Rename** and **Delete**. Rename stored the name. Delete asked first; No kept the prompt, and Yes removed it, with focus not lost.
+- **Delete** on a chat's menu deleted the chat after a confirmation, with focus not lost.
+- At 320 CSS pixels wide the open menu stayed inside the window, and the page did not scroll sideways.
+- axe-core 4.10.2 scans of the tab bar, the chip row, and the open menu found no violations. The earlier checks of the Storage dialog and of renaming were run again and passed.
 
 Not tested: a real screen reader, a phone or touch screen, Firefox or Safari, 200% browser zoom, renaming with a PIN set, an external compendium loaded with `?compendium-url=`, an attachment with search vectors, a file with no chat, a model delete while another model loads, and a browser that does not report a storage estimate.
 

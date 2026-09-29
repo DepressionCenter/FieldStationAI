@@ -237,14 +237,25 @@ A chat or a saved prompt was renamed with a double-click, in a box the browser o
 
 Decision:
 
-- Each chat tab and each saved prompt has a small pencil button. It turns the name into a text box in the same place, with the whole name selected. Enter or leaving the box keeps the new name, and Escape keeps the old one.
-- A pencil button was chosen over a right-click menu. A button can be reached with Tab and with a tap, and a right-click menu needs a second way in for both.
+- **Rename** turns the name into a text box in the same place, with the whole name selected. Enter or leaving the box keeps the new name, and Escape keeps the old one.
 - Double-click no longer renames a tab or a chip. In the Storage dialog a double-click on a chat's name still does, next to the pencil, because a click on that name does nothing else.
 - Renaming does not open the chat, and it is allowed while a reply is being written.
 - A redraw of the tab bar or the chip row keeps an edit in progress, with the text typed so far.
 - The app no longer moves focus to the prompt box at the end of a reply while a name is being edited or a dialog is open. Before, the end of a reply would have closed the text box in the middle of typing, and it took focus out of an open dialog.
-- The pencil is drawn at 75% strength. Fainter than that, it falls under 3 to 1 contrast against the white panel.
-- The buttons on a tab and on a chip are now 24 by 24 CSS pixels, the WCAG 2.2 minimum. They were smaller.
+- In the Storage dialog the pencil is drawn at 75% strength. Fainter than that, it falls under 3 to 1 contrast against the white panel.
+
+### One Menu Button per Tab and Chip
+
+The first version of this change gave each chat tab three buttons, for rename, pin, and delete, and each saved prompt chip two. Each was 24 by 24 CSS pixels, the WCAG 2.2 minimum, so together they took about 76 pixels of every tab. Hiding them until the pointer passed over the tab was considered and rejected: the project's accessibility rules keep essential controls out from behind hover, touch screens have no hover, and a tab that grows on hover moves its neighbours.
+
+Decision:
+
+- Each tab and each chip has one ⋯ button. It opens a small menu with **Rename**, **Pin** or **Unpin**, and **Delete**, or **Rename** and **Delete** for a chip. A right-click on the tab or chip opens the same menu.
+- The menu follows the menu button pattern: the button is labeled and says it opens a menu, focus moves to the first entry, the arrow keys move through the entries, Escape closes the menu and puts focus back on the button, and a click elsewhere closes it.
+- A pinned chat shows a small pin before its name. It is a mark, not a button, so it takes about 15 pixels rather than 24.
+- The ✕ was not kept next to the menu button. One extra click for a delete is a fair price, and it ends accidental presses on a small ✕ when reaching for a tab.
+- Menu entries are one or two words. The explanation of what pinning does is a tooltip on the entry, not part of its label.
+- A redraw of the tab bar or the chip row closes an open menu, and puts focus on the button's replacement when focus was in the menu. The app does not move focus to the prompt box at the end of a reply while the menu is open.
 
 ### Startup Cleanup Deleted Models in Use
 

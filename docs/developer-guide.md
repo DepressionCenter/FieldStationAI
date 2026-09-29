@@ -263,10 +263,22 @@ Chat tabs, saved prompt chips, and chat rows in the Storage dialog all rename th
 
 Rules for changes:
 
-- Give the item's name element a `data-rename-label` value and its pencil button the same value in `data-rename`, such as `chat:<id>`. Build the pencil with `buildRenameButton()`.
+- Give the item's name element a `data-rename-label` value and the button that starts the rename the same value in `data-rename`, such as `chat:<id>`. Focus goes back to that button when the edit ends. In the Storage dialog that button is a pencil, built with `buildRenameButton()`. On a tab or a chip it is the ⋯ menu button, built with `buildItemMenuButton()`.
 - A function that redraws a container with renamable items calls `holdInlineRename()` before it clears the container and `resumeInlineRename()` after it fills it. Without the pair, a redraw in the middle of typing loses the text. `renderTabs()` and `renderChips()` show how.
 - Code that moves focus to the prompt box by itself, such as at the end of a reply, calls `focusPromptWhenFree()`. It leaves focus alone while a name is being edited or a dialog is open.
 - Do not use `prompt()` for a name.
+
+## Item Menu
+
+A chat tab and a saved prompt chip each carry one ⋯ button, built with `buildItemMenuButton()`. It opens `#item-menu`, one element at the end of the page that `openItemMenu()` fills and places next to the button each time. The entries come from a function, so they show the item's state at that moment, such as **Pin** or **Unpin**.
+
+Rules for changes:
+
+- Pass the entries as `{ label, action, danger?, title? }`. Keep labels to a word or two; a longer explanation goes in `title`, which the browser shows as a tooltip.
+- After an entry's action, focus goes to the button's replacement if the action redrew the bar, unless the action put focus somewhere itself, as **Rename** does.
+- A function that redraws a container with such buttons calls `holdItemMenu()` before it clears the container and `resumeItemMenu()` after it fills it, as `renderTabs()` and `renderChips()` do.
+- `openItemMenuOnContextMenu()` makes a right-click on the tab or chip open the same menu.
+- The menu closes when its row scrolls or the window changes size, because the button moves and the menu would be left floating in the old place.
 
 ## Run the Tests
 

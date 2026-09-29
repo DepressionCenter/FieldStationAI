@@ -35,19 +35,23 @@ Do not treat the app as a compliance certification. If your data may contain PHI
 
 Use **New chat** for a separate conversation. Each chat should keep its own messages and attachments.
 
-### Rename a Chat or a Saved Prompt
+### Rename, Pin, or Delete a Chat
 
-Each chat tab and each saved prompt has a small pencil button next to its name.
+Each chat tab has one small button at its right end (⋯). It opens a menu with **Rename**, **Pin** or **Unpin**, and **Delete**. A right-click on the tab opens the same menu. With the keyboard, reach the button with Tab, press **Enter**, and move through the menu with the arrow keys. **Esc** closes it.
 
-1. Choose the pencil. The name turns into a text box, with the whole name selected.
+To rename:
+
+1. Choose **Rename**. The name turns into a text box, with the whole name selected.
 2. Type the new name. A name can be up to 40 characters long.
 3. Press **Enter** to keep the new name, or **Esc** to keep the old one. Clicking somewhere else also keeps the new name.
 
-Renaming a chat does not open it, and it does not stop a reply that is being written. You can rename chats the same way in the Storage dialog. See [Manage Storage](#manage-storage).
+Renaming a chat does not open it, and it does not stop a reply that is being written. You can rename chats in the Storage dialog too. See [Manage Storage](#manage-storage).
 
-### Pin a Chat
+A chat that is not pinned is removed 30 days after its last change. Choose **Pin** to keep the chat. A pinned chat shows a small pin before its name. You can pin up to 5 chats.
 
-A chat that is not pinned is removed 30 days after its last change. Choose the pin on a chat's tab to keep the chat. You can pin up to 5 chats. Choose the pin again to unpin.
+**Delete** asks before it deletes the chat and the files attached to it.
+
+Each saved prompt below the chat has the same button, with **Rename** and **Delete**.
 
 ## If You May Be in Crisis
 

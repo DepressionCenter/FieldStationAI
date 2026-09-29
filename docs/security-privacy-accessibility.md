@@ -212,7 +212,7 @@ Before release, test:
 6. Test screen-reader announcement of status and progress messages.
 7. Confirm color is not the only state cue.
 8. Test reduced-motion mode.
-9. Rename a chat tab, a saved prompt, and a chat in the Storage dialog with the keyboard only: reach the pencil with Tab, press Enter, type, and press Enter. Confirm that a screen reader reads the text box's label, and that focus returns to the pencil. Press Esc in the box inside the Storage dialog and confirm that the dialog stays open.
+9. Open the menu of a chat tab and of a saved prompt with the keyboard only: reach the ⋯ button with Tab and press Enter. Confirm that a screen reader reads the button as a menu button, that the arrow keys move through the entries, and that Esc closes the menu with focus back on the button. Choose **Rename**, type, and press Enter. Confirm that a screen reader reads the text box's label, and that focus returns to the button. In the Storage dialog, rename a chat through its pencil, press Esc in the box, and confirm that the dialog stays open.
 10. In the Storage dialog, pin a chat with the keyboard. Confirm that a screen reader reads the pin as pressed and **Delete** as unavailable.
 11. In the Storage dialog, delete an item with the keyboard only. Confirm that a screen reader reads the item's name and details with the **Delete** button, announces the result, and that focus stays inside the dialog.
 12. Send a crisis test prompt from `tests/fixtures/crisis-prompts.json`, confirm a screen reader announces the notice, and reach its 988 chat link with Tab.
