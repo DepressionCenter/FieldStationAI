@@ -257,7 +257,7 @@ Browser, on 2026-09-28, headless Microsoft Edge 151 with WebGPU, served from `py
 - Five prompts that are not requests got no offer. A question about an attached file got no offer.
 - With Qwen3-0.6B, which has no router, a request got a reply and no offer.
 - After a reload the chat was intact and the offers were gone. Sending a request again brought the offer back.
-- At 320 and at 640 CSS pixels wide the offers fit inside the chat box, and at 320 the button wraps under the line. At 320 the chat box did scroll sideways by 13 pixels. The cause was a long link in the Sources row of a reply, which does the same with no offer on the page.
+- At 320 and at 640 CSS pixels wide the offers fit inside the chat box, and at 320 the button wraps under the line. At 320 the chat box did scroll sideways by 13 pixels. The cause was a long link in the Sources row of a reply, which does the same with no offer on the page. This was fixed afterwards on the branch `fix/sources-row-overflow`: an item in the Sources row now breaks onto the next line, and the row grows taller.
 - An axe-core 4.10.2 scan of the chat box with an offer in it, and of the skill after the offer opened it, with WCAG 2.0, 2.1, and 2.2 A and AA rules, found no violations. It asked for a manual contrast check of the offer's line, which is `#5C6B7F` on white, 5.4 to 1.
 - The check took about 30 ms for a prompt with one reading and about 170 ms for a prompt with three, after about 580 ms the first time in a session.
 - No console errors were logged. The chats the checks created were deleted afterwards.

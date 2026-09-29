@@ -2,7 +2,7 @@
 // tests/index-html.test.mjs
 // Author(s): Gabriel Mongefranco.
 // Created: 2026-09-23
-// Last Modified: 2026-09-28
+// Last Modified: 2026-09-29
 // Summary: Static checks on index.html, the whole application: the file
 // header carries the project and license notice, the app is still one
 // module script, the crisis notice constants point at the 988 Lifeline,
@@ -263,4 +263,20 @@ test('leaving another skill for an offer asks before its work is discarded', () 
     const source = functionSource('openSkillWithText');
     assert.ok(source.includes('skillHasStateToPreserve(skillsCurrentId)'), 'the open skill is asked for unsaved work');
     assert.ok(source.includes('confirm('), 'the person is asked first');
+});
+
+// ### Sources Row ###
+
+// A URL or a file name is one long word. Without these two properties a
+// flex item cannot get narrower than that word, and the chat box scrolls
+// sideways on a narrow screen.
+test('items in the Sources row can shrink and break, and the row has no scrollbar', () => {
+    const items = html.match(/\.sources-row > \* \{([^}]*)\}/);
+    assert.ok(items, 'index.html has no rule for the items of the Sources row');
+    assert.ok(/min-width:\s*0\b/.test(items[1]), 'an item may get narrower than its longest word');
+    assert.ok(/overflow-wrap:\s*anywhere\b/.test(items[1]), 'a long word breaks onto the next line');
+    const row = html.match(/\.sources-row \{([^}]*)\}/);
+    assert.ok(row, 'index.html has no rule for the Sources row');
+    assert.ok(/flex-wrap:\s*wrap\b/.test(row[1]), 'items wrap onto new lines');
+    assert.ok(!/overflow|max-height|white-space:\s*nowrap/.test(row[1]), 'the row grows taller and never scrolls');
 });
