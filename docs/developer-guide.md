@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 developer-guide.md: Guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-28
+Last Modified: 2026-09-29
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -153,12 +153,16 @@ Test a wording change on the smallest model in the dropdown and on a 1B model, w
 
 ## Change the Crisis Check
 
-The crisis check decides whether a chat prompt gets the fixed 988 notice instead of a reply. Its data lives in `index.html` between the comments `Crisis check: data and pure helpers (start)` and `(end)`: the phrase patterns, the topic words that silence them, the crisis and contrast example sentences, the tiebreak hypotheses, the three thresholds, and two pure functions. The tests evaluate that block on its own, so keep it free of DOM access and of other constants from the file.
+The crisis check decides whether a chat prompt gets the fixed 988 notice instead of a reply. Its data lives in `index.html` between the comments `Crisis check: data and pure helpers (start)` and `(end)`: the phrase patterns, the topic words that silence them, the subject words, the crisis, contrast, and everyday example sentences, the tiebreak hypotheses, the four thresholds, and the pure functions. The tests evaluate that block on its own, so keep it free of DOM access and of other constants from the file.
 
 - Add a phrase to `CRISIS_TIER0_RE` when a clearly worded first-person statement gets past the check. Add a topic word to `CRISIS_TIER0_TOPIC_RE` when a research phrasing fires the patterns.
-- Add example sentences to `CRISIS_EXEMPLARS` or `CRISIS_CONTRAST_EXEMPLARS` when the embedding tier gets a case wrong. A research prompt that scores close to the crisis list needs a contrast entry that is closer.
-- Change the thresholds last. `CRISIS_COSINE_MIN` is the floor, `CRISIS_MARGIN_MIN` is how far the crisis score must beat the contrast score, and `CRISIS_CLEAR_MARGIN` is where the tiebreak stops being needed.
-- Put every new case in `tests/fixtures/crisis-prompts.json` first, then run the model test (see Run the Tests) until every prompt lands on the right side.
+- `CRISIS_SUBJECT_RE` lists words that a statement about one's own death or self-harm nearly always uses, such as die, life, hurt, and myself. A prompt with none of them gets no notice, and no model runs for it. Add a word when a crisis statement gets past the check because it uses none. The list is broad on purpose, because the scores still decide. Every entry in `CRISIS_EXEMPLARS` must contain a subject word, and a test checks that.
+- Add example sentences to `CRISIS_EXEMPLARS`, `CRISIS_CONTRAST_EXEMPLARS`, or `CRISIS_EVERYDAY_EXEMPLARS` when the embedding tier gets a case wrong. A research prompt that scores close to the crisis list needs a contrast entry that is closer. An ordinary prompt that gets the notice needs an everyday entry built the same way.
+- The embedding model scores two sentences of the same shape as alike, whatever they are about. "I am planning a trip this week" scores about 0.8 against "I am planning to end it all this week". When you add a crisis example, add an everyday example of the same shape.
+- Change the thresholds last. `CRISIS_COSINE_MIN` is the floor, `CRISIS_MARGIN_MIN` is how far the crisis score must beat the contrast score, `CRISIS_CLEAR_MARGIN` is where the tiebreak stops being needed, and `CRISIS_EVERYDAY_MARGIN_MIN` is how far the crisis score must beat the everyday score.
+- Put every new case in `tests/fixtures/crisis-prompts.json` first, then run the model test (see Run the Tests) until every prompt lands on the right side. The fixture has two lists of prompts that must get a normal answer: `notCrisis` for research prompts, and `everyday` for ordinary ones.
+- The model test scores the fixture twice, with the 4-bit weights the app loads first and with the full-precision weights it falls back to. The two can score the same prompt 0.04 apart. Leave at least 0.03 of room between a fixture prompt's score and a threshold.
+- To measure a change, write new prompts after you make it, and score them once. A fixture that passes says little, because the lists were tuned against it.
 - The embedding and tiebreak models are English-only. A Spanish case must be covered by the phrase patterns.
 - `crisisTurnAction()` decides what a flagged prompt gets: the first notice with the continue line, an answer for the invited re-send, or the notice without the continue line once the chat has flagged again. `CRISIS_ANSWERED_AFTER_NOTICE` is how many flagged prompts are answered after the first notice. The chat keeps the two counters (`crisisNoticed`, `crisisFlagsAfterNotice`).
 - Never put the notice text through a model, and never log the prompt.
@@ -251,7 +255,7 @@ That checks every documentation page (links, license comment, heading structure)
 
 Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are six such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, and the Field Kit paste text helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
 
-To score the crisis and skill offer prompt fixtures with the real embedding and tiebreak models, and the reranker with synthetic passages, on your CPU:
+To score the crisis and skill offer prompt fixtures with the real embedding and tiebreak models, and the reranker with synthetic passages, on your CPU. The crisis test runs with both sets of embedding weights:
 
 ```text
 npm ci --prefix tests

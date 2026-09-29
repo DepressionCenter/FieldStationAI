@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 docs/issues-implementation-plan.md: Ordered plan and status tracker for the open GitHub issues, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-09-22
-Last Modified: 2026-09-28
+Last Modified: 2026-09-29
 Summary: Lists the open GitHub issues in the order they will be worked, the branch and scope for each, and the rules every phase follows.
 Notes: See README file for documentation and full license information.
 
@@ -111,6 +111,8 @@ The chat router (`routeIntent()` in `index.html`) runs a regex tier, then scores
 Automated, on 2026-09-23: `node --test tests/` passed (121 tests, the model test skipped), and `node --test tests/crisis-models.test.mjs` passed all 33 fixture prompts with the real models on the CPU.
 
 Browser, on 2026-09-23, headless Microsoft Edge 151 with WebGPU, served from `python -m http.server 8010`, driven over the DevTools protocol: every fixture prompt was sent in a fresh chat with SmolLM2-360M + Router and the bundled compendium (17 crisis prompts showed the notice and no reply, 16 research prompts got a normal reply). A twelve-prompt subset was repeated with Llama 3.2-1B (router off) with the compendium on and off, and with SmolLM2-360M + Router with the compendium off, with the same result every time. A phrase-tier hit shows the notice about 110 ms after Send; an embedding-tier hit took 2.2 s the first time (the tiebreak model loading) and 110 to 220 ms after that. A second crisis prompt in the same chat got a normal reply. The notice re-rendered after reload, appeared in brackets in the text export, was never sent to the model, and no console errors were logged. The 988 chat link took keyboard focus with a visible outline and opens in a new tab; the Spanish line carries `lang="es"`; the notice text is Michigan Blue and dark ink on white, above 5:1 contrast. Not tested: Ollama, Stop or New Chat during the check itself, and a real screen reader.
+
+Correction, on 2026-09-29, branch `fix/crisis-check-false-positive`: the check showed the notice for about one in four everyday prompts, such as "what is the capital of France" and "tell me a joke". The embedding tier now reads a prompt only when it uses a subject word, and the crisis score must also beat a list of everyday examples. The decision is in `design-change-record.md`, and the measured results are in `security-privacy-accessibility.md`. `node --test tests/` passed 609 tests, with the crisis fixture scored on both sets of embedding weights. In headless Microsoft Edge 151 with WebGPU and SmolLM2-360M + Router, 22 everyday and research prompts got a normal reply and 10 crisis prompts got the notice, each in a fresh chat, with no console errors. With Qwen3-0.6B, which has no router, 10 everyday prompts got a normal reply and 6 crisis prompts got the notice.
 
 Escalation, same setup with SmolLM2-360M + Router: the first flagged prompt showed the notice with the continue line and left the message in the box; the re-send was answered; a later flagged prompt showed the notice without the continue line and no reply; an ordinary prompt after that was answered; another flagged prompt got the notice again. After reload the chat showed three notices with the continue line only on the first. No console errors.
 
@@ -262,7 +264,7 @@ Browser, on 2026-09-28, headless Microsoft Edge 151 with WebGPU, served from `py
 
 Not tested: a real screen reader, a phone or touch screen, Firefox or Safari, a browser without WebGPU, Ollama, and Stop pressed during the check itself.
 
-Found while testing and not changed in this phase: with the app's 4-bit embedding weights, the prompt "what is the capital of France" gets the crisis notice. The crisis model test does not catch it, because it scores with full-precision weights.
+Found while testing and not changed in this phase: with the app's 4-bit embedding weights, the prompt "what is the capital of France" gets the crisis notice. The crisis model test does not catch it, because it scores with full-precision weights. This was fixed afterwards on the branch `fix/crisis-check-false-positive`. See the correction under phase 1.
 
 #### Documentation updated
 

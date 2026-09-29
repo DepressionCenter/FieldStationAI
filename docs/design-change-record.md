@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 design-change-record.md: Summary of recent major design changes in Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-28
+Last Modified: 2026-09-29
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -133,6 +133,33 @@ Decision:
 - The first notice in a chat invites the person to send the message again, and the message stays in the box. That re-send is answered. A second flagged prompt after the notice is treated as a strong signal, so the notice returns without the invitation and every later flagged prompt gets it. Unflagged prompts are always answered and the chat is never locked. The smallest models do not refuse crisis content on their own, which is why screening continues after the first notice. The full method is in `security-privacy-accessibility.md`.
 - No model-side instruction. A prompt rule can only produce a model-written reply or a sentinel token, and a crisis instruction primes safety-tuned models to lecture on legitimate research questions about suicide.
 - The check runs before generation rather than beside it. Every model call goes through the shared engine lock, so a parallel check would queue behind the reply, and a small model streams its first tokens faster than the check finishes.
+
+### Everyday Prompts and the Crisis Check
+
+The first version of the check showed the notice for ordinary prompts such as "what is the capital of France", "tell me a joke", and "I am planning a trip this week". On a set of 240 everyday and research prompts, about one in four got the notice.
+
+Three causes, found by scoring prompts with the real models:
+
+- The embedding model scores two sentences of the same shape as alike, whatever they are about. Any two English sentences score 0.5 to 0.8, so the floor of 0.60 stops very little.
+- The contrast list held research prompts only. An everyday prompt had nothing to lose to.
+- The tiebreak model chooses between two hypotheses, and both are about mental health. For an everyday prompt its choice is close to a coin toss.
+
+The model test did not catch it. It scored with full-precision weights while the app runs 4-bit weights, and its fixture held almost no everyday prompts.
+
+Decision:
+
+- A list of subject words gates the embedding tier. A prompt with none of them gets no notice. The list is broad, because the scores still decide.
+- A third example list holds everyday prompts. The crisis score must beat it by a margin. The tiebreak model is not asked about it.
+- The crisis list gained eleven less direct statements, so that the new checks cost as little recall as possible. The phrase patterns gained a few Spanish and English forms that the embedding tier read poorly.
+- The model test scores the fixture with both sets of weights, and the fixture gained everyday prompts.
+
+Considered and set aside:
+
+- A higher floor. Crisis statements and everyday prompts score in the same range, so no floor separates them.
+- The tiebreak model as the judge of every prompt. On 21 crisis statements it preferred the crisis hypothesis for 5 to 10, depending on wording.
+- An everyday list without the subject words. It cleared the common cases, and left sentences that copy the shape of a crisis example.
+
+Cost: a crisis statement that uses no subject word is no longer flagged. The measured results are in `security-privacy-accessibility.md`.
 
 The detection data lives in a marked block in `index.html` that the tests evaluate on their own. Change thresholds and phrase lists there, and keep the prompt fixture under `tests/` in step.
 
