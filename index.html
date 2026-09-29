@@ -214,6 +214,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
             font-family: 'IBM Plex Mono', monospace;
             display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline;
         }
+        /* A flex item is never narrower than its longest word, and a URL
+           or a file name is one long word. Letting an item shrink and break
+           anywhere makes the row grow taller, so the chat box never scrolls
+           sideways and the row never needs a scrollbar of its own. */
+        .sources-row > * { min-width: 0; overflow-wrap: anywhere; }
         .sources-row .sources-label { font-weight: 600; color: var(--muted); }
         .sources-row a { color: var(--bubble); text-decoration: none; }
         .sources-row a:hover { text-decoration: underline; color: var(--accent-dark); }
