@@ -325,6 +325,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
         .crisis-notice a { color: var(--accent); text-decoration: underline; font-weight: 600; }
         .crisis-notice a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         .crisis-continue { font-size: 0.82rem; color: var(--muted); }
+        /* Skill offer: one line and one button under the prompt it belongs
+           to, on the prompt's side of the chat. Wraps on a narrow screen. */
+        .skill-offer {
+            align-self: flex-end; max-width: 85%; margin: 0 0 12px;
+            display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: flex-end;
+            font-size: 0.78rem; color: var(--muted); text-align: right;
+        }
+        .skill-offer-btn {
+            min-height: 32px; padding: 4px 12px; font-size: 0.78rem; font-weight: 600;
+            background: var(--panel); color: var(--accent); border: 1px solid var(--accent); border-radius: 6px;
+            cursor: pointer; font-family: inherit;
+        }
+        .skill-offer-btn:hover { background: var(--bg); }
 
         .meta {
             display: flex; gap: 10px; align-items: center; align-self: flex-start;
@@ -1055,6 +1068,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
     <div id="status-line" aria-live="polite"></div>
     <div class="chat-sr" id="chat-live" aria-live="assertive" aria-atomic="true"></div>
+    <div class="chat-sr" id="chat-live-polite" aria-live="polite" aria-atomic="true"></div>
 
     <div id="chat-box"></div>
 
@@ -1202,6 +1216,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const stopBtn = document.getElementById('stop-btn');
         const status = document.getElementById('status-line');
         const chatLive = document.getElementById('chat-live'); // screen-reader-only live region for chat notices
+        const chatLivePolite = document.getElementById('chat-live-polite'); // the same, for news that can wait its turn
         const modelSelect = document.getElementById('model-select');
         const newChatBtn = document.getElementById('new-chat-btn');
         const pinBtn = document.getElementById('pin-btn');
@@ -1288,6 +1303,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // The notice replaces the reply for that turn and shows once per
         // chat, so the person needs to know how to go on.
         const CRISIS_NOTICE_CONTINUE = 'To continue chatting, send your message again.';
+
+        // The line shown with a skill offer, ahead of the button that
+        // opens the skill. Fixed text, like the button's own wording.
+        const SKILL_OFFER_NOTE = 'Field Kit has a tool for this.';
 
         // ---------- User-adjustable settings ----------
         // Edited in the Advanced settings dialog and saved per browser in
@@ -1871,6 +1890,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // cover every case. See fieldstation-router-v2-design.md.
         const ROUTER_NLI_ID = 'Xenova/nli-deberta-v3-xsmall';
 
+        // ### Router intents: data (start) ###
+        // The intent ids, the example turns they are scored against, and
+        // the tiebreak phrasing. Everything between these two markers is
+        // evaluated on its own by the tests under tests/ in a bare
+        // JavaScript context, so keep it to constants: no DOM, no app
+        // state, no other constants from this file.
+        //
         // The eight real intents. Every persona/enhancement/token-cap table
         // below is keyed by these ids. 'kb-question' and 'calculation' are new
         // in v2; 'kb-question' deliberately aliases 'factual' everywhere except
@@ -1888,8 +1914,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // for skills that are actually 'ready' today
         // (taxonomy-classify, csv-combine) - a coming-soon skill can never
         // surface a hint, so there is no pseudo-intent for it yet. Adding one
-        // later (once e.g. emotions or transcribe ships) is just another
-        // entry here plus a matching ROUTER_EXEMPLARS list.
+        // later is just another entry here plus a matching ROUTER_EXEMPLARS
+        // list. The text skills are not listed here: the skill offer check
+        // further down covers them with its own example lists, so that
+        // offering one never changes how a prompt is routed or answered.
         const HINT_INTENTS = {
             'classify-into-categories': { reuse: 'data', skillId: 'taxonomy-classify' },
             'merge-spreadsheets': { reuse: 'data', skillId: 'csv-combine' }
@@ -2006,6 +2034,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             'classify-into-categories': 'a request to sort or classify text into categories',
             'merge-spreadsheets': 'a request to combine or merge spreadsheet files'
         };
+        // ### Router intents: data (end) ###
 
         // Fragments are short ADDITIVE clauses, not full personas: the system
         // prompt sent to the model is always a base prompt (SYSTEM_PROMPT, or
@@ -2084,6 +2113,173 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const URL_RE = /https?:\/\/\S+/i;
         const SUMMARIZE_KEYWORD_RE = /\b(summar(y|ize|ise)|tl;?dr|key points|main points)\b/i;
         const CODE_HINT_RE = /```|^\s*(function|def|class|import|from|const|let|var)\b/m;
+
+        // ### Skill offer: data and pure helpers (start) ###
+        // A parallel check, separate from the routing intents above. It
+        // decides only whether the chat offers to open a Field Kit text
+        // skill with the prompt's text in its "Paste text" box; it never
+        // changes the system prompt or the reply. Everything between these
+        // two markers is evaluated on its own by the tests under tests/ in
+        // a bare JavaScript context, so keep it to constants and pure
+        // functions: no DOM, no app state, no other constants from this file.
+        //
+        // Which request opens which skill. The keys are scored like router
+        // intents; the values are skill ids from SKILLS. The category
+        // sorter has no example list here, because the router's own
+        // 'classify-into-categories' list already describes it.
+        const SKILL_OFFER_INTENTS = {
+            'detect-emotions': 'emotions',
+            'find-names-places': 'ner',
+            'estimate-pain-level': 'pain-level',
+            'classify-into-categories': 'taxonomy-classify'
+        };
+        // The list that an offer has to beat, next to the router's lists.
+        // It holds what the skill lists sit closest to without being a
+        // request to process a text: questions about the subject, requests
+        // for advice, and other jobs done on a text.
+        const SKILL_OFFER_CONTRAST_ID = 'not-a-skill-request';
+        // Example requests, encoded once with the shared embedding model
+        // and cached. A request's score for a list is its highest cosine
+        // similarity to any line of that list. Data, not logic: add a line
+        // when a common way of asking is missed, then run the model test.
+        const SKILL_OFFER_EXEMPLARS = {
+            'detect-emotions': [
+                'analyze this text for sentiment', 'what emotions are in this text',
+                'is this comment positive or negative', 'what is the tone of this message',
+                'detect the feelings expressed in this response', 'run a sentiment analysis on the text below',
+                'how does the writer feel in this passage', 'what is the mood of this journal entry',
+                'identify the emotions in the following paragraph', 'rate the sentiment of this review',
+                'detect emotions in the text below', 'tell me how this person is feeling from what they wrote',
+                'what is the overall tone of the comment below'
+            ],
+            'find-names-places': [
+                'find the names and places in this text', 'list the people mentioned in this passage',
+                'extract the organizations named in this document', 'which places are mentioned here',
+                'pull out every person and location from this text', 'run named entity recognition on the text below',
+                'who is named in this paragraph', 'extract the entities from this text',
+                'list all the names that appear in this note', 'what people, places, and organizations does this mention',
+                'identify the people and institutions in the following text', 'which names come up in the passage below',
+                'which names of people appear in this message'
+            ],
+            'estimate-pain-level': [
+                'rate the pain described in this text from 1 to 10', 'estimate the pain level in this description',
+                'how severe is the pain in this note', 'what pain score fits this description',
+                'how much pain is this person describing', 'score this pain description on a 10 point scale',
+                'give a pain rating for the following text', 'how bad is the pain described here',
+                'estimate pain intensity from this passage', 'what number from 1 to 10 matches this pain description',
+                'what level of pain is described in the text below', 'rate how much this person hurts based on what they wrote'
+            ],
+            [SKILL_OFFER_CONTRAST_ID]: [
+                'what is sentiment analysis', 'how does emotion detection work',
+                'how does named entity recognition work', 'what is a named entity',
+                'how is pain measured in research', 'what is a pain scale',
+                'what causes this kind of pain', 'how can I cope with feeling sad',
+                'what should I do about my pain', 'what is text classification',
+                'which questionnaire should I use to measure pain', 'which tool should I use to study emotions',
+                'count the words in this text', 'suggest places to visit',
+                'name some well known people in this field', 'what is the difference between an emotion and a mood',
+                'fix the grammar in this text', 'translate this text into another language',
+                'proofread the text below', 'rewrite this paragraph in a friendlier voice',
+                'turn these notes into a bulleted list'
+            ]
+        };
+        // Tuning knobs. Cosine scores from this embedding model sit high
+        // for any two English sentences, so both bars are needed: the best
+        // skill list has to score at least SKILL_OFFER_MIN_SCORE, and beat
+        // every other list by at least SKILL_OFFER_MIN_MARGIN. Both were
+        // set against tests/fixtures/skill-offer-prompts.json. Raising
+        // either one means fewer offers and fewer wrong offers.
+        const SKILL_OFFER_MIN_SCORE = 0.78;
+        const SKILL_OFFER_MIN_MARGIN = 0.05;
+        // Longest request that is split off from the text it is about, in
+        // characters. A longer lead is taken to be text, not a request.
+        const SKILL_REQUEST_MAX_CHARS = 200;
+        // Most readings of one prompt that are scored. They are encoded
+        // together, so the cost of the check stays at one model call.
+        const SKILL_OFFER_MAX_CANDIDATES = 3;
+
+        /**
+         * Returns the ways a prompt can be read as a request plus the text
+         * it is about, best guess first: [{ request, text }]. `request` is
+         * what gets scored and `text` is what would go to the skill. The
+         * request may come first ("Find the names in this text: ..."),
+         * around quoted text, or last ("... What emotions are in this?").
+         * The last entry is always the whole prompt, as both. Scoring the
+         * request alone matters because a long pasted text would otherwise
+         * drown out the few words that say what to do with it.
+         * A value that is not a string, or a blank one, gives an empty list.
+         * The prompt is only cut and trimmed here, never interpreted.
+         */
+        function skillRequestCandidates(prompt) {
+            const whole = typeof prompt === 'string' ? prompt.replace(/\r\n?/g, '\n').trim() : '';
+            if (!whole) return [];
+            const found = [];
+            const add = (request, text) => {
+                const req = request.trim().replace(/[\s:]+$/, '');
+                const body = text.trim();
+                if (!req || !body || req.length > SKILL_REQUEST_MAX_CHARS) return;
+                if (found.some(c => c.request === req && c.text === body)) return;
+                found.push({ request: req, text: body });
+            };
+
+            // A request first. It ends at the first line break, colon,
+            // question mark, or exclamation mark, or at a period that
+            // follows a lowercase word of three letters or more, which
+            // leaves titles such as "Dr." alone. The search reaches two
+            // characters past the limit, to see a mark that sits right
+            // at the limit and the space after it.
+            const lead = whole.slice(0, SKILL_REQUEST_MAX_CHARS + 2).match(/\n|[:?!](?=\s)|(?<=\b[a-z0-9][A-Za-z0-9]{2,})\.(?=\s)/);
+            if (lead) {
+                const keepMark = lead[0] === '?' || lead[0] === '!' || lead[0] === '.';
+                add(whole.slice(0, lead.index + (keepMark ? 1 : 0)), whole.slice(lead.index + 1));
+            } else {
+                // A request around quoted text of two words or more.
+                const quoted = whole.match(/["“]([^"“”]+)["”]/);
+                if (quoted && /\s/.test(quoted[1].trim())) {
+                    add(whole.slice(0, quoted.index) + ' ' + whole.slice(quoted.index + quoted[0].length), quoted[1]);
+                }
+            }
+
+            // A request last: the last line, or a closing question.
+            const lastBreak = whole.lastIndexOf('\n');
+            if (lastBreak !== -1) {
+                add(whole.slice(lastBreak + 1), whole.slice(0, lastBreak));
+            } else if (whole.endsWith('?')) {
+                const before = whole.slice(0, -1);
+                const at = Math.max(before.lastIndexOf('. '), before.lastIndexOf('! '), before.lastIndexOf('? '));
+                if (at !== -1) add(whole.slice(at + 2), whole.slice(0, at + 1));
+            }
+
+            found.push({ request: whole, text: whole });
+            return found.slice(-SKILL_OFFER_MAX_CANDIDATES);
+        }
+
+        /**
+         * Returns the id of the skill to offer for one scored request, or
+         * null. `scores` maps each list id, the router's and this block's,
+         * to the request's score for that list. A skill is offered only
+         * when its list scores high enough and clearly beats every list
+         * that is not a skill list, so a question about a subject or a
+         * request for another kind of help gets no offer.
+         */
+        function pickSkillOffer(scores) {
+            let offerId = null;
+            let offerScore = -Infinity;
+            let otherScore = -Infinity;
+            for (const id of Object.keys(scores || {})) {
+                const score = scores[id];
+                if (typeof score !== 'number' || Number.isNaN(score)) continue;
+                if (Object.hasOwn(SKILL_OFFER_INTENTS, id)) {
+                    if (score > offerScore) { offerId = id; offerScore = score; }
+                } else if (score > otherScore) {
+                    otherScore = score;
+                }
+            }
+            if (offerId === null || offerScore < SKILL_OFFER_MIN_SCORE) return null;
+            if (offerScore - otherScore < SKILL_OFFER_MIN_MARGIN) return null;
+            return SKILL_OFFER_INTENTS[offerId];
+        }
+        // ### Skill offer: data and pure helpers (end) ###
 
         // ### Crisis check: data and pure helpers (start) ###
         // A parallel check, separate from the routing intents above. It
@@ -3269,6 +3465,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (!chat) return;
             if (!confirm(`Delete "${chat.name}"?`)) return;
             deleteAttachmentsForChat(chat);
+            skillOffersByChat.delete(id);
             store.chats = store.chats.filter(c => c.id !== id);
             if (store.activeId === id) {
                 store.activeId = store.chats.length ? store.chats[store.chats.length - 1].id : null;
@@ -3522,6 +3719,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 if (m.role === 'phi-warning') { appendPhiWarning(m.content, m.ts); continue; }
                 if (m.role === 'crisis-notice') { appendCrisisNotice(m.ts, false, m.continueShown !== false); continue; }
                 appendMessage(m.role === 'assistant' ? 'bot' : 'user', m.content, m.ts, m.sources);
+                if (m.role === 'user') {
+                    const offer = skillOfferFor(chat.id, m.ts);
+                    if (offer) appendSkillOffer(offer, null, false);
+                }
             }
             chatBox.scrollTop = chatBox.scrollHeight;
         }
@@ -5204,6 +5405,44 @@ with this program. If not, see https://www.gnu.org/licenses/.
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
+        /**
+         * Shows a skill offer: one line and one button, placed after the
+         * prompt it belongs to. The button opens the skill with the
+         * prompt's text in its "Paste text" box. Built with createElement
+         * and textContent; the only text shown is fixed wording and the
+         * skill's own name, never anything from the prompt.
+         * @param {{skillId: string, text: string}} offer - From skillOfferForPrompt().
+         * @param {HTMLElement|null} before - The element to place the offer ahead of, or null to add it at the end of the chat.
+         * @param {boolean} announce - True reads the offer out through the polite live region. A transcript rebuild passes false, so reloads stay quiet.
+         * @returns {HTMLElement|null} The offer's element, or null when the skill cannot be offered.
+         */
+        function appendSkillOffer(offer, before, announce) {
+            const skill = findSkill(offer.skillId);
+            if (!skill || !skillCanTakeText(offer.skillId)) return null;
+            const row = document.createElement('div');
+            row.className = 'skill-offer';
+            const note = document.createElement('span');
+            note.textContent = SKILL_OFFER_NOTE;
+            const open = document.createElement('button');
+            open.type = 'button';
+            open.className = 'skill-offer-btn';
+            open.textContent = 'Open in ' + skill.name;
+            open.addEventListener('click', () => openSkillWithText(offer.skillId, offer.text));
+            row.appendChild(note);
+            row.appendChild(open);
+            if (before && before.parentNode === chatBox) chatBox.insertBefore(row, before);
+            else chatBox.appendChild(row);
+            chatBox.scrollTop = chatBox.scrollHeight;
+            if (announce) {
+                // Emptied first and filled a moment later, so that the same
+                // offer twice in a row is read out both times.
+                const spoken = SKILL_OFFER_NOTE + ' ' + open.textContent + '.';
+                chatLivePolite.textContent = '';
+                setTimeout(() => { chatLivePolite.textContent = spoken; }, 50);
+            }
+            return row;
+        }
+
         // Crisis notice bubble: fixed text, built with createElement and
         // textContent, with a link on "988 Lifeline chat", a Spanish line,
         // and, when `withContinue` is true, a line on how to continue.
@@ -6183,6 +6422,81 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (chat) routerStickyByChat.set(chat.id, intent);
 
             return { intent, secondaryIntent, hintSkillId, qVec, floor: false };
+        }
+
+        // --- Skill offer ---
+        // Runs beside the router on a chat prompt and decides whether the
+        // prompt asks for something a Field Kit text skill does. It reads
+        // the prompt's words only, never whether a file is attached, and
+        // it changes nothing about how the prompt is routed or answered.
+        // The lists and thresholds live in the block marked "Skill offer:
+        // data and pure helpers".
+        let skillOfferExemplarCache = null;    // { ids, vecs } once encoded, per session
+        let skillOfferExemplarBuilding = null;
+        function buildSkillOfferExemplarVecs() {
+            if (skillOfferExemplarCache) return Promise.resolve(skillOfferExemplarCache);
+            if (skillOfferExemplarBuilding) return skillOfferExemplarBuilding;
+            skillOfferExemplarBuilding = encodeExemplarLists(SKILL_OFFER_EXEMPLARS)
+                .then(result => { skillOfferExemplarCache = result; return result; })
+                .catch(e => { skillOfferExemplarBuilding = null; throw e; });
+            return skillOfferExemplarBuilding;
+        }
+        /**
+         * Returns { skillId, text } when the prompt asks for something a
+         * ready text skill does, or null. `text` is the part of the prompt
+         * to hand to the skill. Every reading of the prompt is encoded in
+         * one call to the shared embedding model, under the engine lock.
+         * A lock cancellation (Stop) is rethrown for the caller to handle.
+         * @param {string} prompt - The chat prompt, as typed. Untrusted.
+         * @returns {Promise<{skillId: string, text: string}|null>}
+         */
+        async function skillOfferForPrompt(prompt) {
+            const candidates = skillRequestCandidates(prompt);
+            if (!candidates.length) return null;
+            await buildRouterExemplarVecs();
+            const offerLists = await buildSkillOfferExemplarVecs();
+            const em = await ensureCompendiumEmbedder();
+            await EngineLock.acquire('chat', chatLockWaitCtl.signal);
+            let out;
+            try {
+                out = await em(candidates.map(c => c.request.slice(0, 400)), { pooling: 'cls', normalize: true });
+            } finally {
+                EngineLock.release();
+            }
+            for (let i = 0; i < candidates.length; i++) {
+                const qVec = out.data.subarray(i * COMPENDIUM_DIMS, (i + 1) * COMPENDIUM_DIMS);
+                const scores = Object.assign(
+                    maxCosineByIds(qVec, routerExemplarIds, routerExemplarVecs),
+                    maxCosineByIds(qVec, offerLists.ids, offerLists.vecs)
+                );
+                const skillId = pickSkillOffer(scores);
+                if (!skillId) continue;
+                return skillCanTakeText(skillId) ? { skillId, text: candidates[i].text } : null;
+            }
+            return null;
+        }
+        // True when the skill exists, is ready, and can run on this device.
+        function skillCanTakeText(skillId) {
+            const skill = findSkill(skillId);
+            return !!skill && skill.status === 'ready' && !(skillNeedsGpu(skill) && isCpuOnly());
+        }
+
+        // Offers made in this session, so an offer comes back when its
+        // chat is shown again: chat id -> (message time -> { skillId, text }).
+        // Kept in memory only. An offer is never written to chat history
+        // or to browser storage, and it is gone after a reload.
+        const skillOffersByChat = new Map();
+        function rememberSkillOffer(chatId, ts, offer) {
+            if (!skillOffersByChat.has(chatId)) skillOffersByChat.set(chatId, new Map());
+            skillOffersByChat.get(chatId).set(ts, offer);
+        }
+        function skillOfferFor(chatId, ts) {
+            const offers = skillOffersByChat.get(chatId);
+            return (offers && offers.get(ts)) || null;
+        }
+        function forgetSkillOffer(chatId, ts) {
+            const offers = skillOffersByChat.get(chatId);
+            if (offers) offers.delete(ts);
         }
 
         // --- Crisis check ---
@@ -8540,6 +8854,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // it streams and removed once complete, so the reader never
             // sees it appear and then vanish (see stripLeakedReferenceHeader).
             let leakHeaders = [];
+            // The skill offer shown under this turn's prompt, if any.
+            let offerRow = null;
 
             const onToken = (tok) => {
                 raw += tok;
@@ -8571,6 +8887,27 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 const routedSystem = intent ? composeFragments(intent, route.secondaryIntent, route.hintSkillId) : null;
                 const routedSuffix = intent ? ROUTER_ENHANCEMENTS[intent] : null;
                 const routedCap = intent ? ROUTER_MAX_TOKENS[intent] : null;
+
+                // ### Skill offer ###
+                // With the router on, a prompt that asks for something a
+                // Field Kit text skill does gets an offer under it, shown
+                // before the reply starts. The reply is generated as usual.
+                // The offer lives in memory only: nothing about it is
+                // written to chat history, and nothing from the prompt is
+                // logged here.
+                if (routerActive) {
+                    try {
+                        const offer = await skillOfferForPrompt(text);
+                        if (offer && !cancelledForNewChat) {
+                            rememberSkillOffer(chat.id, sendTs, offer);
+                            if (isMyTurn()) offerRow = appendSkillOffer(offer, botDiv, true);
+                        }
+                    } catch (e) {
+                        // A Stop (lock cancellation) ends the turn further
+                        // down. Any other failure means no offer this turn.
+                        if (!e || !e.lockCancelled) console.error('Skill offer check failed; answering without an offer:', errMsg(e));
+                    }
+                }
 
                 // Whether the currently loaded model can be trusted to use a
                 // [S#] citation tag instead of pattern-completing the
@@ -8793,6 +9130,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                         chat.updated = Date.now();
                         saveStore();
                     }
+                    forgetSkillOffer(chat.id, sendTs); // the offer goes with the prompt it belonged to
                     return; // finally block skips its UI reset because cancelledForNewChat is still true
                 }
 
@@ -8851,6 +9189,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     handedOff = true;
                     chat.messages.pop();
                     saveStore();
+                    // The prompt is sent again below and gets its own offer.
+                    forgetSkillOffer(chat.id, sendTs);
+                    if (offerRow) offerRow.remove();
                     if (isMyTurn()) {
                         botDiv.remove();
                         const userDivs = chatBox.querySelectorAll('.user');
@@ -10755,11 +11096,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (!skillStateProbe || skillStateProbe.id !== id) return false;
             try { return !!skillStateProbe.fn(); } catch { return false; }
         }
+        // A mounted text skill registers { id, fn } here so that text can be
+        // handed to it from outside, which is how a chat offer fills the
+        // skill's "Paste text" box. fn(text) returns false when the person
+        // chose to keep the text that was already in the box. Cleared
+        // wherever skillStateProbe is.
+        let skillTextReceiver = null;
         function resetCurrentSkill() {
             // Bump token to stop any in-flight batch. Then clear body and go
             // back to the grid. Called by "Done" and the tab's close-x.
             skillLoadToken++;
             skillStateProbe = null;
+            skillTextReceiver = null;
             skillBackHandler = null;
             pausedSkillRoot = null; // also drop a paused skill, if any - Done/close discard everything
             skillsBody.innerHTML = '';
@@ -10855,6 +11203,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             skillsResetBtn.hidden = true;
             skillsBackBtn.hidden = true;
             skillStateProbe = null;
+            skillTextReceiver = null;
             skillBackHandler = null;
             pausedSkillRoot = null;
             skillsTitle.textContent = 'Field Kit';
@@ -10918,6 +11267,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             skillLoadToken++;
             skillLockWaitCtl = new AbortController(); // this session's unit of work for EngineLock
             skillStateProbe = null;
+            skillTextReceiver = null; // re-registered below by the text skills
             skillBackHandler = null; // re-registered below by mountCsvCombineSkill, if applicable
             skillsCurrentId = skill.id;
             skillsDoneBtn.hidden = false;
@@ -10953,6 +11303,40 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
             renderTabs(); // tab-bar entry's label follows the mounted skill's name
         }
+        /**
+         * Opens a text skill with text already in its "Paste text" box.
+         * Called by the offer button under a chat prompt. Text moves one
+         * way only, from the prompt into the skill's box: nothing is
+         * written to chat history or to browser storage, and the skill
+         * does not run until the person starts it.
+         * Side effects: shows the Field Kit tab. When another skill holds
+         * files, text, or results, the person is asked before they are
+         * discarded; when the box already holds other text, the person is
+         * asked before it is replaced. Focus ends in the box.
+         * @param {string} skillId - A skill id from SKILLS.
+         * @param {string} text - The text to hand over. Untrusted; it is only ever set as a textarea's value.
+         * @returns {boolean} True when the text is in the box.
+         */
+        function openSkillWithText(skillId, text) {
+            const skill = findSkill(skillId);
+            if (!skill || !skillCanTakeText(skillId)) return false;
+            if (skillsCurrentId && skillsCurrentId !== skillId) {
+                // Only one skill's work is kept at a time, so another
+                // skill's work is discarded the way Done discards it.
+                const openName = findSkill(skillsCurrentId)?.name || 'this tool';
+                if ((skillBatchRunning || skillHasStateToPreserve(skillsCurrentId)) &&
+                    !confirm('Leave "' + openName + '"? Its files, text, and any results will be cleared. Saved settings are kept.')) {
+                    return false;
+                }
+                resetCurrentSkill();
+            }
+            openSkills();
+            // Mounts the skill, or brings it back as it was left when the
+            // back arrow paused it.
+            if (skillsCurrentId !== skillId || pausedSkillRoot) enterSkill(skill);
+            if (!skillTextReceiver || skillTextReceiver.id !== skillId) return false;
+            return skillTextReceiver.fn(text);
+        }
         // "Done" resets the skill and returns to the grid, staying on the
         // Field Kit tab. Confirms first if there are undownloaded results.
         // Unlike the back arrow (goToGridPreservingSkill), this always
@@ -10974,6 +11358,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 skillLoadToken++;
                 skillLockWaitCtl = new AbortController(); // fresh session for EngineLock
                 skillStateProbe = null;
+                skillTextReceiver = null; // re-registered below by the text skills
                 skillBackHandler = null; // re-registered below by mountCsvCombineSkill, if applicable
                 skillCompanionChatId = null; // "Send to Chat" starts a fresh companion next time
                 // Belt-and-braces: must never touch chat attachments - a
@@ -11106,6 +11491,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
          * @param {HTMLElement} section - Holds the .skill-tabs strip and its heading.
          * @param {Object<string, HTMLElement>} panesByMode - Each tab's data-mode mapped to the pane it shows. Every pane needs an id.
          * @param {function(string)} onModeChange - Called with the data-mode of the tab that opened, and once at wiring time for the tab that starts open.
+         * @returns {{open: function(string)}} open(mode) opens the tab with that data-mode and leaves focus where it is.
          */
         function wireSkillTabs(section, panesByMode, onModeChange) {
             const strip = section.querySelector('.skill-tabs');
@@ -11148,6 +11534,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 });
             });
             openTab(tabs.find(t => t.classList.contains('active')) || tabs[0], false);
+
+            return {
+                open: (mode) => {
+                    const tab = tabs.find(t => t.dataset.mode === mode);
+                    if (tab) openTab(tab, false);
+                }
+            };
         }
 
         /**
@@ -11158,7 +11551,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
          * person pastes is ever parsed as markup.
          * @param {string} idPrefix - The skill's id prefix, such as 'emo'. The pane's id is idPrefix + '-paste-pane'.
          * @param {string} labelText - The visible label of the box.
-         * @returns {{pane: HTMLElement, hasText: function(): boolean, getDocs: function(): Array<{id: string, text: string}>}}
+         * @returns {{pane: HTMLElement, hasText: function(): boolean, getDocs: function(): Array<{id: string, text: string}>, receiveText: function(string): boolean}}
+         *     receiveText(text) puts text that came from outside the skill into the box and moves focus there. When the box
+         *     already holds other text, it asks before replacing it, and returns false when the person keeps what was there.
          */
         function mountPasteTextPane(idPrefix, labelText) {
             const pane = document.createElement('div');
@@ -11210,10 +11605,23 @@ with this program. If not, see https://www.gnu.org/licenses/.
             pane.appendChild(textarea);
             pane.appendChild(row);
 
+            function receiveText(incoming) {
+                const next = normalizePastedText(incoming);
+                const current = normalizePastedText(textarea.value);
+                const keep = current.length > 0 && current !== next && !confirm('Replace the text already in the box?');
+                if (!keep) {
+                    textarea.value = next;
+                    refresh();
+                }
+                textarea.focus();
+                return !keep;
+            }
+
             return {
                 pane,
                 hasText: () => normalizePastedText(textarea.value).length > 0,
-                getDocs: () => pastedTextToDocs(textarea.value)
+                getDocs: () => pastedTextToDocs(textarea.value),
+                receiveText
             };
         }
 
@@ -11371,7 +11779,12 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const pasteInput = mountPasteTextPane('tax', 'Paste or type the text to sort. It is sorted as one item.');
             pasteInputRef = pasteInput;
             sectionB.appendChild(pasteInput.pane);
-            wireSkillTabs(sectionB, { files: filesPane, bulk: bulkPane, paste: pasteInput.pane }, (mode) => { inputMode = mode; });
+            const inputTabStrip = wireSkillTabs(sectionB, { files: filesPane, bulk: bulkPane, paste: pasteInput.pane }, (mode) => { inputMode = mode; });
+            // Text sent from a chat offer lands in the paste box.
+            skillTextReceiver = {
+                id: 'taxonomy-classify',
+                fn: (text) => { inputTabStrip.open('paste'); return pasteInput.receiveText(text); }
+            };
 
             function renderChips() {
                 filesChips.innerHTML = '';
@@ -14124,7 +14537,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
             const pasteInput = mountPasteTextPane(idPrefix, 'Paste or type the text to check. It is checked as one document.');
             section.appendChild(pasteInput.pane);
-            wireSkillTabs(section, { files: filesPane, bulk: bulkPane, paste: pasteInput.pane }, (mode) => { inputMode = mode; });
+            const tabStrip = wireSkillTabs(section, { files: filesPane, bulk: bulkPane, paste: pasteInput.pane }, (mode) => { inputMode = mode; });
 
             function renderChips() {
                 filesChips.innerHTML = '';
@@ -14241,6 +14654,10 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 // discard, whichever tab is open. For the state probe.
                 hasUnsavedInput: () => ingestedDocs.length > 0 || !!(bulkRows && bulkRows.length) || pasteInput.hasText(),
                 getEmptyInputMessage: () => skillEmptyInputMessage(inputMode),
+                // Takes text sent from a chat offer: opens the paste tab
+                // and puts the text in its box. Returns false when the
+                // person keeps the text that was already there.
+                receiveText: (text) => { tabStrip.open('paste'); return pasteInput.receiveText(text); },
                 getDocs: () => {
                     if (inputMode === 'files') {
                         return ingestedDocs.map(d => ({ id: d.name, text: d.text, warning: d.warning || null }));
@@ -14322,6 +14739,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 id: 'emotions',
                 fn: () => runningBatch || inputTabs.hasUnsavedInput() || !!lastResultsSummary
             };
+            skillTextReceiver = { id: 'emotions', fn: inputTabs.receiveText };
             container.appendChild(inputTabs.section);
 
             const sectionC = document.createElement('div');
@@ -14578,6 +14996,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
             const inputTabs = mountClassifierInputTabs('pain');
             skillStateProbe = { id: 'pain-level', fn: () => runningBatch || inputTabs.hasUnsavedInput() || !!lastResultsSummary };
+            skillTextReceiver = { id: 'pain-level', fn: inputTabs.receiveText };
             container.appendChild(inputTabs.section);
 
             const sectionC = document.createElement('div');
@@ -15089,6 +15508,7 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
 
             const inputTabs = mountClassifierInputTabs('ner');
             skillStateProbe = { id: 'ner', fn: () => runningBatch || inputTabs.hasUnsavedInput() || !!lastResultsSummary };
+            skillTextReceiver = { id: 'ner', fn: inputTabs.receiveText };
             container.appendChild(inputTabs.section);
 
             const sectionC = document.createElement('div');

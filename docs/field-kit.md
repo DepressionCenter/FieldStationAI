@@ -29,6 +29,7 @@ Field Kit is the task-focused side of Field Station AI™. It uses local-browser
 - Closing or resetting Field Kit can discard unsaved skill output.
 - Skills do not automatically add their input files or pasted text to chat.
 - Text pasted into a tool stays in that tool. It is not saved in browser storage.
+- The chat can hand text to a tool, and only when you press an offer button under your message. See [Open a Tool From the Chat](#open-a-tool-from-the-chat).
 - A skill-produced result becomes chat context only when the user explicitly sends it to chat.
 
 ## Tools
@@ -117,6 +118,26 @@ Things to know:
 - Send to Chat sends the results, not the text you pasted. Results from Find names and places do hold the names found in your text.
 - The box does not check spelling. Some browsers send spell-checked text to an online service, so the app turns spell checking off for this box.
 - **Clear text** empties the box. Done, Start over, and closing Field Kit also discard the text. The app asks you first.
+
+### Open a Tool From the Chat
+
+You can start in the chat. Ask for the job and give the text in one message, such as "Find the names and places in this text:" followed by the text. With a "+ Router" model chosen, the app shows a button under your message, such as **Open in Find names and places**.
+
+1. Press the button. By keyboard, move to it with the Tab key and press Enter.
+2. Field Kit opens the tool on its **Paste text** tab, with your text in the box and the cursor in the box. The words of your request are left out.
+3. Check the text. For Sort text into categories, type your categories too.
+4. Press the tool's run button.
+
+Four tools can be opened this way: Emotions and sentiment, Find names and places, Estimate pain level, and Sort text into categories.
+
+Things to know:
+
+- The tool does not run by itself, and nothing is added to your chat.
+- If the box already holds other text, the app asks before it replaces that text.
+- If another tool holds files, text, or results, the app asks before it clears them. A tool you left with the back arrow comes back as you left it.
+- A reply that is still being written keeps going while you work in the tool. The tool waits for the model if the chat is using it.
+
+The [User Guide](user-guide.md#send-text-to-a-field-kit-tool) lists the requests that bring an offer.
 
 ### Use the Tabs by Keyboard
 

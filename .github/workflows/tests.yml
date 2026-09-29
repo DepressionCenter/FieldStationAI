@@ -7,10 +7,11 @@
 # main. The static job installs nothing: it checks the documentation, the
 # single-file app, and the crisis check's regex tier with Node's own test
 # runner. The models job installs the one test dependency and scores the
-# crisis prompt fixture with the real embedding and tiebreak models, and
-# synthetic passages with the real reranker, on the CPU, caching the model
-# files between runs. Nothing here publishes, writes to the repository, or
-# needs a secret.
+# crisis prompt fixture with the real embedding and tiebreak models, the
+# skill offer prompt fixture with the real embedding model, and synthetic
+# passages with the real reranker, on the CPU, caching the model files
+# between runs. Nothing here publishes, writes to the repository, or needs
+# a secret.
 # Notes: See README file for documentation and full license information.
 #
 # Copyright © 2026 The Regents of the University of Michigan
@@ -86,4 +87,4 @@ jobs:
           key: test-models-${{ hashFiles('tests/package-lock.json') }}
 
       - name: Run the model-backed tests
-        run: node --test tests/crisis-models.test.mjs tests/rerank-models.test.mjs
+        run: node --test tests/crisis-models.test.mjs tests/rerank-models.test.mjs tests/skill-offer-models.test.mjs
