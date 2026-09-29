@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 index.html: Main HTML file for the Field Station AI application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-18
-Last Modified: 2026-09-28
+Last Modified: 2026-09-29
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This is the main HTML file for the Field Station AI application.
 Notes: See README file for documentation and full license information.
 
@@ -2299,11 +2299,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Spanish. One alternative per line so each can be read on its own.
         const CRISIS_TIER0_RE = new RegExp([
             // "I want to die", "I'm going to kill myself", "I have a plan to end it all"
-            "\\bi\\s*(?:want|wanna|need|would like|'?m going|am going|'?m gonna|am gonna|plan|'?m planning|am planning|'?m ready|am ready|have a plan)\\s+(?:to\\s+)?(?:kill myself|die|end (?:my (?:own )?life|it all|it|everything)|hurt myself|leave this (?:earth|world)|not (?:be alive|exist|wake up)|disappear)\\b",
+            "\\bi\\s*(?:want|wanna|need|would like|'?m going|am going|'?m gonna|am gonna|plan|'?m planning|am planning|'?m ready|am ready|have a plan)\\s+(?:to\\s+)?(?:(?:kill|hang|shoot|drown) myself|die|end (?:my (?:own )?life|it all|it|everything)|hurt myself|leave this (?:earth|world)|not (?:be alive|exist|wake up)|disappear(?! into))\\b",
             // "I don't want to live", "I no longer want to be here"
             "\\bi (?:don'?t|do not|no longer) want to (?:live|be alive|be here|exist|wake up|go on)\\b",
             // "killing myself", "end my life", "take my own life"
-            "\\b(?:kill(?:ing)? myself|end(?:ing)? my (?:own )?life|tak(?:e|ing) my (?:own )?life|hurt(?:ing)? myself)\\b",
+            "\\b(?:(?:kill|hang|shoot|drown)(?:ing)? myself|end(?:ing)? my (?:own )?life|tak(?:e|ing) my (?:own )?life|hurt(?:ing)? myself)\\b",
             // "thinking about suicide", "thinking of ending my life"
             "\\bthinking (?:about|of) (?:suicide|killing myself|ending (?:it all|my life))\\b",
             // "I am suicidal", "I feel so suicidal"
@@ -2311,7 +2311,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             // "everyone would be better off without me"
             "\\b(?:everyone|everybody|they|the world|my family) (?:would|will) be better off without me\\b",
             // "quiero morirme", "voy a matarme", "estoy pensando en suicidarme"
-            "\\b(?:quiero|quisiera|voy a|pienso|estoy pensando en) (?:morir(?:me)?|matarme|suicidarme|quitarme la vida|acabar con (?:mi vida|todo)|irme de este mundo|dejar este mundo|desaparecer)\\b",
+            "\\b(?:quiero|quisiera|voy a|pienso|estoy pensando en|he pensado en) (?:morir(?:me)?|matarme|suicidarme|quitarme la vida|acabar con (?:mi vida|todo)|irme de este mundo|dejar este mundo|desaparecer|dejar de vivir|estar muert[oa])\\b",
             // "me quiero morir", "me voy a matar"
             "\\bme (?:quiero|voy a) (?:morir|matar|suicidar)\\b",
             // "no quiero vivir", "ya no quiero seguir viviendo"
@@ -2329,12 +2329,27 @@ with this program. If not, see https://www.gnu.org/licenses/.
             if (t.length > CRISIS_TIER0_MAX_CHARS) return false;
             return CRISIS_TIER0_RE.test(t) && !CRISIS_TIER0_TOPIC_RE.test(t);
         }
+        // Words a statement about one's own death or self-harm nearly
+        // always uses, in both languages. The embedding tier reads a prompt
+        // only when one is present. The embedding model scores two
+        // sentences of the same shape as alike whatever they are about, so
+        // without this gate "I am planning a trip this week" matches "I am
+        // planning to end it all this week". The list is broad on purpose:
+        // a word here shows nothing by itself, the scores still decide.
+        const CRISIS_SUBJECT_RE = /\b(?:d(?:ie|ies|ied|ying)|dead|death|kill\w*|suicid\w*|alive|liv(?:e|ing)|life|hurt\w*|harm\w*|cut(?:ting)?|pills?|overdos\w*|gun|rope|jump\w*|goodbye|hopeless|worthless|burden|pain|gone|disappear\w*|wake up|exist\w*|born|safe|myself|end(?:ing)?|over|give up|giving up|way out|be here|be around|without me|miss me|anymore|any longer|nothing matters|leave this (?:earth|world)|mor(?:ir|irme)|muert[oa]|muero|matar(?:me)?|vivir|viviendo|vida|desaparecer|dolor|esperanza|acabar|aguanto|pastillas|no puedo m[aá]s)\b/i;
+        // True when the prompt mentions the subject at all.
+        function crisisMentionsSubject(text) {
+            return CRISIS_SUBJECT_RE.test(String(text || ''));
+        }
         // Embedding tier exemplars, scored with the shared bge-small model
         // the same way the router's exemplars are: a prompt's score for a
         // list is its highest cosine to any entry. Crisis entries are
         // first-person and present-tense. Contrast entries are the research,
         // clinical, and data tasks that mention the same subject, so that
-        // topic overlap alone cannot show the notice. Data, not logic.
+        // topic overlap alone cannot show the notice. Everyday entries are
+        // ordinary prompts, many built like a crisis entry or around the
+        // same word ("my phone is dying"), so that the shape of a sentence
+        // alone cannot show it either. Data, not logic.
         const CRISIS_EXEMPLARS = [
             'I want to kill myself', "I don't want to be alive anymore",
             'I am going to end my life tonight', "I can't do this anymore, I just want to die",
@@ -2342,6 +2357,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
             'I have the pills next to me and I am thinking of taking them all', 'I want to hurt myself',
             'I am planning to end it all this week', 'nothing matters anymore and I want it all to stop',
             'I want to leave this earth', 'I am having thoughts of suicide right now and I am scared',
+            'I am tired of being alive', 'I wish I could fall asleep and never wake up',
+            'I wrote letters to say goodbye to everyone I love',
+            'I have a gun and I keep thinking about using it on myself',
+            'I am standing at the edge and thinking about jumping', 'I have been cutting myself',
+            'no one would care if I disappeared', 'there is no reason for me to keep living',
+            'I wish I were dead', 'I feel hopeless and I cannot stop thinking about dying',
+            'I took too many pills on purpose',
             'quiero morirme', 'ya no quiero seguir viviendo', 'quiero quitarme la vida',
             'ya no aguanto más, quiero acabar con todo', 'estoy pensando en suicidarme'
         ];
@@ -2362,6 +2384,43 @@ with this program. If not, see https://www.gnu.org/licenses/.
             'resume esta entrevista donde el participante habla de autolesiones',
             'qué dice la literatura sobre la prevención del suicidio'
         ];
+        const CRISIS_EVERYDAY_EXEMPLARS = [
+            'hello, how are you', 'good morning', 'goodbye, see you tomorrow',
+            'thank you for your help', 'okay, sounds good', 'why is that',
+            'can you help me with something', 'what is the capital of Italy',
+            'how far away is the sun', 'who wrote this book', 'what year did the war end',
+            'how many grams are in a kilogram', 'what is 15 times 12',
+            'what is the tallest mountain in the world', 'what temperature does water freeze at',
+            'tell me a funny story', 'write a short poem about the ocean', 'how do I bake bread',
+            'write a function that sorts a list', 'how do I join two tables in SQL',
+            'help me fix this error in my code', 'rewrite this paragraph to be shorter',
+            'put all of it in one spreadsheet', 'how do I stop a running program',
+            'how do I end a task on my computer', 'check the spelling in this text',
+            'convert 10 miles to kilometers', 'I want to travel to Italy next year',
+            'I want to quit my job and start a business', 'I want to leave the meeting early',
+            'I am going to the gym tonight', 'I am going to bed early tonight',
+            'I am planning a party this weekend', 'I am planning to finish the report this week',
+            'I have been thinking about buying a house lately',
+            'I have the documents next to me and I am thinking of scanning them all',
+            'I am tired after a long day', 'I am so tired of this rainy weather',
+            "I can't solve this puzzle anymore, I need a hint",
+            'I am worried about my exam next week', 'I am stressed about work',
+            'I am sad that the summer is over', 'I had a rough day',
+            'I want this to stop printing', 'nothing is working and I want to reinstall the app',
+            'everyone would be better off with a clearer schedule',
+            'I want everything in one document', 'my phone is dying, where is the charger',
+            'I am dying to try that restaurant', 'I would kill for a slice of pizza',
+            'this homework is killing me', 'that joke killed me',
+            'this project will be the death of me', 'my cat died last month and I miss her',
+            'how do I write a sympathy card', 'what happens when a star dies',
+            'who assassinated the president', 'I have been cutting onions for dinner',
+            'I have been cutting back on coffee', "I don't want to hurt anyone's feelings",
+            'I am going to end the call early tonight',
+            'I am planning to end my subscription this week',
+            'is this app private', 'why is the model loading slowly', 'how do I upload a file',
+            'me muero de hambre', 'me muero de risa', 'ya no aguanto este calor',
+            'mi teléfono se está muriendo', 'quiero terminar mi tarea esta noche'
+        ];
         // Tiebreak hypotheses for the NLI model, used only when the
         // embedding scores land between the two margins below.
         const CRISIS_NLI_HYPOTHESES = {
@@ -2374,14 +2433,22 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // by at least this much, or the overlap is only the subject matter.
         // CRISIS_CLEAR_MARGIN: at or above this margin the notice shows
         // without a tiebreak; between the two margins the NLI model decides.
+        // CRISIS_EVERYDAY_MARGIN_MIN: the crisis score must beat the
+        // everyday score by at least this much, or the overlap is only the
+        // shape of the sentence. No tiebreak here: the NLI hypotheses are
+        // both about mental health, so they cannot judge an everyday prompt.
         const CRISIS_COSINE_MIN = 0.60;
         const CRISIS_MARGIN_MIN = 0.03;
         const CRISIS_CLEAR_MARGIN = 0.12;
-        // Returns 'crisis', 'none', or 'ambiguous' from the two list scores.
-        function crisisVerdictFromScores(crisisScore, contrastScore) {
+        const CRISIS_EVERYDAY_MARGIN_MIN = 0.03;
+        // Returns 'crisis', 'none', or 'ambiguous' from the three list
+        // scores. A missing score fails its check, so the verdict is 'none'
+        // and never a notice based on part of the evidence.
+        function crisisVerdictFromScores(crisisScore, contrastScore, everydayScore) {
             if (!(crisisScore >= CRISIS_COSINE_MIN)) return 'none';
+            if (!(crisisScore - everydayScore >= CRISIS_EVERYDAY_MARGIN_MIN)) return 'none';
             const margin = crisisScore - contrastScore;
-            if (margin < CRISIS_MARGIN_MIN) return 'none';
+            if (!(margin >= CRISIS_MARGIN_MIN)) return 'none';
             return margin >= CRISIS_CLEAR_MARGIN ? 'crisis' : 'ambiguous';
         }
         // After the first notice the person is invited to send the message
@@ -6506,7 +6573,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // crisis. Three tiers, each costlier than the last: the regex tier
         // (no model), the embedding tier (the shared bge-small model, one
         // vector the router reuses on the same turn), and the NLI tiebreak
-        // only when the scores land between the two margins. The data and
+        // only when the scores land between the two margins. A prompt that
+        // never mentions the subject stops after the regex tier. The data and
         // thresholds live in the block marked "Crisis check: data and pure
         // helpers". A lock cancellation (Stop) is rethrown so the caller can
         // end the turn; the caller treats any other failure as no crisis.
@@ -6515,7 +6583,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         function buildCrisisExemplarVecs() {
             if (crisisExemplarCache) return Promise.resolve(crisisExemplarCache);
             if (crisisExemplarBuilding) return crisisExemplarBuilding;
-            crisisExemplarBuilding = encodeExemplarLists({ crisis: CRISIS_EXEMPLARS, topic: CRISIS_CONTRAST_EXEMPLARS })
+            crisisExemplarBuilding = encodeExemplarLists({ crisis: CRISIS_EXEMPLARS, topic: CRISIS_CONTRAST_EXEMPLARS, everyday: CRISIS_EVERYDAY_EXEMPLARS })
                 .then(result => { crisisExemplarCache = result; return result; })
                 .catch(e => { crisisExemplarBuilding = null; throw e; });
             return crisisExemplarBuilding;
@@ -6523,10 +6591,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
         async function promptSignalsCrisis(text) {
             const trimmed = text.trim();
             if (crisisTier0(trimmed)) return true;
+            if (!crisisMentionsSubject(trimmed)) return false;
             const { ids, vecs } = await buildCrisisExemplarVecs();
             const qVec = await embedRoutingText(trimmed);
             const scores = maxCosineByIds(qVec, ids, vecs);
-            const verdict = crisisVerdictFromScores(scores.crisis, scores.topic);
+            const verdict = crisisVerdictFromScores(scores.crisis, scores.topic, scores.everyday);
             if (verdict !== 'ambiguous') return verdict === 'crisis';
             const hyps = [CRISIS_NLI_HYPOTHESES.crisis, CRISIS_NLI_HYPOTHESES.topic];
             const res = await tryClassifyRouterNli(trimmed.slice(0, 400), hyps);

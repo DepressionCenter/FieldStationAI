@@ -2,7 +2,7 @@
 // tests/helpers/crisis-block.mjs
 // Author(s): Gabriel Mongefranco.
 // Created: 2026-09-23
-// Last Modified: 2026-09-28
+// Last Modified: 2026-09-29
 // Summary: Shared helpers for the crisis check tests. Names the crisis
 // check's data block in index.html and its exports, loads the block
 // through the marked-block helper, and loads the shared prompt fixture.
@@ -37,8 +37,10 @@ export const BLOCK_END = blockMarkers(BLOCK_NAME).end;
 // object holding them, which is how a bare vm context hands them back.
 export const BLOCK_EXPORTS = [
     'CRISIS_TIER0_MAX_CHARS', 'CRISIS_TIER0_RE', 'CRISIS_TIER0_TOPIC_RE', 'crisisTier0',
-    'CRISIS_EXEMPLARS', 'CRISIS_CONTRAST_EXEMPLARS', 'CRISIS_NLI_HYPOTHESES',
-    'CRISIS_COSINE_MIN', 'CRISIS_MARGIN_MIN', 'CRISIS_CLEAR_MARGIN', 'crisisVerdictFromScores',
+    'CRISIS_SUBJECT_RE', 'crisisMentionsSubject',
+    'CRISIS_EXEMPLARS', 'CRISIS_CONTRAST_EXEMPLARS', 'CRISIS_EVERYDAY_EXEMPLARS', 'CRISIS_NLI_HYPOTHESES',
+    'CRISIS_COSINE_MIN', 'CRISIS_MARGIN_MIN', 'CRISIS_CLEAR_MARGIN', 'CRISIS_EVERYDAY_MARGIN_MIN',
+    'crisisVerdictFromScores',
     'CRISIS_ANSWERED_AFTER_NOTICE', 'crisisTurnAction'
 ];
 

@@ -2,11 +2,12 @@
 // tests/crisis-models.test.mjs
 // Author(s): Gabriel Mongefranco.
 // Created: 2026-09-23
-// Last Modified: 2026-09-23
+// Last Modified: 2026-09-29
 // Summary: Runs the crisis check's embedding and tiebreak tiers over the
 // prompt fixture with the real models, in Node on the CPU, using the same
 // package the app loads in the browser. Every crisis prompt must end as a
-// crisis and every research prompt must not. Needs the test dependency
+// crisis, and every research and everyday prompt must not, with each set
+// of embedding weights the app can load. Needs the test dependency
 // installed (npm ci --prefix tests); without it, or with
 // FSAI_SKIP_MODEL_TESTS=1, the file skips itself so the fast suite stays
 // dependency-free. Model files cache under tests/.cache/.
@@ -30,8 +31,10 @@ import path from 'node:path';
 import { REPO_ROOT, loadCrisisBlock, loadFixture } from './helpers/crisis-block.mjs';
 
 // Same model ids and settings as index.html. The app runs the embedder
-// with 4-bit weights and 32-bit math; full precision is the reference
-// those weights are checked against, so it is what the test uses.
+// with 4-bit weights and falls back to full precision. The two score the
+// same prompt up to about 0.04 apart, which is enough to cross a
+// threshold, so the fixture must pass with both.
+const EMBED_DTYPES = ['q4', 'fp32'];
 const EMBED_MODEL = 'Xenova/bge-small-en-v1.5';
 const NLI_MODEL = 'Xenova/nli-deberta-v3-xsmall';
 const EMBED_DIMS = 384;
@@ -54,14 +57,15 @@ if (process.env.FSAI_SKIP_MODEL_TESTS === '1') {
 
 // ### Score Prompts ###
 
-test('crisis check against the real models', { skip, timeout: 900000 }, async (t) => {
+let nli = null; // loaded only when a prompt lands in the ambiguous band
+
+for (const embedDtype of EMBED_DTYPES) test(`crisis check against the real models, ${embedDtype} embedding weights`, { skip, timeout: 900000 }, async (t) => {
     const { pipeline, env } = transformers;
     env.cacheDir = MODEL_CACHE;
     const block = loadCrisisBlock();
     const fixture = loadFixture();
 
-    const embed = await pipeline('feature-extraction', EMBED_MODEL, { dtype: 'fp32' });
-    let nli = null; // loaded only when a prompt lands in the ambiguous band
+    const embed = await pipeline('feature-extraction', EMBED_MODEL, { dtype: embedDtype });
 
     const encode = async (strings) => {
         const out = await embed(strings.map(s => s.slice(0, TEXT_LIMIT)), { pooling: 'cls', normalize: true });
@@ -70,6 +74,7 @@ test('crisis check against the real models', { skip, timeout: 900000 }, async (t
     };
     const crisisVecs = await encode(block.CRISIS_EXEMPLARS);
     const contrastVecs = await encode(block.CRISIS_CONTRAST_EXEMPLARS);
+    const everydayVecs = await encode(block.CRISIS_EVERYDAY_EXEMPLARS);
 
     // Max cosine over a list; both sides are unit vectors, so a dot product.
     const maxCosine = (vec, listVecs, count) => {
@@ -87,11 +92,16 @@ test('crisis check against the real models', { skip, timeout: 900000 }, async (t
     const verdict = async (prompt) => {
         const trimmed = prompt.trim();
         if (block.crisisTier0(trimmed)) return { verdict: 'crisis', tier: 0 };
+        if (!block.crisisMentionsSubject(trimmed)) return { verdict: 'none', tier: 0 };
         const vec = await encode([trimmed]);
         const crisis = maxCosine(vec, crisisVecs, block.CRISIS_EXEMPLARS.length);
         const contrast = maxCosine(vec, contrastVecs, block.CRISIS_CONTRAST_EXEMPLARS.length);
-        const scored = block.crisisVerdictFromScores(crisis, contrast);
-        const detail = { tier: 1, crisis: crisis.toFixed(3), contrast: contrast.toFixed(3), margin: (crisis - contrast).toFixed(3) };
+        const everyday = maxCosine(vec, everydayVecs, block.CRISIS_EVERYDAY_EXEMPLARS.length);
+        const scored = block.crisisVerdictFromScores(crisis, contrast, everyday);
+        const detail = {
+            tier: 1, crisis: crisis.toFixed(3), contrast: contrast.toFixed(3), everyday: everyday.toFixed(3),
+            margin: (crisis - contrast).toFixed(3), everydayMargin: (crisis - everyday).toFixed(3)
+        };
         if (scored !== 'ambiguous') return { verdict: scored, ...detail };
         if (!nli) nli = await pipeline('zero-shot-classification', NLI_MODEL, { dtype: 'q8' });
         const hyps = [block.CRISIS_NLI_HYPOTHESES.crisis, block.CRISIS_NLI_HYPOTHESES.topic];
@@ -106,7 +116,7 @@ test('crisis check against the real models', { skip, timeout: 900000 }, async (t
             assert.equal(result.verdict, 'crisis', JSON.stringify(result));
         });
     }
-    for (const prompt of fixture.notCrisis) {
+    for (const prompt of [...fixture.notCrisis, ...fixture.everyday]) {
         await t.test(`answers normally: ${prompt}`, async () => {
             const result = await verdict(prompt);
             assert.equal(result.verdict, 'none', JSON.stringify(result));

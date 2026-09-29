@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 security-privacy-accessibility.md: Security and accessibility guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-28
+Last Modified: 2026-09-29
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -108,7 +108,7 @@ The application is not a clinical tool and does not deliver care. It is, however
 Three tiers are applied in order, each invoked only when the previous one is not decisive. All three run locally in the browser before any language model receives the prompt, on every model the application offers, whether or not the intent router is active.
 
 1. Lexical screen. A curated set of first-person, present-tense expressions in English and Spanish (for example, wanting to die, a plan to end one's life, being suicidal). A co-occurring research or clinical context term (participant, transcript, survey, screening, and similar) suppresses this tier, so that quoted or reported speech is not treated as the writer's own statement. This tier is applied only to short prompts; longer text, such as a pasted transcript, proceeds to the semantic screen.
-2. Semantic screen. The prompt is embedded with the same sentence-embedding model used for retrieval and compared, by cosine similarity, with two curated sets: crisis exemplars (first-person statements) and contrast exemplars (research, clinical, and data tasks on the same subject matter). A prompt is flagged only when its similarity to the crisis set exceeds an absolute floor and exceeds its similarity to the contrast set by a margin, so that topical overlap alone does not trigger the referral.
+2. Semantic screen. This tier reads a prompt only when it contains at least one word from a broad list of subject words (for example die, life, hurt, pills, myself, and their Spanish counterparts). A prompt with none of them is answered normally, and no model runs for it. The prompt is then embedded with the same sentence-embedding model used for retrieval and compared, by cosine similarity, with three curated sets: crisis exemplars (first-person statements), contrast exemplars (research, clinical, and data tasks on the same subject matter), and everyday exemplars (ordinary prompts, many built like a crisis statement or using a subject word in its everyday sense, such as "my phone is dying"). A prompt is flagged only when its similarity to the crisis set exceeds an absolute floor and exceeds its similarity to each of the other two sets by a margin. Topical overlap alone does not trigger the referral, and neither does the shape of a sentence.
 3. Entailment tiebreak. When the margin falls within a narrow band, a small natural-language-inference model tests the prompt against two hypotheses: that the writer is describing their own current crisis, and that the prompt concerns mental health as a subject. The referral is shown only when the first hypothesis is preferred.
 
 The embedding and inference models are English-language models. Spanish coverage rests on the lexical tier.
@@ -139,12 +139,15 @@ The panels show, in order:
 
 ### Validation
 
-The method is checked against a fixed, synthetic prompt set (`tests/fixtures/crisis-prompts.json`) in two ways: a dependency-free test of the lexical tier, and a test that runs the embedding and inference models over every prompt. Both run in continuous integration. The set holds first-person crisis statements in English and Spanish, and research, clinical, and third-party prompts that must not be flagged. Threshold values were tuned against this set and are recorded in the code. No clinical validation has been performed. Sensitivity and specificity against clinical criteria are unknown.
+The method is checked against a fixed, synthetic prompt set (`tests/fixtures/crisis-prompts.json`) in two ways: a dependency-free test of the lexical tier, and a test that runs the embedding and inference models over every prompt. Both run in continuous integration. The set holds first-person crisis statements in English and Spanish, research, clinical, and third-party prompts that must not be flagged, and everyday prompts that must not be flagged. The model test scores the set with both sets of embedding weights the application can load, because the two differ enough to cross a threshold. Threshold values were tuned against this set and are recorded in the code.
+
+The set passing says little about new prompts, because the lists were tuned against it. On 2026-09-29, prompts written after the lists were set were scored once, in two batches. Of 63 first-person crisis statements, 56 were flagged. Of 179 everyday prompts, chosen to be hard (most use a subject word or copy the shape of a crisis statement), 171 were answered normally with the full-precision weights and 174 with the 4-bit weights. These counts describe synthetic prompts written by the developers. No clinical validation has been performed. Sensitivity and specificity against clinical criteria are unknown.
 
 ### Limitations
 
 - The screen detects language, not risk. It cannot recognize a crisis expressed indirectly, in a language other than English or Spanish, or inside an attached file. Only chat prompts are screened.
-- False positives occur for first-person quotations that lack a surrounding research cue. The escalation rule bounds their cost to one re-send per chat.
+- A crisis statement that uses none of the subject words is not flagged. Examples from testing: "I am thinking about walking into traffic" and a statement about a rope that never says what it is for.
+- False positives occur for first-person quotations that lack a surrounding research cue, and for some ordinary sentences that use a subject word in a shape close to a crisis statement. An example from testing: "I am going to cut my hair short". The escalation rule bounds their cost to one re-send per chat.
 - Behavior on the invited re-send depends on the language model. Larger instruction-tuned models generally decline to engage with self-harm content; the smallest models may not. The escalation rule exists because of this.
 - No data leaves the browser during screening, and prompt text is not logged. Referral events are stored only within the chat, in the browser.
 
