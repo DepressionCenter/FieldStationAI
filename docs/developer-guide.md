@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 developer-guide.md: Guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-29
+Last Modified: 2026-09-30
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -100,6 +100,32 @@ Preserve these rules:
 - The item name is the fixed `PASTED_TEXT_ITEM_NAME`. Never build a name from the pasted text.
 - A skill's state probe must call `hasUnsavedInput()`, which looks at every tab. `hasInput()` looks at the open tab only and is for the run button.
 - Read the open tab once when a run starts, and use that value to show the results. The person may open another tab while the run works.
+
+## Change the Pain Estimate
+
+Estimate pain level reads the model's raw answers instead of the zero-shot pipeline. For each statement it sends the text and the statement to `classifier.tokenizer` as a pair, runs `classifier.model`, and reads three scores: the text agrees with the statement, disagrees, or says neither. The pure helpers that turn those scores into results sit in the marked block `Pain estimate: data and pure helpers`, just above `mountPainLevelSkill`.
+
+- The default statements, the labels, the thresholds, and the download columns are constants at the top of the block. Change wording there, and the download's `pain_scale_version` when the meaning of a column changes.
+- `painSetScores` gives each intensity statement its share of the "agrees" score (the match score) and its own "agrees" probability (the support). `pickPainIntensity` and `pickPainInterference` apply the thresholds. `summarizePainItem` adds the notes.
+- `painFitTextToBudget` cuts text by token count so the statement is never pushed out of the model's window. The tokenizer is passed in, so the tests can use a stand-in.
+- `findStatedPainScores` is pattern matching with no model. Add a form to its list, and add the look-alikes it must reject to the tests.
+- `mountPainWordingEditor` holds the editable statements. It saves through `readPainWording` and `writePainWording`, which validate on read and remove the key when the wording is the default. The key is `PAIN_WORDING_KEY`.
+- The model runs with the `q4` weights on WebGPU or on the CPU. The `q4f16` variant is left out of this model's ladder in `ensureSkillZeroShot`, because on WebGPU it gave flattened, wrong scores.
+
+Rules:
+
+- Item names, stated score phrases, and statements are untrusted input. Build the results and the editor with `createElement` and `textContent`. A test checks both functions for `innerHTML`.
+- A statement must pass `validatePainStatement`: letters first, then only letters, digits, spaces, and `, . ' - ( ) / ; :`. That keeps markup and spreadsheet formulas out of the download.
+- Keep every score in the download. An analyst must be able to apply a different threshold without rerunning the tool.
+- Never add a 0 to 10 number that the model inferred, and never name an instrument or a population in the interface.
+
+To check a wording or threshold change, run the fixture with the real model:
+
+```text
+FSAI_PAIN_MODEL_TEST=1 node --test tests/pain-estimate-models.test.mjs
+```
+
+The test prints every result. Add new texts to `tests/fixtures/pain-estimate-texts.json` before you change anything, then judge the change on them. An item with `knownMiss` is reported and does not fail; remove the note when the model reaches it.
 
 ## Add Attachment Behavior
 
@@ -288,9 +314,9 @@ The tests live under `tests/` and use Node's own test runner, so nothing is inst
 node --test tests/
 ```
 
-That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, **Paste text** tab wiring, and skill offer wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, the skill offer's helpers and lists, and the storage dialog's helpers and wiring. The model-backed tests skip themselves unless their dependency is installed.
+That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, **Paste text** tab wiring, skill offer wiring, and pain estimate wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, the skill offer's helpers and lists, the pain estimate's helpers and its fixture's stated scores, the CSV cell writer, and the storage dialog's helpers and wiring. The model-backed tests skip themselves unless their dependency is installed.
 
-Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are seven such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, the Field Kit paste text helpers, and the storage dialog's helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
+Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are nine such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, the Field Kit paste text helpers, the pain estimate's data and helpers, the CSV cell writer, and the storage dialog's helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
 
 To score the crisis and skill offer prompt fixtures with the real embedding and tiebreak models, and the reranker with synthetic passages, on your CPU. The crisis test runs with both sets of embedding weights:
 
@@ -301,6 +327,8 @@ node --test tests/crisis-models.test.mjs tests/rerank-models.test.mjs tests/skil
 
 The first run downloads about 300 MB of model files into `tests/.cache/`, which git ignores. Set `FSAI_SKIP_MODEL_TESTS=1` to skip those tests even when the dependency is installed.
 
+The pain estimate has its own model test, `tests/pain-estimate-models.test.mjs`. It is off unless `FSAI_PAIN_MODEL_TEST=1` is set, because its model is another 440 MB. See [Change the Pain Estimate](#change-the-pain-estimate).
+
 The GitHub Actions workflow in `.github/workflows/tests.yml` runs both on every pull request and on every push to `main`. Browser testing of the app is still manual: record the browser, the models, and the steps in the pull request.
 
 ## Security Checklist
@@ -310,6 +338,7 @@ Before merging:
 - No secrets, tokens, PHI, or participant identifiers in code, docs, tests, screenshots, or examples.
 - No stack traces exposed directly to end users.
 - No unguarded `innerHTML` with user-controlled content.
+- Every CSV goes through `writeCsv` or `writeCsvStreaming`, so `quoteField` neutralizes cells a spreadsheet would run as a formula. Never write a CSV another way.
 - No untrusted SQL or shell execution.
 - Attachment deletion deletes all related records where applicable.
 - Network-bound model prompts are redacted where the feature promises redaction.
@@ -321,7 +350,7 @@ Before merging UI changes:
 - Keyboard-only operation works.
 - Focus order is logical.
 - Focus is visible.
-- Dynamic status changes are announced where needed.
+- Dynamic status changes are announced where needed. A skill's status line carries `aria-live="polite"`; keep it when you add one.
 - Dialogs have labels and close behavior.
 - Color is not the only state cue.
 - Reduced-motion preference is respected for new animations.

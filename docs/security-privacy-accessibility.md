@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 security-privacy-accessibility.md: Security and accessibility guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-29
+Last Modified: 2026-09-30
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -177,11 +177,21 @@ With a "+ Router" model chosen, the app checks each chat prompt for a request th
 - Offers are kept in memory and are gone after a reload. The prompt itself is a chat message and is stored with the chat, as every prompt is.
 - The check is a best effort. It can miss a request or offer a tool for a prompt that did not ask for one.
 
+## Estimate Pain Level
+
+The tool keeps only the wording of its statements in browser storage, under `fieldstation_pain_wording_v1`, and only after a person edits it. The text being checked never goes through that key. Statements are validated on read and on edit against an allowlist: a letter first, then letters, digits, spaces, and `, . ' - ( ) / ; :`. Markup and the characters that start a spreadsheet formula are refused, so a statement cannot reach the page as markup or the download as a formula.
+
+The results table and the wording editor are built element by element, never from markup strings, because item names, stated score phrases, and statements come from the person. A test checks this. The saved-list menus of Sort text into categories and Score against any labels build their entries the same way, so a list name is never read as markup.
+
+The download adds columns that hold model scores, the wording, the model variant, and the run time. A stated score phrase from the text, such as "7 out of 10", is written as well. Original columns pass through unchanged. See [Download Columns](field-kit.md#download-columns).
+
 ## Logging and Exports
 
 Console errors may include technical details. Avoid capturing logs or screenshots with real participant data.
 
 Review downloaded files, transcripts, CSVs, summaries, notebooks, and generated indexes before sharing. Column names, filenames, and aggregate summaries can still reveal study context.
+
+Every CSV the app writes goes through one cell writer. A cell that a spreadsheet program would run as a formula, one that starts with `=` or `@`, a tab, or a carriage return, or with `+` or `-` followed by anything but a number or a space, gets a single quote in front and is wrapped in quotes. It then shows as text with a leading quote. Numbers such as `-5`, a lone dash, and a dash before a space are left as they are, so source values are changed only when they would have run as a formula. `tests/csv-quoting.test.mjs` checks this.
 
 ## Accessibility Target
 
@@ -193,7 +203,7 @@ Minimum checks:
 - No keyboard traps.
 - Visible focus indicators.
 - Labels or accessible names for controls.
-- Dynamic status changes announced when needed.
+- Dynamic status changes announced when needed. Every Field Kit tool's status line is a polite live region.
 - Color is not the only indicator of state.
 - Text contrast meets AA expectations.
 - Reduced-motion preference respected for animations.
@@ -218,6 +228,7 @@ Before release, test:
 12. Send a crisis test prompt from `tests/fixtures/crisis-prompts.json`, confirm a screen reader announces the notice, and reach its 988 chat link with Tab.
 13. In a Field Kit text tool, move between the input tabs with the arrow keys, confirm a screen reader announces each tab as selected, and reach the **Paste text** box and **Clear text** with Tab.
 14. Send an offer test prompt from `tests/fixtures/skill-offer-prompts.json`, confirm a screen reader announces the offer, reach its button with Tab, press Enter, and confirm focus lands in the tool's **Paste text** box.
+15. In Estimate pain level, open **Classification statements** with the keyboard, type an invalid statement, and confirm a screen reader reads the error with the box. Run the tool and confirm a screen reader can read the results table by column, and that the table can be scrolled sideways from the keyboard on a narrow screen.
 
 Automated check:
 

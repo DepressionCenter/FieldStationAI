@@ -50,7 +50,7 @@ Status values are **Not started**, **Planning**, **In progress**, **In review**,
 | 4 | [#4](https://github.com/DepressionCenter/FieldStationAI/issues/4) | Storage management dialog in the menu | `feature/storage-manager` | In review |
 | 5 | [#2](https://github.com/DepressionCenter/FieldStationAI/issues/2) | Full Markdown support in chats | `feature/chat-markdown` | Not started (do much later) |
 
-Issues [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3), [#5](https://github.com/DepressionCenter/FieldStationAI/issues/5), and [#12](https://github.com/DepressionCenter/FieldStationAI/issues/12) stay open but are not scheduled. See [Issues not scheduled](#issues-not-scheduled).
+Issues [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3), [#5](https://github.com/DepressionCenter/FieldStationAI/issues/5), [#12](https://github.com/DepressionCenter/FieldStationAI/issues/12), and [#21](https://github.com/DepressionCenter/FieldStationAI/issues/21) stay open but are not scheduled. See [Issues not scheduled](#issues-not-scheduled).
 
 ### Phase 1: Crisis notice (issue #1)
 
@@ -400,6 +400,7 @@ Model output is untrusted, so rendered Markdown must be encoded before it reache
 - [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3), zip and progressive XML ingestion, is groundwork for a wearable-data skill that does not exist yet. It stays open until that skill is planned.
 - [#5](https://github.com/DepressionCenter/FieldStationAI/issues/5), service worker and cache bucket, changes the deployment story and adds a network allowlist. It needs an explicit design decision first, recorded in `docs/design-change-record.md`.
 - [#12](https://github.com/DepressionCenter/FieldStationAI/issues/12), pinning the WebLLM import, is a small dependency change that needs its own release-note and advisory check. Do it in its own branch when convenient.
+- [#21](https://github.com/DepressionCenter/FieldStationAI/issues/21), extracting pain location, qualities, and timeframe from text, follows the rework of Estimate pain level on `feature/pain-intensity-interference`. It needs a decision on whether it is a new skill or a mode of the existing one, and on which model extracts the wording. See [Estimate Pain Level](field-kit.md#estimate-pain-level) for what exists today.
 
 ### Conclusion
 
