@@ -782,17 +782,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
             border: 1px solid var(--line);
             border-radius: 4px; overflow: hidden; margin: 3px 0;
         }
+        /* The fill is a tint, so the dark label text keeps at least 4.5:1
+           contrast on the filled part and on the pale part alike. */
         .skill-bar-fill {
-            position: absolute; inset: 0 auto 0 0; background: var(--bubble);
+            position: absolute; inset: 0 auto 0 0; background: rgba(47, 101, 167, 0.35);
             border-radius: 3px;
         }
-        .skill-bar.top .skill-bar-fill { background: var(--accent); }
+        .skill-bar.top .skill-bar-fill { background: rgba(0, 39, 76, 0.4); }
         .skill-bar-label {
             position: relative; z-index: 1; padding: 0 8px; line-height: 22px;
-            font-size: 0.78rem; font-weight: 600; color: #fff;
-            /* Dark halo so the label stays readable even on the short pale
-               portion of the bar (past the fill). */
-            text-shadow: 0 0 3px rgba(23, 38, 59, 0.9), 0 1px 1px rgba(23, 38, 59, 0.6);
+            font-size: 0.78rem; font-weight: 600; color: var(--ink);
             display: flex; justify-content: space-between;
         }
         .skill-banner {
@@ -2704,35 +2703,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const SKILL_EMOTIONS_ID = 'SamLowe/roberta-base-go_emotions-onnx';
         // Verified directly against the repo on Hugging Face.
         const SKILL_NER_ID = 'Xenova/bert-base-NER';
-        // The 28 go_emotions labels in the model's id2label order (index
-        // matters for nothing here - this is the display/lookup list, not a
-        // positional decode - but verified verbatim against the repo's
-        // config.json so no label is mistyped).
-        const EMOTIONS_LABELS = [
-            'admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring', 'confusion',
-            'curiosity', 'desire', 'disappointment', 'disapproval', 'disgust', 'embarrassment',
-            'excitement', 'fear', 'gratitude', 'grief', 'joy', 'love', 'nervousness', 'optimism',
-            'pride', 'realization', 'relief', 'remorse', 'sadness', 'surprise', 'neutral'
-        ];
-        // Default curated view for mental-health research: the emotions most
-        // relevant to distress/affect screening, so the default table isn't
-        // 28 rows deep. Easy to change - just this array.
-        const EMOTIONS_CURATED = [
-            'sadness', 'fear', 'anger', 'nervousness', 'disappointment',
-            'grief', 'remorse', 'disapproval', 'annoyance', 'joy'
-        ];
-        // Sentiment rollup grouping - sourced from the original GoEmotions
-        // dataset's own published grouping (google-research/google-research,
-        // goemotions/data/sentiment_dict.json), not guessed. That source
-        // splits into positive/negative/ambiguous, with 'neutral' standing
-        // alone as its own 28th label. The UI here asks for a 3-way
-        // pos/neg/neutral rollup, so 'ambiguous' is folded into the neutral
-        // bucket for that view only - the full 28-label view is unaffected.
-        const EMOTIONS_SENTIMENT_GROUPS = {
-            positive: ['amusement', 'excitement', 'joy', 'love', 'desire', 'optimism', 'caring', 'pride', 'admiration', 'gratitude', 'relief', 'approval'],
-            negative: ['fear', 'nervousness', 'remorse', 'embarrassment', 'disappointment', 'sadness', 'grief', 'disgust', 'anger', 'annoyance', 'disapproval'],
-            ambiguous: ['realization', 'surprise', 'curiosity', 'confusion']
-        };
+        // The emotion labels, the curated subset, and the sentiment groups
+        // sit in the marked block "Emotions results: pure helpers", next to
+        // the skill that uses them.
         // Plain-English entity type names for the Extract Entities skill,
         // keyed on dslim/bert-base-NER's standard CoNLL-2003 scheme.
         const NER_TYPE_LABELS = { PER: 'Person', ORG: 'Organization', LOC: 'Place', MISC: 'Other' };
@@ -15048,14 +15021,73 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             return skillEmotionsLoading;
         }
 
-        // Map go_emotions' raw per-label output (array of {label, score}) to
-        // a plain label->score object, and compute the 3-way sentiment
-        // rollup (see EMOTIONS_SENTIMENT_GROUPS above for the source/caveat).
+        // ### Emotions results: pure helpers (start) ###
+        // Data and result handling for Emotions and sentiment. Everything
+        // between these two markers is evaluated on its own by the tests
+        // under tests/ in a bare JavaScript context, so keep it to constants
+        // and pure functions: no DOM, no app state, no other constants from
+        // this file.
+        //
+        // The model scores every one of its 28 labels on its own, from 0 to
+        // 1, so the scores do not add up to 1. A text can score high on two
+        // feelings at once, or low on all of them. The table shows the top
+        // three of the labels a person chose to look at; the downloads
+        // always hold every label, so no choice made on screen loses data.
+
+        // The 28 go_emotions labels, verified verbatim against the model
+        // repository's config.json so no label is mistyped. The order is
+        // the model's own and is also the column order in the downloads.
+        const EMOTIONS_LABELS = [
+            'admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring', 'confusion',
+            'curiosity', 'desire', 'disappointment', 'disapproval', 'disgust', 'embarrassment',
+            'excitement', 'fear', 'gratitude', 'grief', 'joy', 'love', 'nervousness', 'optimism',
+            'pride', 'realization', 'relief', 'remorse', 'sadness', 'surprise', 'neutral'
+        ];
+        // The optional narrower view for mental-health research: the
+        // feelings most relevant to distress and affect screening. It is
+        // a viewing choice only and never limits a download.
+        const EMOTIONS_CURATED = [
+            'sadness', 'fear', 'anger', 'nervousness', 'disappointment',
+            'grief', 'remorse', 'disapproval', 'annoyance', 'joy'
+        ];
+        // Sentiment rollup grouping, taken from the GoEmotions dataset's own
+        // published grouping (google-research/google-research,
+        // goemotions/data/sentiment_dict.json). That source splits the
+        // labels into positive, negative, and ambiguous, with neutral as
+        // its own label. The three-way tone shown here folds ambiguous into
+        // the neutral share.
+        const EMOTIONS_SENTIMENT_GROUPS = {
+            positive: ['amusement', 'excitement', 'joy', 'love', 'desire', 'optimism', 'caring', 'pride', 'admiration', 'gratitude', 'relief', 'approval'],
+            negative: ['fear', 'nervousness', 'remorse', 'embarrassment', 'disappointment', 'sadness', 'grief', 'disgust', 'anger', 'annoyance', 'disapproval'],
+            ambiguous: ['realization', 'surprise', 'curiosity', 'confusion']
+        };
+        // A feeling below this score is left out of the table, and a row
+        // whose best feeling is below it reads "none above 5%". Without the
+        // cut, a text with no detectable feeling still names a "top"
+        // feeling at a fraction of a percent, which reads as a finding.
+        // The downloads are not cut.
+        const EMOTIONS_TABLE_MIN_SCORE = 0.05;
+        const EMOTIONS_TABLE_TOP_N = 3;
+        // Decimal places for every score written to a download.
+        const EMOTIONS_EXPORT_DECIMALS = 4;
+        // Download column names, in order, before the one column per label.
+        const EMOTIONS_EXPORT_KEYS = [
+            'top_1_feeling', 'top_1_score', 'top_2_feeling', 'top_2_score', 'top_3_feeling', 'top_3_score',
+            'sentiment_positive', 'sentiment_negative', 'sentiment_neutral'
+        ];
+        const EMOTIONS_EXPORT_LABEL_PREFIX = 'feeling_';
+
+        /** Turns the model's list of {label, score} into a label-to-score object. */
         function emotionsScoreByLabel(raw) {
             const scoreByLabel = {};
             for (const r of raw) scoreByLabel[r.label] = r.score;
             return scoreByLabel;
         }
+
+        /**
+         * The three-way tone: each group's total score as a share of the
+         * three groups' total. Shares add up to 1; the label scores do not.
+         */
         function emotionsSentimentRollup(scoreByLabel) {
             const sum = (labels) => labels.reduce((s, l) => s + (scoreByLabel[l] || 0), 0);
             const positive = sum(EMOTIONS_SENTIMENT_GROUPS.positive);
@@ -15064,6 +15096,86 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const total = positive + negative + neutral || 1;
             return { positive: positive / total, negative: negative / total, neutral: neutral / total };
         }
+
+        /**
+         * The n highest-scoring labels among `pool`, highest first. Labels
+         * the result lacks are skipped. A tie keeps the pool's order.
+         */
+        function emotionsTopFeelings(scoreByLabel, pool, n) {
+            const rows = [];
+            for (const label of pool) {
+                if (scoreByLabel && typeof scoreByLabel[label] === 'number') rows.push({ label, score: scoreByLabel[label] });
+            }
+            rows.sort((a, b) => b.score - a.score);
+            return rows.slice(0, n);
+        }
+
+        /**
+         * What the table shows for one item: the top feelings among `pool`
+         * that reach the cut, or a single "none above" cell when none does.
+         * Returns { none: boolean, cells: [{label, score}] }.
+         */
+        function emotionsTableCells(scoreByLabel, pool) {
+            const top = emotionsTopFeelings(scoreByLabel, pool, EMOTIONS_TABLE_TOP_N).filter(r => r.score >= EMOTIONS_TABLE_MIN_SCORE);
+            return { none: top.length === 0, cells: top };
+        }
+
+        /** The text shown in place of a top feeling when no feeling reached the cut. */
+        function emotionsNoneText() {
+            return 'none above ' + Math.round(EMOTIONS_TABLE_MIN_SCORE * 100) + '%';
+        }
+
+        function emotionsRound(x) {
+            const f = Math.pow(10, EMOTIONS_EXPORT_DECIMALS);
+            return Math.round(x * f) / f;
+        }
+
+        /**
+         * The download columns as [{key, name}], in order: the top three
+         * feelings, the three-way tone, then one column per label. `name`
+         * is the header written to the file. When a name is already taken
+         * by one of `originalHeaders`, compared without regard to case, the
+         * added column gets a number on the end, so a person's own column
+         * is never overwritten.
+         */
+        function emotionsExportColumns(originalHeaders) {
+            const taken = new Set((originalHeaders || []).map(h => String(h).toLowerCase()));
+            const columns = [];
+            const keys = EMOTIONS_EXPORT_KEYS.concat(EMOTIONS_LABELS.map(l => EMOTIONS_EXPORT_LABEL_PREFIX + l));
+            for (const key of keys) {
+                let name = key, i = 2;
+                while (taken.has(name.toLowerCase())) name = key + '_' + (i++);
+                taken.add(name.toLowerCase());
+                columns.push({ key, name });
+            }
+            return columns;
+        }
+
+        /**
+         * One download row's added values, keyed by column key. The top
+         * three come from all 28 labels, whatever the table shows. A
+         * missing result gives an empty value in every column.
+         */
+        function emotionsExportRow(scoreByLabel) {
+            const row = {};
+            const keys = EMOTIONS_EXPORT_KEYS.concat(EMOTIONS_LABELS.map(l => EMOTIONS_EXPORT_LABEL_PREFIX + l));
+            for (const key of keys) row[key] = '';
+            if (!scoreByLabel) return row;
+            const top = emotionsTopFeelings(scoreByLabel, EMOTIONS_LABELS, 3);
+            top.forEach((r, i) => {
+                row['top_' + (i + 1) + '_feeling'] = r.label;
+                row['top_' + (i + 1) + '_score'] = emotionsRound(r.score);
+            });
+            const tone = emotionsSentimentRollup(scoreByLabel);
+            row.sentiment_positive = emotionsRound(tone.positive);
+            row.sentiment_negative = emotionsRound(tone.negative);
+            row.sentiment_neutral = emotionsRound(tone.neutral);
+            for (const label of EMOTIONS_LABELS) {
+                if (typeof scoreByLabel[label] === 'number') row[EMOTIONS_EXPORT_LABEL_PREFIX + label] = emotionsRound(scoreByLabel[label]);
+            }
+            return row;
+        }
+        // ### Emotions results: pure helpers (end) ###
 
         // ---------- Shared "files vs spreadsheet vs pasted text" input tabs ----------
         // Shared by Emotions, Pain, Buckets, and Extract Entities - all four
@@ -15346,8 +15458,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 <h3>Find feelings</h3>
                 <div class="skill-row">
                     <label style="font-size:0.82rem;color:var(--ink);display:inline-flex;gap:6px;align-items:center;">
-                        <input type="checkbox" id="emo-show-all">
-                        Show all 28 feelings (default shows the 10 most relevant to mental-health research)
+                        <input type="checkbox" id="emo-limit">
+                        Limit the table to the 10 feelings most relevant to mental-health research (downloads always hold all 28)
                     </label>
                 </div>
                 <div class="skill-row" style="margin-top:6px;">
@@ -15370,10 +15482,10 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const progWrap = sectionC.querySelector('#emo-progress');
             const progMsg = sectionC.querySelector('#emo-progress-msg');
             const progFill = sectionC.querySelector('#emo-progress-fill');
-            const showAllChk = sectionC.querySelector('#emo-show-all');
+            const limitChk = sectionC.querySelector('#emo-limit');
 
-            showAllChk.addEventListener('change', () => {
-                if (lastPerDoc) renderEmotionsResults(lastRunMode, lastPerDoc, resultsEl, inputTabs.getBulkFileName(), showAllChk.checked);
+            limitChk.addEventListener('change', () => {
+                if (lastPerDoc) renderEmotionsResults(lastRunMode, lastPerDoc, resultsEl, inputTabs.getBulkFileName(), limitChk.checked);
             });
 
             runBtn.addEventListener('click', async () => {
@@ -15436,27 +15548,49 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         lastResultsSummary = { count: perDoc.length };
                         lastPerDoc = perDoc;
                         lastRunMode = runMode;
-                        renderEmotionsResults(runMode, perDoc, resultsEl, inputTabs.getBulkFileName(), showAllChk.checked);
+                        renderEmotionsResults(runMode, perDoc, resultsEl, inputTabs.getBulkFileName(), limitChk.checked);
                     }
                 });
             });
         }
 
-        function renderEmotionsResults(mode, perDoc, container, bulkName, showAll) {
-            container.innerHTML = '';
-            const pool = showAll ? EMOTIONS_LABELS : EMOTIONS_CURATED;
+        // Item names come from a person's spreadsheet or file names, so the
+        // table is built element by element and never from markup.
+        function renderEmotionsResults(mode, perDoc, container, bulkName, limitToCurated) {
+            container.replaceChildren();
+            const pool = limitToCurated ? EMOTIONS_CURATED : EMOTIONS_LABELS;
+            const cell = (tag, text, className) => {
+                const el = document.createElement(tag);
+                el.textContent = text;
+                if (className) el.className = className;
+                return el;
+            };
+            const headerRow = (names) => {
+                const thead = document.createElement('thead');
+                const tr = document.createElement('tr');
+                for (const name of names) {
+                    const th = cell('th', name.text, name.num ? 'num' : '');
+                    th.scope = 'col';
+                    tr.appendChild(th);
+                }
+                thead.appendChild(tr);
+                return thead;
+            };
             const errored = perDoc.filter(d => d.error);
             if (errored.length) {
                 const wrap = document.createElement('div');
                 wrap.className = 'skill-section';
-                wrap.innerHTML = '<h3>Items that could not be checked</h3>';
+                wrap.appendChild(cell('h3', 'Items that could not be checked'));
                 const tbl = document.createElement('table');
                 tbl.className = 'skill-table';
-                tbl.innerHTML = '<thead><tr><th>Item</th><th>Reason</th></tr></thead>';
+                tbl.appendChild(headerRow([{ text: 'Item' }, { text: 'Reason' }]));
                 const tb = document.createElement('tbody');
                 for (const d of errored) {
                     const tr = document.createElement('tr');
-                    tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td><td style="color:var(--danger);">' + String(d.error).replace(/</g, '&lt;') + '</td>';
+                    tr.appendChild(cell('td', String(d.id)));
+                    const reason = cell('td', String(d.error));
+                    reason.style.color = 'var(--danger)';
+                    tr.appendChild(reason);
                     tb.appendChild(tr);
                 }
                 tbl.appendChild(tb);
@@ -15468,24 +15602,43 @@ Mental health: depression, anxiety, mood disorders"></textarea>
 
             const tbl = document.createElement('table');
             tbl.className = 'skill-table';
-            tbl.innerHTML = '<thead><tr><th>Item</th><th>Top feeling</th><th class="num">Score</th><th>Second</th><th class="num">Score</th><th>Third</th><th class="num">Score</th></tr></thead>';
+            tbl.appendChild(headerRow([
+                { text: 'Item' }, { text: 'Top feeling' }, { text: 'Score', num: true },
+                { text: 'Second' }, { text: 'Score', num: true }, { text: 'Third' }, { text: 'Score', num: true }
+            ]));
             const tb = document.createElement('tbody');
             for (const d of ok) {
-                const pooled = {};
-                for (const l of pool) if (d.result[l] !== undefined) pooled[l] = d.result[l];
-                const t = topN(pooled, 3);
+                const shown = emotionsTableCells(d.result, pool);
                 const tr = document.createElement('tr');
-                tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td>' +
-                    [0, 1, 2].map(i => t[i] ? ('<td>' + t[i].label.replace(/</g, '&lt;') + '</td><td class="num">' + fmtPct(t[i].score) + '</td>') : '<td></td><td></td>').join('');
+                tr.appendChild(cell('td', String(d.id)));
+                for (let i = 0; i < EMOTIONS_TABLE_TOP_N; i++) {
+                    const r = shown.cells[i];
+                    if (r) {
+                        tr.appendChild(cell('td', r.label));
+                        tr.appendChild(cell('td', fmtPct(r.score) + '%', 'num'));
+                    } else {
+                        tr.appendChild(cell('td', i === 0 && shown.none ? emotionsNoneText() : ''));
+                        tr.appendChild(cell('td', '', 'num'));
+                    }
+                }
                 tb.appendChild(tr);
             }
             tbl.appendChild(tb);
             const wrap = document.createElement('div');
             wrap.className = 'skill-section';
-            wrap.innerHTML = '<h3>Feelings found in this text</h3><p class="skill-hint">' +
-                (showAll ? 'Showing all 28 feelings the model can detect.' : 'Showing the 10 feelings most relevant to mental-health research. Check "Show all 28 feelings" above to see every feeling.') +
-                '</p>';
-            wrap.appendChild(tbl);
+            wrap.appendChild(cell('h3', 'Feelings found in this text'));
+            wrap.appendChild(cell('p', (limitToCurated
+                ? 'Showing the top three of the 10 feelings most relevant to mental-health research. Clear the box above to rank all 28.'
+                : 'Showing the top three of all 28 feelings the model can detect.') +
+                ' Each score is the model\'s probability for that feeling on its own, so the scores do not add up to 100%. Feelings under ' +
+                Math.round(EMOTIONS_TABLE_MIN_SCORE * 100) + '% are left blank here; the downloads hold every feeling.', 'skill-hint'));
+            const scroller = document.createElement('div');
+            scroller.className = 'skill-table-scroll';
+            scroller.tabIndex = 0;
+            scroller.setAttribute('role', 'region');
+            scroller.setAttribute('aria-label', 'Feelings table');
+            scroller.appendChild(tbl);
+            wrap.appendChild(scroller);
             container.appendChild(wrap);
 
             // Sentiment rollup (aggregate across all items)
@@ -15497,7 +15650,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const n = ok.length;
             const rollupWrap = document.createElement('div');
             rollupWrap.className = 'skill-section';
-            rollupWrap.innerHTML = '<h3>Overall tone</h3><p class="skill-hint">Average positive / negative / neutral tone across all items.</p>';
+            rollupWrap.appendChild(cell('h3', 'Overall tone'));
+            rollupWrap.appendChild(cell('p', 'Average positive, negative, and neutral tone across all items, from all 28 feelings. These three add up to 100%.', 'skill-hint'));
             for (const pair of [['Positive', rollupAgg.positive / n], ['Negative', rollupAgg.negative / n], ['Neutral / mixed', rollupAgg.neutral / n]]) {
                 const label = pair[0], val = pair[1];
                 const bar = document.createElement('div');
@@ -15507,12 +15661,15 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 fill.style.width = Math.max(0, Math.min(100, val * 100)) + '%';
                 const lbl = document.createElement('div');
                 lbl.className = 'skill-bar-label';
-                lbl.innerHTML = '<span>' + label + '</span><span>' + fmtPct(val) + '%</span>';
+                lbl.appendChild(cell('span', label));
+                lbl.appendChild(cell('span', fmtPct(val) + '%'));
                 bar.appendChild(fill); bar.appendChild(lbl);
                 rollupWrap.appendChild(bar);
             }
             container.appendChild(rollupWrap);
 
+            // Downloads always hold every label and the true top three,
+            // whatever the table is limited to.
             const dl = document.createElement('div');
             dl.className = 'skill-row';
             if (mode === 'bulk') {
@@ -15521,26 +15678,14 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 btn.textContent = 'Download every row with results added';
                 btn.addEventListener('click', () => {
                     const orig = (ok[0] && ok[0].row) ? Object.keys(ok[0].row) : [];
-                    const headers = orig.concat(['top_1_feeling', 'top_1_score', 'top_2_feeling', 'top_2_score', 'top_3_feeling', 'top_3_score', 'sentiment_positive', 'sentiment_negative', 'sentiment_neutral']);
+                    const columns = emotionsExportColumns(orig);
+                    const headers = orig.concat(columns.map(c => c.name));
                     function* gen() {
                         for (const d of perDoc) {
                             const out = {};
                             for (const h of orig) out[h] = d.row ? d.row[h] : '';
-                            if (d.result) {
-                                const pooled = {};
-                                for (const l of pool) if (d.result[l] !== undefined) pooled[l] = d.result[l];
-                                const t = topN(pooled, 3);
-                                out.top_1_feeling = t[0] ? t[0].label : ''; out.top_1_score = t[0] ? Math.round(t[0].score * 10000) / 10000 : '';
-                                out.top_2_feeling = t[1] ? t[1].label : ''; out.top_2_score = t[1] ? Math.round(t[1].score * 10000) / 10000 : '';
-                                out.top_3_feeling = t[2] ? t[2].label : ''; out.top_3_score = t[2] ? Math.round(t[2].score * 10000) / 10000 : '';
-                                const r = emotionsSentimentRollup(d.result);
-                                out.sentiment_positive = Math.round(r.positive * 10000) / 10000;
-                                out.sentiment_negative = Math.round(r.negative * 10000) / 10000;
-                                out.sentiment_neutral = Math.round(r.neutral * 10000) / 10000;
-                            } else {
-                                out.top_1_feeling = out.top_1_score = out.top_2_feeling = out.top_2_score = out.top_3_feeling = out.top_3_score = '';
-                                out.sentiment_positive = out.sentiment_negative = out.sentiment_neutral = '';
-                            }
+                            const added = emotionsExportRow(d.result || null);
+                            for (const c of columns) out[c.name] = added[c.key];
                             yield out;
                         }
                     }
@@ -15553,13 +15698,15 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 btn.className = 'skill-btn';
                 btn.textContent = 'Download results as CSV';
                 btn.addEventListener('click', () => {
+                    const columns = emotionsExportColumns(['item']);
+                    const headers = ['item'].concat(columns.map(c => c.name));
                     const rows = ok.map(d => {
-                        const r = emotionsSentimentRollup(d.result);
-                        const row = { item: d.id, sentiment_positive: round2(r.positive), sentiment_negative: round2(r.negative), sentiment_neutral: round2(r.neutral) };
-                        for (const l of pool) row[l] = d.result[l] !== undefined ? round2(d.result[l]) : '';
-                        return row;
+                        const out = { item: d.id };
+                        const added = emotionsExportRow(d.result);
+                        for (const c of columns) out[c.name] = added[c.key];
+                        return out;
                     });
-                    downloadBlob(writeCsv(rows), 'emotions_results.csv');
+                    downloadBlob(writeCsv(rows, { headers }), 'emotions_results.csv');
                 });
                 dl.appendChild(btn);
             }
@@ -15567,9 +15714,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             btnChat.className = 'skill-btn';
             btnChat.textContent = 'Send to Chat';
             btnChat.addEventListener('click', () => {
-                const lines = ['I checked ' + ok.length + ' item(s) for emotions/sentiment.'];
+                const lines = ['I checked ' + ok.length + ' item(s) for emotions and sentiment. Each score is the model\'s probability for that feeling on its own; scores do not add up to 100%.'];
                 for (const d of ok) {
-                    const t = topN(d.result, 3);
+                    const t = emotionsTopFeelings(d.result, EMOTIONS_LABELS, 3);
                     lines.push('- ' + d.id + ': ' + t.map(x => x.label + ' (' + fmtPct(x.score) + '%)').join(', '));
                 }
                 lines.push('', 'What patterns do you see?');

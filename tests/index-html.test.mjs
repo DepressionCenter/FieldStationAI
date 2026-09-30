@@ -2,7 +2,7 @@
 // tests/index-html.test.mjs
 // Author(s): Gabriel Mongefranco.
 // Created: 2026-09-23
-// Last Modified: 2026-09-29
+// Last Modified: 2026-09-30
 // Summary: Static checks on index.html, the whole application: the file
 // header carries the project and license notice, the app is still one
 // module script, the crisis notice constants point at the 988 Lifeline,
@@ -326,6 +326,34 @@ test('the pain skill reads raw model answers and records how each item was score
     assert.ok(source.includes('loadModelRung(SKILL_ZEROSHOT_ID)'), 'the model variant is recorded');
     assert.ok(source.includes('findStatedPainScores(text)'), 'stated scores are read from the whole text');
     assert.ok(!source.includes('multi_label'), 'the zero-shot pipeline call is no longer used');
+});
+
+// ### Emotions and Sentiment ###
+
+// The results table shows item names from a person's spreadsheet or file
+// names, which are untrusted input, so it is built element by element.
+test('the emotions results never parse text as markup', () => {
+    const source = functionSource('renderEmotionsResults');
+    for (const sink of OFFER_SINKS) {
+        assert.ok(!source.includes(sink), `renderEmotionsResults does not use ${sink}`);
+    }
+    assert.ok(source.includes("th.scope = 'col'"), 'header cells carry scope');
+    assert.ok(source.includes('container.replaceChildren()'), 'old results are cleared without markup');
+});
+
+// The table ranks all 28 labels unless a person limits it, and the
+// downloads hold every label and the true top three whatever the table
+// shows, so a viewing choice never loses data.
+test('the emotions table defaults to all labels and the downloads always hold every label', () => {
+    const skill = functionSource('mountEmotionsSkill');
+    assert.ok(skill.includes('<input type="checkbox" id="emo-limit">'), 'the checkbox is a filter that starts unchecked');
+    assert.ok(!skill.includes('emo-show-all'), 'the old show-all switch is gone');
+    const results = functionSource('renderEmotionsResults');
+    assert.ok(results.includes('const pool = limitToCurated ? EMOTIONS_CURATED : EMOTIONS_LABELS;'), 'the table pool follows the filter');
+    assert.equal((results.match(/emotionsExportColumns\(/g) || []).length, 2, 'both downloads take their columns from the helper');
+    assert.equal((results.match(/emotionsExportRow\(/g) || []).length, 2, 'both downloads take their rows from the helper');
+    assert.ok(results.includes('emotionsTopFeelings(d.result, EMOTIONS_LABELS, 3)'), 'Send to Chat ranks all labels');
+    assert.ok(!results.includes('for (const l of pool)'), 'no download reads the table pool');
 });
 
 // ### Storage Dialog ###

@@ -290,6 +290,18 @@ Three findings from the same review were fixed in every Field Kit tool, not only
 
 Not built: extraction of pain location, qualities, and timeframe, which has its own issue. Interference by area of life (sleep, work, mood) was not separated.
 
+## Emotions Table Ranks All 28 Feelings by Default
+
+Emotions and sentiment showed the top three of 10 curated feelings unless a person checked "Show all 28 feelings". The model scores all 28 on every run, so the box changed nothing about the work, only which labels the table and the downloads could draw from. For a warm, formal message the model gave gratitude 96%, and the default view hid it and named joy at 0.9% as the top feeling, with annoyance and disapproval under 0.5% behind it. The Score column had no percent sign, so 0.9 read as more than it was. The downloads took the same filtered pool, so the spreadsheet download's top feeling for that message was joy, and the per-feeling download had no gratitude column at all.
+
+Decision:
+
+- The table ranks all 28 feelings by default. The box is now a filter, "Limit the table to the 10 feelings most relevant to mental-health research", and starts unchecked. The 10-feeling list is kept for the studies that want it.
+- The downloads always rank all 28 and write one column per feeling, whatever the table shows. A viewing choice never loses data. Scores are written to four decimal places; two places had rounded most feelings to zero.
+- Scores in the table carry a percent sign, and the hint says each score is the model's probability for that feeling on its own, so the scores do not add up to 100%. A feeling under 5% is left blank, and a row with none above 5% says so instead of naming a feeling at a fraction of a percent.
+- The results table is built element by element, because item names come from a person's spreadsheet or file names. The table sits in a region that scrolls sideways on a narrow screen.
+- The tone bars showed white text with a dark halo over a pale track, which fails the contrast check on the unfilled part. The fill is now a tint and the text is dark, on every tool that uses the bars.
+
 ## Documentation Rule
 
 When these areas change, update this file and the relevant user or developer doc:

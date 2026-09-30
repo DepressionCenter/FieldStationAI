@@ -177,6 +177,10 @@ With a "+ Router" model chosen, the app checks each chat prompt for a request th
 - Offers are kept in memory and are gone after a reload. The prompt itself is a chat message and is stored with the chat, as every prompt is.
 - The check is a best effort. It can miss a request or offer a tool for a prompt that did not ask for one.
 
+## Emotions and Sentiment
+
+The results table is built element by element, never from markup strings, because item names come from the person's spreadsheet or file names. A test checks this. The downloads hold every feeling's score, the top three feelings, and the tone shares, added after the original columns, which pass through unchanged. See [Feelings Download Columns](field-kit.md#feelings-download-columns).
+
 ## Estimate Pain Level
 
 The tool keeps only the wording of its statements in browser storage, under `fieldstation_pain_wording_v1`, and only after a person edits it. The text being checked never goes through that key. Statements are validated on read and on edit against an allowlist: a letter first, then letters, digits, spaces, and `, . ' - ( ) / ; :`. Markup and the characters that start a spreadsheet formula are refused, so a statement cannot reach the page as markup or the download as a formula.
@@ -228,7 +232,8 @@ Before release, test:
 12. Send a crisis test prompt from `tests/fixtures/crisis-prompts.json`, confirm a screen reader announces the notice, and reach its 988 chat link with Tab.
 13. In a Field Kit text tool, move between the input tabs with the arrow keys, confirm a screen reader announces each tab as selected, and reach the **Paste text** box and **Clear text** with Tab.
 14. Send an offer test prompt from `tests/fixtures/skill-offer-prompts.json`, confirm a screen reader announces the offer, reach its button with Tab, press Enter, and confirm focus lands in the tool's **Paste text** box.
-15. In Estimate pain level, open **Classification statements** with the keyboard, type an invalid statement, and confirm a screen reader reads the error with the box. Run the tool and confirm a screen reader can read the results table by column, and that the table can be scrolled sideways from the keyboard on a narrow screen.
+15. In Emotions and sentiment, run the tool, reach the limit box with Tab and toggle it with Space, and confirm a screen reader reads the table by column and reads "none above 5%" where the limited view has no feeling to show.
+16. In Estimate pain level, open **Classification statements** with the keyboard, type an invalid statement, and confirm a screen reader reads the error with the box. Run the tool and confirm a screen reader can read the results table by column, and that the table can be scrolled sideways from the keyboard on a narrow screen.
 
 Automated check:
 
