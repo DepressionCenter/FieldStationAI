@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 field-kit.md: Guide for using Field Kit within Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-29
+Last Modified: 2026-09-30
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -151,12 +151,16 @@ Find similar or duplicates uses the same tab keys for its two tabs.
 
 This tool reads text and estimates two things about pain. It does not ask anyone to pick a number, and it never invents a 0 to 10 score. Every value it gives is a model estimate from the words, not a score the person gave. The tool has not been checked against ratings from real people. Which measure suits a study is a decision for the study team.
 
+![The Estimate pain level tool with a synthetic clinical note in the Paste text box and its results table. Arrows link "chest hurts" to the Intensity column, which reads 2 moderate, "makes walking difficult" to the Interference column, which reads 1 limits activities, and "7/10" in the note to the Stated score column, which reads 7/10.](../images/field-kit-pain-estimation.png)
+
+The picture shows a synthetic clinical note: "Pt. states chest hurts when breathing in, keeps taking shallow breaths. Pain is about 7/10. Pt states the pain makes walking difficult as pt runs out of breath easily." The results table reads intensity 2 moderate with a match of 53.2%, interference 1 limits activities with a match of 88.2%, and a stated score of 7/10. Each result comes from a different part of the note: the words about the chest give the intensity, the words about walking give the interference, and the written score is copied as it is.
+
 ### What It Reports
 
 | Output | Values | What it means |
 | --- | --- | --- |
 | Intensity | 0 none, 1 mild, 2 moderate, 3 severe, or not stated | How strong the pain is, in the four categories many pain studies use |
-| Interference | 0 does not limit activities, 1 limits activities, or not stated | Whether the pain stops the person from doing things |
+| Interference | 0 does not limit activities, 1 limits activities, or not stated | Whether the pain limits what the person can do |
 | Stated score | The words as written, such as "7 out of 10" | A score the writer gave in the text, with its scale |
 | Notes | Text shortened, Long text, Close call | Results to check by hand. See [Limits](#limits) |
 
@@ -169,14 +173,14 @@ This tool reads text and estimates two things about pain. It does not ask anyone
 The tool compares your text with short statements, such as "The person has mild pain." The model answers three ways for each statement: the text agrees with it, disagrees with it, or says neither.
 
 1. Intensity: the four intensity statements are compared. The one with the largest share wins. If no statement gets an "agrees" score of at least 0.5, the result is not stated.
-2. Interference: one statement, "Pain stops the person from doing things.", is compared. An "agrees" score of at least 0.5 gives limits activities. A "disagrees" score of at least 0.5 gives does not limit activities. Anything else is not stated.
+2. Interference: two statements are compared, one that says pain makes activities hard and one that says activities go on as usual. An "agrees" score of at least 0.5 with the second gives does not limit activities, whatever the first says, because a text can call the pain awful and still say the person did everything. Otherwise an "agrees" score of at least 0.5 with the first gives limits activities, and a "disagrees" score of at least 0.5 with the first gives does not limit activities. Anything else is not stated.
 3. Stated scores are found by pattern, with no model. The tool looks for forms such as "7 out of 10", "3/5", "6 on a scale of 0 to 10", and "pain level 4", in a sentence that also holds a pain word. Dates, fractions like 120/80, and counts like "9/10 visits" are left out.
 
 Every score is written to the download, so an analyst can apply a different cut.
 
 ### The Wording
 
-You can read and change the statements under **Wording the tool matches**. The line next to that heading says whether the wording is the default or edited.
+You can read and change the statements under **Classification statements**. The line next to that heading says whether the wording is the default or edited.
 
 | Set | Code | Default statement |
 | --- | --- | --- |
@@ -184,13 +188,14 @@ You can read and change the statements under **Wording the tool matches**. The l
 | Intensity | 1 | The person has mild pain. |
 | Intensity | 2 | The person has moderate pain. |
 | Intensity | 3 | The person has severe pain. |
-| Interference | agrees or disagrees | Pain stops the person from doing things. |
+| Interference | limits activities | Pain makes it hard for the person to do some activities. |
+| Interference | activities unaffected | The person does everything as usual despite the pain. |
 
 The categories none, mild, moderate, and severe follow common practice in pain research (see the sources below). The wording of each statement is this project's own. No questionnaire text is copied.
 
 To change a statement:
 
-1. Open **Wording the tool matches**.
+1. Open **Classification statements**.
 2. Type in a box. A statement must start with a letter and use only letters, numbers, spaces, and the marks , . ' - ( ) / ; : . An error shows under a box that needs a fix, and the tool will not run until it is fixed.
 3. Valid edits are saved in your browser as you type. **Restore defaults** puts the default statements back and removes the saved copy.
 
@@ -209,7 +214,8 @@ Each download has one row per item. The spreadsheet download keeps your columns 
 | `pain_intensity_agree_0` to `_3` | Each statement's "agrees" score |
 | `pain_interference_level`, `pain_interference_label` | 0 or 1 and its name, or empty and `not stated` |
 | `pain_interference_match_score` | The winning score, 0 to 1 |
-| `pain_interference_agree`, `_disagree`, `_neither` | The three scores for the interference statement |
+| `pain_interference_limits_agree`, `_disagree`, `_neither` | The three scores for the statement that pain makes activities hard |
+| `pain_interference_unaffected_agree`, `_disagree`, `_neither` | The three scores for the statement that activities go on as usual |
 | `pain_stated_score_text`, `pain_stated_score_count` | Every stated score as written, joined by " \| ", and how many |
 | `pain_stated_score_value`, `pain_stated_score_max` | The number and its scale, filled only when every stated score agrees |
 | `pain_notes` | Text shortened, Long text, Close call, or why an item was not estimated |
@@ -235,10 +241,10 @@ Hirschfeld and Zernikow (2013) found that the "best" cut points changed from sam
 
 ### Limits
 
-- The model was tested on 41 synthetic texts, not on text from real people. See `tests/fixtures/pain-estimate-texts.json`. Three known misses are listed there.
+- The model was tested on 43 synthetic texts, not on text from real people. See `tests/fixtures/pain-estimate-texts.json`. One known miss is listed there.
 - Text that names pain without saying how strong it is often comes out severe. Check any result whose match is low or that carries a Close call note.
 - One sentence about pain inside a long text gets weaker scores. Past about 400 tokens the tool adds a Long text note, and past about 900 tokens it cuts the text and adds Text shortened. Stated scores are still read from the whole text.
-- Emotional wording is read as strong pain, whatever the person could still do. Interference is judged from the interference statement alone.
+- Emotional wording is read as strong pain, whatever the person could still do. Interference is judged from its own two statements, so a text that says the pain is awful but the person did everything gives severe and does not limit activities.
 - Pain in another person, or pain in the past, is scored the same as the writer's own pain today.
 - The tool works in English. Other languages give a result, but they were not checked beyond two Spanish sentences.
 
@@ -257,7 +263,7 @@ Hirschfeld and Zernikow (2013) found that the "best" cut points changed from sam
 
 - Use synthetic examples for demonstrations.
 - Do not place PHI in screenshots.
-- Review downloaded files before sharing.
+- Review downloaded files before sharing. A cell that a spreadsheet would run as a formula is written with a quote in front, so it shows as text.
 - Treat AI classifications as analytic aids, not clinical determinations.
 
 [⬅ Back to Documentation](README.md) | [⬅ Back to project README](../README.md)

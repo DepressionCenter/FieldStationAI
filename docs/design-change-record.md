@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 design-change-record.md: Summary of recent major design changes in Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-29
+Last Modified: 2026-09-30
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -271,8 +271,8 @@ Decision:
 
 - The tool reports two things: intensity, in the four categories none, mild, moderate, and severe, and interference, as limits activities or does not limit activities. Either can be not stated. A model estimate of a 0 to 10 number was ruled out, because published cut points between the categories disagree with each other, and any number the tool inferred would rest on wording of its own.
 - A score the writer states in words, such as "7 out of 10", is reported as written and separate from the estimates. It is found by pattern in the whole text.
-- The tool reads the model's three raw answers per statement (agrees, disagrees, neither) instead of the zero-shot pipeline. The pipeline's single-label mode forces a winner even when nothing fits, and its multi-label mode drops the "neither" answer. Intensity is not stated when no statement gets an "agrees" score of at least 0.5. Interference uses one statement and the same cut for agrees and disagrees.
-- Five graded interference steps were tried first and dropped. On 16 synthetic texts the model gave "a little" and "somewhat" about the same share whatever the text said, and a text about no longer driving or dressing alone got "somewhat". One statement read three ways separated the same texts.
+- The tool reads the model's three raw answers per statement (agrees, disagrees, neither) instead of the zero-shot pipeline. The pipeline's single-label mode forces a winner even when nothing fits, and its multi-label mode drops the "neither" answer. Intensity is not stated when no statement gets an "agrees" score of at least 0.5. Interference uses two statements with the same cut.
+- Five graded interference steps were tried first and dropped. On 16 synthetic texts the model gave "a little" and "somewhat" about the same share whatever the text said, and a text about no longer driving or dressing alone got "somewhat". One statement read three ways separated most of those texts, but read "makes walking difficult" in a clinical note as neither, and a second statement was needed for texts that call the pain awful and still say the person did everything. The final form is two statements: pain makes activities hard, and activities go on as usual. Agreement with the second decides first.
 - "Confidence" became match, the winning wording's share of the score. Every raw score, the wording, the model variant, the library version, the thresholds, a scale version, and the run time are written to the download, so an analyst can apply a different cut and any result can be traced.
 - Notes flag results to check by hand: text cut to fit the model, long text, and a close call between the top two intensity levels. Long text was a real finding: one sentence about pain inside 4,700 characters of other text lost its "severe" result.
 - The statements are editable, saved in the browser under `fieldstation_pain_wording_v1`, validated against an allowlist that keeps markup and spreadsheet formulas out, and recorded in every download. The default wording is the project's own and copies no questionnaire text.
@@ -280,7 +280,15 @@ Decision:
 - The `q4f16` weights were removed from this model's ladder. On WebGPU they gave flattened, wrong scores (a clear "severe" text scored 0.01 where the `q4` weights scored 4.34), and `webgpu/q4` matched `wasm/q4` and the CPU run exactly. This also affects Sort text into categories and Score against any labels, which share the model.
 - A run started after **Stop** failed on every item in every classifier tool, because the abort signal stayed aborted. The shared runner now starts each run with a fresh one.
 
-Not built: extraction of pain location, qualities, and timeframe, which has its own issue. Interference by area of life (sleep, work, mood) was not separated. The skill offer's example prompts still say "1 to 10", because changing them means retuning the offer's thresholds.
+- The skill offer's example prompts for this tool no longer say "1 to 10" or "10 point scale". The offer's model test still passes on every fixture prompt, including the ones that ask for a number, so no threshold changed.
+
+Three findings from the same review were fixed in every Field Kit tool, not only this one:
+
+- Every CSV cell now goes through a check for spreadsheet formula injection. A cell that starts with `=` or `@`, a tab, or a carriage return, or with `+` or `-` before anything but a number or a space, gets a single quote in front. Numbers and plain dashes are untouched, so research values such as `-5` or a dash for a missing value are not changed.
+- The saved-list menus of Sort text into categories and Score against any labels put a list name into markup without escaping it. They now build their entries as option elements.
+- Every tool's status line was silent to a screen reader. It is now a polite live region.
+
+Not built: extraction of pain location, qualities, and timeframe, which has its own issue. Interference by area of life (sleep, work, mood) was not separated.
 
 ## Documentation Rule
 

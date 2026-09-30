@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 developer-guide.md: Guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-29
+Last Modified: 2026-09-30
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -314,9 +314,9 @@ The tests live under `tests/` and use Node's own test runner, so nothing is inst
 node --test tests/
 ```
 
-That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, **Paste text** tab wiring, skill offer wiring, and pain estimate wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, the skill offer's helpers and lists, the pain estimate's helpers and its fixture's stated scores, and the storage dialog's helpers and wiring. The model-backed tests skip themselves unless their dependency is installed.
+That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, **Paste text** tab wiring, skill offer wiring, and pain estimate wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, the skill offer's helpers and lists, the pain estimate's helpers and its fixture's stated scores, the CSV cell writer, and the storage dialog's helpers and wiring. The model-backed tests skip themselves unless their dependency is installed.
 
-Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are eight such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, the Field Kit paste text helpers, the pain estimate's data and helpers, and the storage dialog's helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
+Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are nine such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, the Field Kit paste text helpers, the pain estimate's data and helpers, the CSV cell writer, and the storage dialog's helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
 
 To score the crisis and skill offer prompt fixtures with the real embedding and tiebreak models, and the reranker with synthetic passages, on your CPU. The crisis test runs with both sets of embedding weights:
 
@@ -338,6 +338,7 @@ Before merging:
 - No secrets, tokens, PHI, or participant identifiers in code, docs, tests, screenshots, or examples.
 - No stack traces exposed directly to end users.
 - No unguarded `innerHTML` with user-controlled content.
+- Every CSV goes through `writeCsv` or `writeCsvStreaming`, so `quoteField` neutralizes cells a spreadsheet would run as a formula. Never write a CSV another way.
 - No untrusted SQL or shell execution.
 - Attachment deletion deletes all related records where applicable.
 - Network-bound model prompts are redacted where the feature promises redaction.
@@ -349,7 +350,7 @@ Before merging UI changes:
 - Keyboard-only operation works.
 - Focus order is logical.
 - Focus is visible.
-- Dynamic status changes are announced where needed.
+- Dynamic status changes are announced where needed. A skill's status line carries `aria-live="polite"`; keep it when you add one.
 - Dialogs have labels and close behavior.
 - Color is not the only state cue.
 - Reduced-motion preference is respected for new animations.
