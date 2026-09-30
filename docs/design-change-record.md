@@ -263,6 +263,25 @@ Work on the dialog found a defect in the startup cleanup, which removes cached f
 
 The cleanup now knows every model by the name its files are cached under. A static test checks the list. In the test browser, the chat model's cache held no files after a page load before the change, and 10 files after it.
 
+## Pain Intensity and Interference Reported Separately
+
+Estimate pain level matched text against ten phrases and reported the best match as a score from 1 to 10 with a "Confidence" percentage. A review found measurement problems that hold whatever one thinks of pain scales. Some phrases described how strong the pain was and others described what it stopped the person from doing, so one number carried two things. The scale started at 1 for "no pain", where the published scale starts at 0. The ten scores always added up to 100%, so text that never mentioned pain still got a level. "Confidence" was the winning phrase's share of the score, not the chance that the level was right. The download held the level and the score only, so nothing could be traced.
+
+Decision:
+
+- The tool reports two things: intensity, in the four categories none, mild, moderate, and severe, and interference, as limits activities or does not limit activities. Either can be not stated. A model estimate of a 0 to 10 number was ruled out, because published cut points between the categories disagree with each other, and any number the tool inferred would rest on wording of its own.
+- A score the writer states in words, such as "7 out of 10", is reported as written and separate from the estimates. It is found by pattern in the whole text.
+- The tool reads the model's three raw answers per statement (agrees, disagrees, neither) instead of the zero-shot pipeline. The pipeline's single-label mode forces a winner even when nothing fits, and its multi-label mode drops the "neither" answer. Intensity is not stated when no statement gets an "agrees" score of at least 0.5. Interference uses one statement and the same cut for agrees and disagrees.
+- Five graded interference steps were tried first and dropped. On 16 synthetic texts the model gave "a little" and "somewhat" about the same share whatever the text said, and a text about no longer driving or dressing alone got "somewhat". One statement read three ways separated the same texts.
+- "Confidence" became match, the winning wording's share of the score. Every raw score, the wording, the model variant, the library version, the thresholds, a scale version, and the run time are written to the download, so an analyst can apply a different cut and any result can be traced.
+- Notes flag results to check by hand: text cut to fit the model, long text, and a close call between the top two intensity levels. Long text was a real finding: one sentence about pain inside 4,700 characters of other text lost its "severe" result.
+- The statements are editable, saved in the browser under `fieldstation_pain_wording_v1`, validated against an allowlist that keeps markup and spreadsheet formulas out, and recorded in every download. The default wording is the project's own and copies no questionnaire text.
+- The interface names no instrument and no population, and tags neither output as recommended. Which measure suits a study is for the study team.
+- The `q4f16` weights were removed from this model's ladder. On WebGPU they gave flattened, wrong scores (a clear "severe" text scored 0.01 where the `q4` weights scored 4.34), and `webgpu/q4` matched `wasm/q4` and the CPU run exactly. This also affects Sort text into categories and Score against any labels, which share the model.
+- A run started after **Stop** failed on every item in every classifier tool, because the abort signal stayed aborted. The shared runner now starts each run with a fresh one.
+
+Not built: extraction of pain location, qualities, and timeframe, which has its own issue. Interference by area of life (sleep, work, mood) was not separated. The skill offer's example prompts still say "1 to 10", because changing them means retuning the offer's thresholds.
+
 ## Documentation Rule
 
 When these areas change, update this file and the relevant user or developer doc:

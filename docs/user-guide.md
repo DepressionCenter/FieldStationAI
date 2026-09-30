@@ -112,7 +112,7 @@ Some jobs are done better by a Field Kit tool than by the chat model. When you a
 | --- | --- |
 | Find the feelings or the sentiment in a text | Emotions and sentiment |
 | Find the people, places, or organizations named in a text | Find names and places |
-| Rate the pain a text describes | Estimate pain level |
+| Estimate the pain a text describes | Estimate pain level |
 | Sort a text into categories | Sort text into categories |
 
 1. Type your request and your text in one message. For example:
@@ -136,7 +136,7 @@ Things to know:
 - The offer stays under your message until you reload the page. To get it back, send the message again.
 - The check is a best effort. It can miss a request, and it can offer a tool you do not need. You can ignore an offer, and you can always open a tool yourself with the Field Kit button at the top of the page.
 
-See the [Field Kit Guide](field-kit.md) for what each tool does with your text.
+See the [Field Kit Guide](field-kit.md) for what each tool does with your text. Estimate pain level reports how strong the pain is and whether it limits what the person can do, as model estimates, and repeats any score the writer gave. It does not give a 0 to 10 number. See [Estimate Pain Level](field-kit.md#estimate-pain-level).
 
 ## Use a Compendium
 

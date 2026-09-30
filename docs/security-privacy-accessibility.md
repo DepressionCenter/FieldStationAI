@@ -177,11 +177,19 @@ With a "+ Router" model chosen, the app checks each chat prompt for a request th
 - Offers are kept in memory and are gone after a reload. The prompt itself is a chat message and is stored with the chat, as every prompt is.
 - The check is a best effort. It can miss a request or offer a tool for a prompt that did not ask for one.
 
+## Estimate Pain Level
+
+The tool keeps only the wording of its statements in browser storage, under `fieldstation_pain_wording_v1`, and only after a person edits it. The text being checked never goes through that key. Statements are validated on read and on edit against an allowlist: a letter first, then letters, digits, spaces, and `, . ' - ( ) / ; :`. Markup and the characters that start a spreadsheet formula are refused, so a statement cannot reach the page as markup or the download as a formula.
+
+The results table and the wording editor are built element by element, never from markup strings, because item names, stated score phrases, and statements come from the person. A test checks this.
+
+The download adds columns that hold model scores, the wording, the model variant, and the run time. A stated score phrase from the text, such as "7 out of 10", is written as well. Original columns pass through unchanged. See [Download Columns](field-kit.md#download-columns).
+
 ## Logging and Exports
 
 Console errors may include technical details. Avoid capturing logs or screenshots with real participant data.
 
-Review downloaded files, transcripts, CSVs, summaries, notebooks, and generated indexes before sharing. Column names, filenames, and aggregate summaries can still reveal study context.
+Review downloaded files, transcripts, CSVs, summaries, notebooks, and generated indexes before sharing. Column names, filenames, and aggregate summaries can still reveal study context. The app does not rewrite cell values that start with `=`, `+`, `-`, or `@` in the columns it passes through, so open a download with care in a spreadsheet program if the source text could hold such values.
 
 ## Accessibility Target
 
@@ -218,6 +226,7 @@ Before release, test:
 12. Send a crisis test prompt from `tests/fixtures/crisis-prompts.json`, confirm a screen reader announces the notice, and reach its 988 chat link with Tab.
 13. In a Field Kit text tool, move between the input tabs with the arrow keys, confirm a screen reader announces each tab as selected, and reach the **Paste text** box and **Clear text** with Tab.
 14. Send an offer test prompt from `tests/fixtures/skill-offer-prompts.json`, confirm a screen reader announces the offer, reach its button with Tab, press Enter, and confirm focus lands in the tool's **Paste text** box.
+15. In Estimate pain level, open **Wording the tool matches** with the keyboard, type an invalid statement, and confirm a screen reader reads the error with the box. Run the tool and confirm a screen reader can read the results table by column, and that the table can be scrolled sideways from the keyboard on a narrow screen.
 
 Automated check:
 

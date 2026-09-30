@@ -68,6 +68,7 @@ Recommended practice:
 | Attachment index | Local storage. One line per file, with the time it was added and its chat | Removed together with the file |
 | Model files | Cache Storage, in caches that the model libraries name | The Storage dialog, or the startup cleanup of models the app no longer offers |
 | Compendium files | Cache Storage, in the cache `fieldstation-compendium-v1` | The Storage dialog. An external compendium also expires after 7 days |
+| Edited statements of Estimate pain level | Local storage, under `fieldstation_pain_wording_v1`, only after an edit | **Restore defaults** in the tool |
 
 ### The Storage Dialog
 
