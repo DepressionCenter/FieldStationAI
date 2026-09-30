@@ -284,6 +284,50 @@ test('items in the Sources row can shrink and break, and the row has no scrollba
     assert.ok(!/overflow|max-height|white-space:\s*nowrap/.test(row[1]), 'the row grows taller and never scrolls');
 });
 
+// ### Pain Estimate ###
+
+// The results table shows item names and phrases from a person's text,
+// and the wording editor shows statements a person typed. Both are
+// untrusted input, so both are built element by element.
+test('the pain results and wording editor never parse text as markup', () => {
+    for (const name of ['renderPainResults', 'mountPainWordingEditor']) {
+        const source = functionSource(name);
+        for (const sink of OFFER_SINKS) {
+            assert.ok(!source.includes(sink), `${name} does not use ${sink}`);
+        }
+    }
+    const editor = functionSource('mountPainWordingEditor');
+    assert.ok(editor.includes('label.htmlFor = id'), 'each wording box has a label');
+    assert.ok(editor.includes("setAttribute('aria-invalid', 'true')"), 'an invalid box is marked for assistive technology');
+    assert.ok(editor.includes('PAIN_WORDING_KEY') === false && editor.includes('writePainWording('), 'the editor saves through the wording helpers');
+    const results = functionSource('renderPainResults');
+    assert.ok(results.includes("th.scope = 'col'"), 'header cells carry scope');
+    assert.ok(results.includes('container.replaceChildren()'), 'old results are cleared without markup');
+});
+
+// The wording helpers save statements only. The text a person checks
+// never goes through them.
+test('the pain wording helpers store wording and nothing else', () => {
+    for (const name of ['readPainWording', 'writePainWording']) {
+        const source = functionSource(name);
+        assert.ok(!source.includes('inputTabs') && !source.includes('getDocs'), `${name} does not touch the text being checked`);
+        assert.ok(!/fetch\(|XMLHttpRequest|sendBeacon/.test(source), `${name} does not use the network`);
+    }
+    const read = functionSource('readPainWording');
+    assert.ok(read.includes('validatePainWording('), 'saved wording is checked again when it is read');
+});
+
+// The skill sends every statement to the model as written, reads the
+// model's raw answers, and records the model variant with each item.
+test('the pain skill reads raw model answers and records how each item was scored', () => {
+    const source = functionSource('mountPainLevelSkill');
+    assert.ok(source.includes('classifier.tokenizer(text, { text_pair: statement'), 'text and statement go to the model as a pair');
+    assert.ok(source.includes('painFitTextToBudget('), 'long text is fitted before it is scored');
+    assert.ok(source.includes('loadModelRung(SKILL_ZEROSHOT_ID)'), 'the model variant is recorded');
+    assert.ok(source.includes('findStatedPainScores(text)'), 'stated scores are read from the whole text');
+    assert.ok(!source.includes('multi_label'), 'the zero-shot pipeline call is no longer used');
+});
+
 // ### Storage Dialog ###
 
 // The dialog shows names that came from a person's files and chats, which

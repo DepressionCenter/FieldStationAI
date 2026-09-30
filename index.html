@@ -811,6 +811,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
             background: var(--panel); color: var(--ink);
         }
         .skill-select { padding-right: 24px; }
+        /* A wide results table scrolls inside its own box, so the page
+           itself never scrolls sideways on a narrow screen. */
+        .skill-table-scroll { overflow-x: auto; }
+        /* Estimate pain level: the block that holds the editable statements. */
+        .pain-wording summary { cursor: pointer; font-size: 0.85rem; font-weight: 600; padding: 4px 0; }
+        .pain-wording-group { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0 0; padding: 6px 10px 10px; min-width: 0; }
+        .pain-wording-group legend { font-size: 0.78rem; font-weight: 600; padding: 0 4px; }
+        .pain-wording-group label.skill-hint { margin: 6px 0 2px; }
+        .pain-wording-group .skill-status { margin-top: 2px; }
         .muted { color: var(--muted); }
 
         /* ============ CSV Combiner ============ */
@@ -2724,21 +2733,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
             negative: ['fear', 'nervousness', 'remorse', 'embarrassment', 'disappointment', 'sadness', 'grief', 'disgust', 'anger', 'annoyance', 'disapproval'],
             ambiguous: ['realization', 'surprise', 'curiosity', 'confusion']
         };
-        // Descriptive NRS (Numeric Rating Scale) anchor phrases for the Pain
-        // 1-10 skill's zero-shot hypotheses. Plain config array - easy to
-        // reword without touching any logic.
-        const PAIN_ANCHORS = [
-            { level: 1, phrase: 'no pain at all' },
-            { level: 2, phrase: 'very mild pain, barely noticeable' },
-            { level: 3, phrase: 'mild pain that is noticeable but not distracting' },
-            { level: 4, phrase: 'moderate pain that is distracting' },
-            { level: 5, phrase: 'moderate pain that interferes with some daily activities' },
-            { level: 6, phrase: 'moderately severe pain that interferes with concentration' },
-            { level: 7, phrase: 'severe pain that dominates the senses and limits daily activities' },
-            { level: 8, phrase: 'very severe pain that makes normal activities very difficult' },
-            { level: 9, phrase: 'excruciating pain, almost unbearable' },
-            { level: 10, phrase: 'the worst pain imaginable' }
-        ];
         // Plain-English entity type names for the Extract Entities skill,
         // keyed on dslim/bert-base-NER's standard CoNLL-2003 scheme.
         const NER_TYPE_LABELS = { PER: 'Person', ORG: 'Organization', LOC: 'Place', MISC: 'Other' };
@@ -2749,7 +2743,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             { id: 'transcribe',        name: 'Transcribe audio',         desc: 'Turn interview recordings into text with timestamps, without sending audio to any cloud service.',   icon: 'mic',       engine: 'asr',        modelId: SKILL_TRANSCRIBE_ID, modelSize: '~800 MB', status: 'ready' },
             { id: 'summarize',         name: 'Summarize or find themes', desc: 'Shorten long text or pull out the main themes from a document.',                                   icon: 'file-text', engine: 'llm',        status: 'ready' },
             { id: 'emotions',          name: 'Emotions and sentiment',   desc: 'Detect emotions in text (joy, sadness, nervousness, and 25 more) and overall positive/negative tone.', icon: 'heart',   engine: 'classifier', modelId: SKILL_EMOTIONS_ID, modelSize: '~125 MB', status: 'ready' },
-            { id: 'pain-level',        name: 'Estimate pain level',      desc: 'From descriptions of pain, estimate a 1 to 10 rating.',                                              icon: 'face-pain', engine: 'zeroshot',   modelId: SKILL_ZEROSHOT_ID, status: 'ready' },
+            { id: 'pain-level',        name: 'Estimate pain level',      desc: 'Estimate how strong pain is and how much it gets in the way, from text.',                          icon: 'face-pain', engine: 'zeroshot',   modelId: SKILL_ZEROSHOT_ID, status: 'ready' },
             { id: 'buckets',           name: 'Score against any labels', desc: 'Give text a score for any set of labels you type in.',                                                icon: 'grid',      engine: 'zeroshot',   modelId: SKILL_ZEROSHOT_ID, status: 'ready' },
             { id: 'ner',               name: 'Find names and places',    desc: 'Pull out people, organizations, and places mentioned in text.',                                       icon: 'user',      engine: 'classifier', modelId: SKILL_NER_ID, modelSize: '~180 MB', status: 'ready' },
             { id: 'dedup',             name: 'Find similar or duplicates', desc: 'Group text that says roughly the same thing, or find near-duplicates.',                             icon: 'copy',      engine: 'embed',      modelId: COMPENDIUM_EMBED_ID, status: 'ready' }
@@ -2758,6 +2752,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
         const TAXONOMIES_KEY = 'fieldstation_taxonomies_v1';
         const BUCKETS_KEY = 'fieldstation_buckets_v1';
+        // Holds the statements a person edited in Estimate pain level. It
+        // holds wording only, never the text a person checks.
+        const PAIN_WORDING_KEY = 'fieldstation_pain_wording_v1';
 
         // Context window sizes (tokens) per model, keyed on the literal
         // currentModelId string (webllm:-prefixed for chat models, bare repo
@@ -11518,14 +11515,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const myToken = skillLoadToken;
             anyLoadInProgress = true;
             skillZeroShotLoading = (async () => {
-                const auto = (!forceQ4 && typeof Float16Array !== 'undefined') ? 'q4f16' : 'q4';
+                // No q4f16 rung: on WebGPU this model's 16-bit variant
+                // gives flattened, wrong scores (a clear "severe" text scored
+                // 0.01 where the q4 variant scored 4.34), while webgpu/q4
+                // and wasm/q4 agree with each other and with the CPU run.
                 // Skip WebGPU rungs when a prior inference failure told us
                 // this browser can't run BART-MNLI on WebGPU (int64/GatherND).
                 let ladder = skillForceWasm ? [
                     { device: 'wasm', dtype: 'q4' },
                     { device: 'wasm', dtype: 'q8' }
                 ] : [
-                    { device: 'webgpu', dtype: auto },
                     { device: 'webgpu', dtype: 'q4' },
                     { device: 'wasm', dtype: 'q4' },
                     { device: 'wasm', dtype: 'q8' }
@@ -15255,6 +15254,10 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 progWrap.hidden = true;
                 renderTabs();
             }
+            // Stop aborts the wait for the engine. An aborted controller
+            // stays aborted, so a run after a stopped one needs a new one,
+            // or every item would fail while it waits for the engine.
+            if (skillLockWaitCtl.signal.aborted) skillLockWaitCtl = new AbortController();
             skillBatchRunning = true;
             runBtn.disabled = true;
             cancelBtn.hidden = false;
@@ -15542,15 +15545,601 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             container.appendChild(dl);
         }
 
-        // ---------- Pain 1-10 skill ----------
-        function painArgmax(byLevel) {
-            let bestLevel = null, bestScore = -1;
-            for (const a of PAIN_ANCHORS) {
-                const s = byLevel[a.level] || 0;
-                if (s > bestScore) { bestScore = s; bestLevel = a.level; }
-            }
-            return { level: bestLevel, score: bestScore };
+        // ---------- Estimate pain level skill ----------
+        // ### Pain estimate: data and pure helpers (start) ###
+        // Data and text handling for Estimate pain level. Everything between
+        // these two markers is evaluated on its own by the tests under
+        // tests/ in a bare JavaScript context, so keep it to constants and
+        // pure functions: no DOM, no app state, no other constants from
+        // this file.
+        //
+        // The skill reports two separate things: how strong the pain is
+        // (intensity) and whether it limits what the person can do
+        // (interference). Both are model estimates from text, not scores
+        // the person gave. The skill never turns a category into a 0 to
+        // 10 number, because published cut points between categories
+        // disagree. Each statement below is compared with the text by a
+        // natural language inference model, which answers three ways:
+        // the text agrees with the statement, disagrees with it, or says
+        // neither.
+
+        // Written to every download so results from different scales are
+        // never mixed. Version 1 was one blended score from 1 to 10.
+        const PAIN_SCALE_VERSION = '2';
+        const PAIN_NOT_STATED = 'not stated';
+        // A level's code is its position in the list, starting at 0.
+        const PAIN_INTENSITY_LABELS = ['none', 'mild', 'moderate', 'severe'];
+        // Interference has one statement. The text disagrees with it (0),
+        // agrees with it (1), or says neither, which is "not stated".
+        const PAIN_INTERFERENCE_LABELS = ['does not limit activities', 'limits activities'];
+        // Each statement goes to the model exactly as written. The
+        // wording is this project's own and copies no questionnaire text.
+        const PAIN_DEFAULT_WORDING = {
+            intensity: [
+                'The person has no pain.',
+                'The person has mild pain.',
+                'The person has moderate pain.',
+                'The person has severe pain.'
+            ],
+            interference: [
+                'Pain stops the person from doing things.'
+            ]
+        };
+        const PAIN_WORDING_SETS = ['intensity', 'interference'];
+        // Keeps a statement and the text together under the model's
+        // 1024-token limit.
+        const PAIN_STATEMENT_MAX_CHARS = 200;
+        // Intensity is "not stated" unless the text agrees with at least
+        // one intensity statement this strongly (a 0 to 1 probability).
+        const PAIN_SUPPORT_MIN = 0.5;
+        // Interference is stated only when agreement or disagreement with
+        // its statement reaches this probability.
+        const PAIN_INTERFERENCE_MIN = 0.5;
+        // A "close call" note is added when the top two intensity shares
+        // are within this distance of each other.
+        const PAIN_CLOSE_MARGIN = 0.15;
+        // A "long text" note is added past this many tokens, because a
+        // short statement about pain inside a long text gets weaker
+        // scores the longer the text is.
+        const PAIN_LONG_TEXT_TOKENS = 400;
+        // The most tokens of text sent with one statement, leaving room
+        // for the statement and the separator tokens inside 1024.
+        const PAIN_TEXT_TOKEN_BUDGET = 900;
+        // Most stated scores kept for one item, so a long text cannot
+        // fill a table cell or a download field.
+        const PAIN_STATED_SCORE_LIMIT = 10;
+        const PAIN_NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+        const PAIN_NOTE_SHORTENED = 'Text shortened';
+        const PAIN_NOTE_LONG = 'Long text';
+        const PAIN_NOTE_CLOSE = 'Close call';
+
+        /**
+         * Checks one statement a person typed. Returns an empty string
+         * when it is allowed, or a short sentence saying what to fix.
+         * Allowed: 1 to PAIN_STATEMENT_MAX_CHARS characters, starting with
+         * a letter, holding only letters, digits, spaces, and , . ' - ( )
+         * / ; : characters. Starting with a letter keeps a spreadsheet
+         * from reading the statement as a formula, and the character list
+         * keeps markup and template characters out.
+         */
+        function validatePainStatement(text) {
+            if (typeof text !== 'string') return 'Type a statement.';
+            const t = text.trim();
+            if (!t) return 'Type a statement.';
+            if (t.length > PAIN_STATEMENT_MAX_CHARS) return 'Use ' + PAIN_STATEMENT_MAX_CHARS + ' characters or fewer.';
+            if (!/^\p{L}/u.test(t)) return 'Start with a letter.';
+            if (!/^[\p{L}\p{M}\p{N} ,.'’\-()\/;:]+$/u.test(t)) return 'Use only letters, numbers, spaces, and , . \' - ( ) / ; :';
+            return '';
         }
+
+        /**
+         * Returns a copy of a wording object with trimmed statements.
+         * Returns null when the shape is wrong: a set is missing, holds
+         * the wrong number of statements, or holds a value that is not text.
+         */
+        function clonePainWording(wording) {
+            if (!wording || typeof wording !== 'object') return null;
+            const out = {};
+            for (const set of PAIN_WORDING_SETS) {
+                const list = wording[set];
+                if (!Array.isArray(list) || list.length !== PAIN_DEFAULT_WORDING[set].length) return null;
+                out[set] = [];
+                for (const s of list) {
+                    if (typeof s !== 'string') return null;
+                    out[set].push(s.trim());
+                }
+            }
+            return out;
+        }
+
+        /**
+         * Checks every statement in a wording object. Returns
+         * { ok, errors }, where errors has one list per set holding an
+         * empty string or a message for each statement. A statement that
+         * repeats an earlier one in its set is an error, because scores
+         * are matched back to statements by their text.
+         */
+        function validatePainWording(wording) {
+            const clean = clonePainWording(wording);
+            const errors = {};
+            let ok = !!clean;
+            for (const set of PAIN_WORDING_SETS) {
+                errors[set] = [];
+                const list = clean ? clean[set] : PAIN_DEFAULT_WORDING[set].map(() => null);
+                const seen = [];
+                for (const s of list) {
+                    let message = validatePainStatement(s);
+                    const key = typeof s === 'string' ? s.toLowerCase() : '';
+                    if (!message && seen.includes(key)) message = 'This repeats another statement.';
+                    if (!message) seen.push(key);
+                    if (message) ok = false;
+                    errors[set].push(message);
+                }
+            }
+            return { ok, errors };
+        }
+
+        /** Returns true when the wording matches the defaults exactly. */
+        function isDefaultPainWording(wording) {
+            const clean = clonePainWording(wording);
+            if (!clean) return false;
+            return PAIN_WORDING_SETS.every(set => clean[set].every((s, i) => s === PAIN_DEFAULT_WORDING[set][i]));
+        }
+
+        /** Returns the softmax of a list of numbers: values from 0 to 1 that add up to 1. */
+        function painSoftmax(values) {
+            const top = Math.max(...values);
+            const exps = values.map(v => Math.exp(v - top));
+            const sum = exps.reduce((a, b) => a + b, 0);
+            return exps.map(e => e / sum);
+        }
+
+        /**
+         * Turns the model's three raw scores for one statement into
+         * probabilities: { agree, disagree, neither }. ids says which
+         * position holds which answer, as { contradiction, neutral,
+         * entailment }. Returns null when the scores are unusable.
+         */
+        function painThreeWay(logits, ids) {
+            if (!logits || logits.length !== 3 || !ids) return null;
+            const values = [Number(logits[0]), Number(logits[1]), Number(logits[2])];
+            if (!values.every(Number.isFinite)) return null;
+            const p = painSoftmax(values);
+            return { agree: p[ids.entailment], disagree: p[ids.contradiction], neither: p[ids.neutral] };
+        }
+
+        /**
+         * Scores one set of statements from the model's raw scores, one
+         * list of three per statement. Returns { shares, support }:
+         * shares is each statement's share of the "agree" score across
+         * the set (they add up to 1), and support is each statement's
+         * own agree probability against its own disagree and neither.
+         * Returns null when any score is unusable.
+         */
+        function painSetScores(logitsPerStatement, ids) {
+            if (!Array.isArray(logitsPerStatement) || !logitsPerStatement.length || !ids) return null;
+            const agreeLogits = [];
+            const support = [];
+            for (const logits of logitsPerStatement) {
+                const three = painThreeWay(logits, ids);
+                if (!three) return null;
+                agreeLogits.push(Number(logits[ids.entailment]));
+                support.push(three.agree);
+            }
+            return { shares: painSoftmax(agreeLogits), support };
+        }
+
+        /**
+         * Picks one intensity level. shares and support come from
+         * painSetScores. Returns { stated, level, label, matchScore,
+         * close }. The result is "not stated" when no statement reaches
+         * PAIN_SUPPORT_MIN, or the scores are unusable. Equal top shares
+         * give the lower level. close is true when the top two shares
+         * are within PAIN_CLOSE_MARGIN of each other.
+         */
+        function pickPainIntensity(shares, support) {
+            const none = { stated: false, level: null, label: PAIN_NOT_STATED, matchScore: null, close: false };
+            const n = PAIN_INTENSITY_LABELS.length;
+            if (!Array.isArray(shares) || !Array.isArray(support) || shares.length !== n || support.length !== n) return none;
+            if (!shares.every(s => typeof s === 'number' && Number.isFinite(s))) return none;
+            if (!support.every(s => typeof s === 'number' && Number.isFinite(s))) return none;
+            if (Math.max(...support) < PAIN_SUPPORT_MIN) return none;
+            let level = 0;
+            for (let i = 1; i < n; i++) if (shares[i] > shares[level]) level = i;
+            const sorted = shares.slice().sort((a, b) => b - a);
+            return { stated: true, level, label: PAIN_INTENSITY_LABELS[level], matchScore: shares[level], close: (sorted[0] - sorted[1]) < PAIN_CLOSE_MARGIN };
+        }
+
+        /**
+         * Picks the interference result from the three probabilities of
+         * its one statement, as painThreeWay returns them. Returns
+         * { stated, level, label, matchScore }: level 1 when the text
+         * agrees with the statement at PAIN_INTERFERENCE_MIN or more,
+         * level 0 when it disagrees that strongly, and "not stated"
+         * otherwise. painStated false forces "not stated", because
+         * interference means nothing when pain itself is not stated.
+         */
+        function pickPainInterference(three, painStated) {
+            const none = { stated: false, level: null, label: PAIN_NOT_STATED, matchScore: null };
+            if (!painStated || !three) return none;
+            const values = [three.agree, three.disagree, three.neither];
+            if (!values.every(v => typeof v === 'number' && Number.isFinite(v))) return none;
+            if (three.agree >= PAIN_INTERFERENCE_MIN && three.agree >= three.disagree) return { stated: true, level: 1, label: PAIN_INTERFERENCE_LABELS[1], matchScore: three.agree };
+            if (three.disagree >= PAIN_INTERFERENCE_MIN) return { stated: true, level: 0, label: PAIN_INTERFERENCE_LABELS[0], matchScore: three.disagree };
+            return none;
+        }
+
+        /**
+         * Cuts text so it fits the model's window next to a statement.
+         * countTokens(text) returns the number of tokens the model would
+         * read for the text alone. Returns { text, tokens, shortened }.
+         * Shortening cuts characters in proportion to the overrun and
+         * counts again, so the model never drops the statement instead.
+         */
+        function painFitTextToBudget(text, countTokens, budget) {
+            let t = typeof text === 'string' ? text : '';
+            const limit = (typeof budget === 'number' && budget > 0) ? budget : PAIN_TEXT_TOKEN_BUDGET;
+            let tokens = t ? countTokens(t) : 0;
+            let shortened = false;
+            for (let pass = 0; pass < 8 && tokens > limit && t.length > 1; pass++) {
+                const keep = Math.max(1, Math.floor(t.length * (limit / tokens) * 0.95));
+                t = t.slice(0, keep);
+                tokens = countTokens(t);
+                shortened = true;
+            }
+            return { text: t, tokens, shortened };
+        }
+
+        /** Returns the number a digit string or a word from zero to ten stands for, or null. */
+        function painNumberValue(token) {
+            const t = String(token).toLowerCase();
+            const word = PAIN_NUMBER_WORDS.indexOf(t);
+            if (word >= 0) return word;
+            const n = Number(t);
+            return (t !== '' && Number.isFinite(n)) ? n : null;
+        }
+
+        /**
+         * Finds pain scores the writer states in so many words, such as
+         * "7 out of 10", "3/5", "6 on a scale of 0 to 10", or "pain level
+         * 4". A score counts only when its sentence also holds a pain
+         * word. Returns a list of { text, value, scaleMax } in reading
+         * order: text is the matched phrase alone, value is a number or
+         * null when it falls outside the scale, and scaleMax is null when
+         * the writer names no scale. Dates, longer fractions, and counts
+         * such as "9/10 times" are left out.
+         */
+        function findStatedPainScores(text) {
+            if (typeof text !== 'string' || !text) return [];
+            const NUM = '(\\d{1,2}(?:\\.\\d)?|zero|one|two|three|four|five|six|seven|eight|nine|ten)';
+            const MAX = '(10|5|ten|five)';
+            const BEFORE = '(?<![\\w./])';
+            const NOT_A_COUNT = '(?!\\s*(?:times|days|nights|weeks|months|years|hours|minutes|people|patients|participants|sessions|visits|doses|tablets|pills|of\\s+the\\s+time)\\b)';
+            // Forms that name their scale come first, so "pain level 7 out
+            // of 10" is read as one score with a scale.
+            const forms = [
+                { re: new RegExp(BEFORE + NUM + '\\s+out\\s+of\\s+' + MAX + '\\b' + NOT_A_COUNT, 'gi'), hasMax: true },
+                { re: new RegExp(BEFORE + NUM + '\\s+on\\s+(?:a|the)\\s+(?:pain\\s+)?scale\\s+(?:of|from)\\s+(?:0|1|zero|one)\\s*(?:to|-|\\u2013)\\s*' + MAX + '\\b', 'gi'), hasMax: true },
+                { re: new RegExp(BEFORE + NUM + '\\s+on\\s+(?:a|the)\\s+' + MAX + '[\\s-]point\\s+(?:pain\\s+)?scale\\b', 'gi'), hasMax: true },
+                { re: new RegExp(BEFORE + '(\\d{1,2}(?:\\.\\d)?)\\s?/\\s?(10|5)(?![\\d/]|\\.\\d)' + NOT_A_COUNT, 'g'), hasMax: true },
+                { re: new RegExp('\\bpain\\s+(?:level|score|rating)\\s*(?:is|was|of|at|:|=)?\\s*(?:about\\s+)?(?:an?\\s+)?' + NUM + '(?![\\w/]|\\.\\d)' + NOT_A_COUNT, 'gi'), hasMax: false }
+            ];
+            const PAIN_WORD = /\b(?:pain\w*|hurt\w*|ach(?:e|es|ed|ing|y)|sore\w*|discomfort)\b/i;
+            const found = [];
+            const sentences = text.split(/(?<=[.!?])\s+|\n+/);
+            for (const sentence of sentences) {
+                if (!PAIN_WORD.test(sentence)) continue;
+                const taken = [];
+                for (const form of forms) {
+                    form.re.lastIndex = 0;
+                    let m;
+                    while ((m = form.re.exec(sentence)) !== null) {
+                        const start = m.index, end = m.index + m[0].length;
+                        if (taken.some(t => start < t.end && end > t.start)) continue;
+                        const number = painNumberValue(m[1]);
+                        const scaleMax = form.hasMax ? painNumberValue(m[2]) : null;
+                        const top = scaleMax === null ? 10 : scaleMax;
+                        const value = (number !== null && number >= 0 && number <= top) ? number : null;
+                        taken.push({ start, end, text: m[0].replace(/\s+/g, ' ').trim(), value, scaleMax });
+                    }
+                }
+                taken.sort((a, b) => a.start - b.start);
+                for (const t of taken) {
+                    if (found.length >= PAIN_STATED_SCORE_LIMIT) return found;
+                    found.push({ text: t.text, value: t.value, scaleMax: t.scaleMax });
+                }
+            }
+            return found;
+        }
+
+        /**
+         * Folds the stated scores of one item into four fields: text
+         * holds every phrase, joined by " | ", and count says how many.
+         * value and scaleMax are filled only when every phrase gives the
+         * same number on the same scale, and are empty strings otherwise.
+         */
+        function summarizeStatedPainScores(found) {
+            const list = Array.isArray(found) ? found : [];
+            const out = { text: list.map(f => f.text).join(' | '), count: list.length, value: '', scaleMax: '' };
+            if (!list.length || list[0].value === null) return out;
+            const same = list.every(f => f.value === list[0].value && f.scaleMax === list[0].scaleMax);
+            if (!same) return out;
+            out.value = list[0].value;
+            out.scaleMax = list[0].scaleMax === null ? '' : list[0].scaleMax;
+            return out;
+        }
+
+        /**
+         * Turns the raw record of one item into what the results table
+         * shows: { intensity, interference, stated, notes }. notes is a
+         * list of short phrases: text was shortened, the text is long, or
+         * the intensity pick was a close call.
+         */
+        function summarizePainItem(result) {
+            const r = result || {};
+            const intensity = pickPainIntensity(r.intensityShares, r.intensitySupport);
+            const interference = pickPainInterference(r.interference, intensity.stated);
+            const notes = [];
+            if (r.shortened) notes.push(PAIN_NOTE_SHORTENED);
+            if (typeof r.textTokens === 'number' && r.textTokens > PAIN_LONG_TEXT_TOKENS) notes.push(PAIN_NOTE_LONG);
+            if (intensity.close) notes.push(PAIN_NOTE_CLOSE);
+            return { intensity, interference, stated: summarizeStatedPainScores(r.stated), notes };
+        }
+
+        /** Returns a score rounded to 4 decimal places, or an empty string when there is none. */
+        function painRound(score) {
+            return (typeof score === 'number' && Number.isFinite(score)) ? Math.round(score * 10000) / 10000 : '';
+        }
+
+        /** Returns the statements of one set as one line, such as "0=... | 1=...". */
+        function painWordingLine(statements) {
+            return (statements || []).map((s, i) => i + '=' + s).join(' | ');
+        }
+
+        /**
+         * Returns the columns the skill adds to a download, as
+         * { keys, names }. keys are the fixed names painExportRow uses.
+         * names are what the file shows: the same, unless the person's
+         * spreadsheet already has a column of that name in any letter
+         * case, in which case a number is added so no column is
+         * overwritten.
+         */
+        function painExportColumns(originalHeaders) {
+            const keys = ['pain_intensity_level', 'pain_intensity_label', 'pain_intensity_match_score', 'pain_intensity_support'];
+            PAIN_INTENSITY_LABELS.forEach((label, i) => keys.push('pain_intensity_share_' + i));
+            PAIN_INTENSITY_LABELS.forEach((label, i) => keys.push('pain_intensity_agree_' + i));
+            keys.push('pain_interference_level', 'pain_interference_label', 'pain_interference_match_score',
+                'pain_interference_agree', 'pain_interference_disagree', 'pain_interference_neither',
+                'pain_stated_score_text', 'pain_stated_score_count', 'pain_stated_score_value', 'pain_stated_score_max',
+                'pain_notes', 'pain_text_shortened', 'pain_text_tokens',
+                'pain_scale_version', 'pain_model', 'pain_model_variant', 'pain_runtime',
+                'pain_intensity_wording', 'pain_interference_wording', 'pain_thresholds',
+                'pain_wording_edited', 'pain_run_at_utc');
+            const taken = new Set((Array.isArray(originalHeaders) ? originalHeaders : []).map(h => String(h).toLowerCase()));
+            const names = keys.map(key => {
+                let name = key;
+                for (let n = 2; taken.has(name.toLowerCase()); n++) name = key + '_' + n;
+                taken.add(name.toLowerCase());
+                return name;
+            });
+            return { keys, names };
+        }
+
+        /**
+         * Returns the download fields for one item, keyed by the keys of
+         * painExportColumns. Grain: one row per item. Levels and match
+         * scores are empty when the result is "not stated". Scores run
+         * from 0 to 1. An item with no result gives every field empty,
+         * except pain_notes, which holds the error text when one is given.
+         */
+        function painExportRow(result, error) {
+            const row = {};
+            for (const key of painExportColumns([]).keys) row[key] = '';
+            if (!result) {
+                if (typeof error === 'string' && error) row.pain_notes = 'Not estimated: ' + error;
+                return row;
+            }
+            const summary = summarizePainItem(result);
+            const wording = clonePainWording(result.wording) || PAIN_DEFAULT_WORDING;
+            const three = result.interference || {};
+            row.pain_intensity_level = summary.intensity.stated ? summary.intensity.level : '';
+            row.pain_intensity_label = summary.intensity.label;
+            row.pain_intensity_match_score = painRound(summary.intensity.matchScore);
+            row.pain_intensity_support = Array.isArray(result.intensitySupport) ? painRound(Math.max(...result.intensitySupport)) : '';
+            PAIN_INTENSITY_LABELS.forEach((label, i) => {
+                row['pain_intensity_share_' + i] = painRound((result.intensityShares || [])[i]);
+                row['pain_intensity_agree_' + i] = painRound((result.intensitySupport || [])[i]);
+            });
+            row.pain_interference_level = summary.interference.stated ? summary.interference.level : '';
+            row.pain_interference_label = summary.interference.label;
+            row.pain_interference_match_score = painRound(summary.interference.matchScore);
+            row.pain_interference_agree = painRound(three.agree);
+            row.pain_interference_disagree = painRound(three.disagree);
+            row.pain_interference_neither = painRound(three.neither);
+            row.pain_stated_score_text = summary.stated.text;
+            row.pain_stated_score_count = summary.stated.count;
+            row.pain_stated_score_value = summary.stated.value;
+            row.pain_stated_score_max = summary.stated.scaleMax;
+            row.pain_notes = summary.notes.join('; ');
+            row.pain_text_shortened = result.shortened ? 'true' : 'false';
+            row.pain_text_tokens = (typeof result.textTokens === 'number') ? result.textTokens : '';
+            row.pain_scale_version = PAIN_SCALE_VERSION;
+            row.pain_model = typeof result.model === 'string' ? result.model : '';
+            row.pain_model_variant = typeof result.modelVariant === 'string' ? result.modelVariant : '';
+            row.pain_runtime = typeof result.runtime === 'string' ? result.runtime : '';
+            row.pain_intensity_wording = painWordingLine(wording.intensity);
+            row.pain_interference_wording = painWordingLine(wording.interference);
+            row.pain_thresholds = 'intensity support=' + PAIN_SUPPORT_MIN + ' | interference=' + PAIN_INTERFERENCE_MIN + ' | close call margin=' + PAIN_CLOSE_MARGIN + ' | long text tokens=' + PAIN_LONG_TEXT_TOKENS;
+            row.pain_wording_edited = isDefaultPainWording(wording) ? 'false' : 'true';
+            row.pain_run_at_utc = typeof result.runAtUtc === 'string' ? result.runAtUtc : '';
+            return row;
+        }
+
+        /** Returns how a picked level reads in the table and in Send to Chat, such as "2 moderate". */
+        function painLevelText(pick) {
+            return (pick && pick.stated) ? pick.level + ' ' + pick.label : PAIN_NOT_STATED;
+        }
+
+        /**
+         * Returns the text Send to Chat puts in the prompt box. items is
+         * a list of { id, result }. The text says the values are model
+         * estimates, so the chat model does not read them as scores the
+         * person gave.
+         */
+        function painChatSummary(items) {
+            const list = Array.isArray(items) ? items : [];
+            const lines = [
+                'I estimated pain from text for ' + list.length + ' item' + (list.length === 1 ? '' : 's') + '.',
+                'These are model estimates, not scores the person gave.',
+                'Intensity runs from 0 (none) to 3 (severe). Interference is 0 (does not limit activities) or 1 (limits activities).'
+            ];
+            for (const item of list) {
+                const summary = summarizePainItem(item.result);
+                let line = '- ' + item.id + ': intensity ' + painLevelText(summary.intensity) + '; interference ' + painLevelText(summary.interference);
+                if (summary.stated.text) line += '; stated by the writer: ' + summary.stated.text;
+                if (summary.notes.length) line += ' (' + summary.notes.join(', ').toLowerCase() + ')';
+                lines.push(line);
+            }
+            lines.push('', 'What patterns do you see?');
+            return lines.join('\n');
+        }
+        // ### Pain estimate: data and pure helpers (end) ###
+
+        // Returns the wording a person saved, or null when there is none
+        // or it no longer passes the checks. Saved wording is read as
+        // untrusted input, because anything can write to browser storage.
+        function readPainWording() {
+            try {
+                const raw = localStorage.getItem(PAIN_WORDING_KEY);
+                if (!raw) return null;
+                const wording = clonePainWording(JSON.parse(raw));
+                return (wording && validatePainWording(wording).ok) ? wording : null;
+            } catch { return null; }
+        }
+        // Saves edited wording. Default wording is stored as no entry at
+        // all, so a later change to the defaults reaches everyone who
+        // never edited them.
+        function writePainWording(wording) {
+            try {
+                if (isDefaultPainWording(wording)) localStorage.removeItem(PAIN_WORDING_KEY);
+                else localStorage.setItem(PAIN_WORDING_KEY, JSON.stringify(wording));
+            } catch {}
+        }
+
+        /**
+         * Builds the "Wording the tool matches" block: one text box per
+         * statement, a line that says whether the wording is the default
+         * or edited, and a Restore defaults button. Valid edits are saved
+         * as they are typed. Returns { section, getWording(), isValid(),
+         * showFirstError() }. Every node is built with createElement and
+         * textContent, because the statements are typed by a person.
+         * Accessibility: each box has a visible label, and an error is
+         * tied to its box with aria-describedby and aria-invalid.
+         */
+        function mountPainWordingEditor() {
+            const GROUPS = [
+                { set: 'intensity', title: 'How strong the pain is', labels: PAIN_INTENSITY_LABELS.map((name, i) => i + ' ' + name) },
+                { set: 'interference', title: 'Whether pain limits what the person can do', labels: ['The text agrees, disagrees, or says neither'] }
+            ];
+            const section = document.createElement('details');
+            section.className = 'skill-section pain-wording';
+            const summary = document.createElement('summary');
+            summary.append('Wording the tool matches: ');
+            const state = document.createElement('span');
+            state.id = 'pain-wording-state';
+            summary.appendChild(state);
+            section.appendChild(summary);
+            const hint = document.createElement('p');
+            hint.className = 'skill-hint';
+            hint.textContent = 'The tool compares your text with each statement. Edits are saved in this browser.';
+            section.appendChild(hint);
+
+            const start = readPainWording() || clonePainWording(PAIN_DEFAULT_WORDING);
+            const fields = [];
+            for (const group of GROUPS) {
+                const box = document.createElement('fieldset');
+                box.className = 'pain-wording-group';
+                const legend = document.createElement('legend');
+                legend.textContent = group.title;
+                box.appendChild(legend);
+                group.labels.forEach((name, i) => {
+                    const id = 'pain-wording-' + group.set + '-' + i;
+                    const label = document.createElement('label');
+                    label.className = 'skill-hint';
+                    label.htmlFor = id;
+                    label.textContent = name;
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'skill-input';
+                    input.id = id;
+                    input.maxLength = PAIN_STATEMENT_MAX_CHARS;
+                    input.autocomplete = 'off';
+                    input.value = start[group.set][i];
+                    const error = document.createElement('p');
+                    error.className = 'skill-status error';
+                    error.id = id + '-error';
+                    error.hidden = true;
+                    box.append(label, input, error);
+                    fields.push({ set: group.set, index: i, input, error });
+                });
+                section.appendChild(box);
+            }
+            const row = document.createElement('div');
+            row.className = 'skill-row';
+            const restore = document.createElement('button');
+            restore.type = 'button';
+            restore.className = 'skill-btn';
+            restore.textContent = 'Restore defaults';
+            row.appendChild(restore);
+            section.appendChild(row);
+
+            function getWording() {
+                const wording = { intensity: [], interference: [] };
+                for (const f of fields) wording[f.set][f.index] = f.input.value.trim();
+                return wording;
+            }
+            // Shows each error under its box and returns whether all pass.
+            function refresh() {
+                const wording = getWording();
+                const check = validatePainWording(wording);
+                for (const f of fields) {
+                    const message = check.errors[f.set][f.index];
+                    f.error.textContent = message;
+                    f.error.hidden = !message;
+                    if (message) {
+                        f.input.setAttribute('aria-invalid', 'true');
+                        f.input.setAttribute('aria-describedby', f.error.id);
+                    } else {
+                        f.input.removeAttribute('aria-invalid');
+                        f.input.removeAttribute('aria-describedby');
+                    }
+                }
+                state.textContent = !check.ok ? 'needs a fix' : (isDefaultPainWording(wording) ? 'default' : 'edited');
+                return check.ok;
+            }
+            for (const f of fields) {
+                f.input.addEventListener('input', () => { if (refresh()) writePainWording(getWording()); });
+            }
+            restore.addEventListener('click', () => {
+                for (const f of fields) f.input.value = PAIN_DEFAULT_WORDING[f.set][f.index];
+                refresh();
+                writePainWording(getWording());
+            });
+            refresh();
+
+            return {
+                section,
+                getWording,
+                isValid: refresh,
+                showFirstError() {
+                    const bad = fields.find(f => !f.error.hidden);
+                    if (!bad) return;
+                    section.open = true;
+                    bad.input.focus();
+                }
+            };
+        }
+
         function mountPainLevelSkill(container) {
             let runningBatch = false, lastResultsSummary = null;
             container.innerHTML = '';
@@ -15560,11 +16149,14 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             skillTextReceiver = { id: 'pain-level', fn: inputTabs.receiveText };
             container.appendChild(inputTabs.section);
 
+            const wordingEditor = mountPainWordingEditor();
+            container.appendChild(wordingEditor.section);
+
             const sectionC = document.createElement('div');
             sectionC.className = 'skill-section';
             sectionC.innerHTML = `
                 <h3>Estimate pain level</h3>
-                <p class="skill-hint">Very long documents are shortened to the first ~4000 characters so the categorizer can handle them.</p>
+                <p class="skill-hint">Gives model estimates, not scores from the person. Long text is cut to what the model can read, and the results say so.</p>
                 <div class="skill-row">
                     <button class="skill-btn primary" id="pain-run">Estimate now</button>
                     <button class="skill-btn" id="pain-cancel" hidden>Stop</button>
@@ -15585,19 +16177,24 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             const progMsg = sectionC.querySelector('#pain-progress-msg');
             const progFill = sectionC.querySelector('#pain-progress-fill');
 
-            const hypotheses = PAIN_ANCHORS.map(a => a.phrase);
-
             runBtn.addEventListener('click', async () => {
                 if (!inputTabs.hasInput()) { skillLog(statusEl, inputTabs.getEmptyInputMessage(), true); return; }
-                // The tab open when the run starts decides how results are
-                // shown, even if another tab is opened while the run works.
+                if (!wordingEditor.isValid()) {
+                    skillLog(statusEl, 'Fix the wording marked above, or restore the defaults.', true);
+                    wordingEditor.showFirstError();
+                    return;
+                }
+                // The wording and the open tab are read once, when the run
+                // starts, so every item in a run is scored the same way even
+                // if the person edits a statement or opens another tab.
+                const wording = wordingEditor.getWording();
                 const runMode = inputTabs.getMode();
                 const docs = inputTabs.getDocs();
                 if (!docs.length) { skillLog(statusEl, 'No readable text found in your input.', true); return; }
                 if (anyLoadInProgress && !skillZeroShotLoading) { skillLog(statusEl, 'Something else is downloading in the background. Give it a moment and try again.', true); return; }
                 if (busy) { skillLog(statusEl, 'The chat is still working on a reply. Wait for it to finish and try again.', true); return; }
 
-                resultsEl.innerHTML = '';
+                resultsEl.replaceChildren();
                 lastResultsSummary = null;
                 runningBatch = true;
 
@@ -15613,10 +16210,38 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 }
 
                 const ownerLabel = findSkill(skillsCurrentId)?.name || 'Field Kit';
-                async function painClassify(text) {
+                const runToken = skillLoadToken;
+                const runAtUtc = new Date().toISOString();
+                // Where the model keeps its three answers. Read from the
+                // model's own labels, as the zero-shot pipeline does.
+                function answerIds() {
+                    const label2id = (classifier.model.config && classifier.model.config.label2id) || {};
+                    const find = (name, fallback) => {
+                        const key = Object.keys(label2id).find(k => k.toLowerCase().startsWith(name));
+                        return key === undefined ? fallback : label2id[key];
+                    };
+                    return { contradiction: find('contra', 0), neutral: find('neutral', 1), entailment: find('entail', 2) };
+                }
+                // The model reads the text and each statement as a pair and
+                // gives three raw scores per statement. Each set of
+                // statements is one unit of work under the engine lock, and
+                // a GPU failure reruns the whole set on the CPU version so
+                // every score of an item comes from one model variant.
+                async function painLogits(text, statements) {
+                    async function score() {
+                        const rows = [];
+                        for (const statement of statements) {
+                            // Stop was pressed: skip the model calls this item still has left.
+                            if (runToken !== skillLoadToken) throw new Error('Stopped.');
+                            const inputs = classifier.tokenizer(text, { text_pair: statement, padding: true, truncation: true });
+                            const out = await classifier.model(inputs);
+                            rows.push(Array.from(out.logits.data));
+                        }
+                        return rows;
+                    }
                     try {
                         await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
-                        try { return await classifier(text, hypotheses, { multi_label: false }); }
+                        try { return await score(); }
                         finally { EngineLock.release(); }
                     } catch (e) {
                         if (e.lockCancelled) throw e;
@@ -15627,7 +16252,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         classifier = await ensureSkillZeroShot(msg => skillLog(statusEl, msg));
                         if (!classifier) throw new Error('Could not reload the categorizer.');
                         await EngineLock.acquire(ownerLabel, skillLockWaitCtl.signal);
-                        try { return await classifier(text, hypotheses, { multi_label: false }); }
+                        try { return await score(); }
                         finally { EngineLock.release(); }
                     }
                 }
@@ -15635,11 +16260,26 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 await runClassifierBatch({
                     docs, statusEl, progWrap, progMsg, progFill, runBtn, cancelBtn,
                     classifyOne: async (text) => {
-                        const res = await painClassify(truncateForBart(text));
-                        const scoreByPhrase = mapScoresBack(res, hypotheses, hypotheses);
-                        const byLevel = {};
-                        for (const a of PAIN_ANCHORS) byLevel[a.level] = scoreByPhrase[a.phrase] || 0;
-                        return byLevel;
+                        const fit = painFitTextToBudget(text, t => classifier.tokenizer(t).input_ids.dims[1], PAIN_TEXT_TOKEN_BUDGET);
+                        const ids = answerIds();
+                        const intensity = painSetScores(await painLogits(fit.text, wording.intensity), ids);
+                        const interference = painThreeWay((await painLogits(fit.text, wording.interference))[0], ids);
+                        if (!intensity || !interference) throw new Error('The model gave no usable scores for this text.');
+                        // Read after the calls: a switch to the CPU version changes it.
+                        const rung = loadModelRung(SKILL_ZEROSHOT_ID);
+                        return {
+                            intensityShares: intensity.shares,
+                            intensitySupport: intensity.support,
+                            interference,
+                            textTokens: fit.tokens,
+                            shortened: fit.shortened,
+                            // Stated scores are looked for in the whole text, not only the part the model read.
+                            stated: findStatedPainScores(text),
+                            model: SKILL_ZEROSHOT_ID,
+                            modelVariant: rung ? rung.device + '/' + rung.dtype : '',
+                            runtime: 'transformers.js ' + env.version,
+                            wording, runAtUtc
+                        };
                     },
                     onDone: (perDoc) => {
                         runningBatch = false;
@@ -15654,89 +16294,127 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             });
         }
 
+        /**
+         * Shows the results of one run: a table of items that failed, a
+         * table of estimates, and the download and Send to Chat buttons.
+         * perDoc holds one entry per input item. Item names and stated
+         * scores come from the person's text, so every node is built with
+         * createElement and textContent. Accessibility: header cells carry
+         * scope, and the wide table sits in a labeled region that can be
+         * scrolled from the keyboard.
+         */
         function renderPainResults(mode, perDoc, container, bulkName) {
-            container.innerHTML = '';
-            const errored = perDoc.filter(d => d.error);
-            if (errored.length) {
+            container.replaceChildren();
+            function buildTable(headers, rows) {
+                const table = document.createElement('table');
+                table.className = 'skill-table';
+                const head = table.createTHead().insertRow();
+                for (const h of headers) {
+                    const th = document.createElement('th');
+                    th.scope = 'col';
+                    th.textContent = h.text;
+                    if (h.num) th.className = 'num';
+                    head.appendChild(th);
+                }
+                const body = table.createTBody();
+                for (const cells of rows) {
+                    const tr = body.insertRow();
+                    cells.forEach((text, i) => {
+                        const td = tr.insertCell();
+                        td.textContent = text;
+                        if (headers[i].num) td.className = 'num';
+                    });
+                }
+                return table;
+            }
+            function buildSection(title, hintText) {
                 const wrap = document.createElement('div');
                 wrap.className = 'skill-section';
-                wrap.innerHTML = '<h3>Items that could not be estimated</h3>';
-                const tbl = document.createElement('table');
-                tbl.className = 'skill-table';
-                tbl.innerHTML = '<thead><tr><th>Item</th><th>Reason</th></tr></thead>';
-                const tb = document.createElement('tbody');
-                for (const d of errored) {
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td><td style="color:var(--danger);">' + String(d.error).replace(/</g, '&lt;') + '</td>';
-                    tb.appendChild(tr);
+                const h3 = document.createElement('h3');
+                h3.textContent = title;
+                wrap.appendChild(h3);
+                if (hintText) {
+                    const hint = document.createElement('p');
+                    hint.className = 'skill-hint';
+                    hint.textContent = hintText;
+                    wrap.appendChild(hint);
                 }
-                tbl.appendChild(tb);
-                wrap.appendChild(tbl);
+                return wrap;
+            }
+
+            const errored = perDoc.filter(d => d.error);
+            if (errored.length) {
+                const wrap = buildSection('Items that could not be estimated');
+                wrap.appendChild(buildTable(
+                    [{ text: 'Item' }, { text: 'Reason' }],
+                    errored.map(d => [String(d.id), String(d.error)])));
                 container.appendChild(wrap);
             }
             const ok = perDoc.filter(d => d.result);
             if (!ok.length) return;
 
-            const tbl = document.createElement('table');
-            tbl.className = 'skill-table';
-            tbl.innerHTML = '<thead><tr><th>Item</th><th class="num">Estimated pain (1-10)</th><th class="num">Confidence</th></tr></thead>';
-            const tb = document.createElement('tbody');
-            for (const d of ok) {
-                const best = painArgmax(d.result);
-                const tr = document.createElement('tr');
-                tr.innerHTML = '<td>' + String(d.id).replace(/</g, '&lt;') + '</td><td class="num">' + best.level + '</td><td class="num">' + fmtPct(best.score) + '%</td>';
-                tb.appendChild(tr);
-            }
-            tbl.appendChild(tb);
-            const wrap = document.createElement('div');
-            wrap.className = 'skill-section';
-            wrap.innerHTML = '<h3>Results</h3><p class="skill-hint">The pain level whose description best matched each item, based on zero-shot comparison against 10 pain-severity descriptions.</p>';
-            wrap.appendChild(tbl);
+            const matchText = pick => pick.stated ? fmtPct(pick.matchScore) + '%' : '';
+            const wrap = buildSection('Results', 'Match is the share of the score the chosen wording got, not the chance that the result is right. Notes flag results to check by hand.');
+            const scroller = document.createElement('div');
+            scroller.className = 'skill-table-scroll';
+            scroller.tabIndex = 0;
+            scroller.setAttribute('role', 'region');
+            scroller.setAttribute('aria-label', 'Pain estimates table');
+            scroller.appendChild(buildTable(
+                [{ text: 'Item' }, { text: 'Intensity' }, { text: 'Intensity match', num: true },
+                 { text: 'Interference' }, { text: 'Interference match', num: true },
+                 { text: 'Stated score' }, { text: 'Notes' }],
+                ok.map(d => {
+                    const s = summarizePainItem(d.result);
+                    return [String(d.id), painLevelText(s.intensity), matchText(s.intensity),
+                        painLevelText(s.interference), matchText(s.interference),
+                        s.stated.text, s.notes.join('; ')];
+                })));
+            wrap.appendChild(scroller);
             container.appendChild(wrap);
 
             const dl = document.createElement('div');
             dl.className = 'skill-row';
+            const btn = document.createElement('button');
+            btn.className = 'skill-btn';
             if (mode === 'bulk') {
-                const btn = document.createElement('button');
-                btn.className = 'skill-btn';
                 btn.textContent = 'Download every row with results added';
                 btn.addEventListener('click', () => {
+                    // Grain: one row per spreadsheet row, in the original order.
                     const orig = (ok[0] && ok[0].row) ? Object.keys(ok[0].row) : [];
-                    const headers = orig.concat(['pain_level_1_to_10', 'pain_level_confidence']);
+                    const columns = painExportColumns(orig);
                     function* gen() {
                         for (const d of perDoc) {
                             const out = {};
                             for (const h of orig) out[h] = d.row ? d.row[h] : '';
-                            if (d.result) {
-                                const best = painArgmax(d.result);
-                                out.pain_level_1_to_10 = best.level;
-                                out.pain_level_confidence = Math.round(best.score * 10000) / 10000;
-                            } else { out.pain_level_1_to_10 = ''; out.pain_level_confidence = ''; }
+                            const fields = painExportRow(d.result, d.error);
+                            columns.keys.forEach((key, i) => { out[columns.names[i]] = fields[key]; });
                             yield out;
                         }
                     }
                     const base = (bulkName || 'bulk').replace(/\.[^.]+$/, '');
-                    downloadBlob(writeCsvStreaming(gen, headers), base + '_pain.csv');
+                    downloadBlob(writeCsvStreaming(gen, orig.concat(columns.names)), base + '_pain.csv');
                 });
-                dl.appendChild(btn);
             } else {
-                const btn = document.createElement('button');
-                btn.className = 'skill-btn';
                 btn.textContent = 'Download results as CSV';
                 btn.addEventListener('click', () => {
-                    const rows = ok.map(d => { const best = painArgmax(d.result); return { item: d.id, pain_level_1_to_10: best.level, confidence: round2(best.score) }; });
-                    downloadBlob(writeCsv(rows), 'pain_results.csv');
+                    // Grain: one row per item, including items that could not be estimated.
+                    const columns = painExportColumns(['item']);
+                    const rows = perDoc.map(d => {
+                        const out = { item: d.id };
+                        const fields = painExportRow(d.result, d.error);
+                        columns.keys.forEach((key, i) => { out[columns.names[i]] = fields[key]; });
+                        return out;
+                    });
+                    downloadBlob(writeCsv(rows, { headers: ['item'].concat(columns.names) }), 'pain_results.csv');
                 });
-                dl.appendChild(btn);
             }
+            dl.appendChild(btn);
             const btnChat = document.createElement('button');
             btnChat.className = 'skill-btn';
             btnChat.textContent = 'Send to Chat';
             btnChat.addEventListener('click', () => {
-                const lines = ['I estimated pain levels (1-10) for ' + ok.length + ' item(s).'];
-                for (const d of ok) { const best = painArgmax(d.result); lines.push('- ' + d.id + ': ' + best.level + '/10'); }
-                lines.push('', 'What patterns do you see?');
-                chatBridge(lines.join('\n'));
+                chatBridge(painChatSummary(ok.map(d => ({ id: d.id, result: d.result }))));
             });
             dl.appendChild(btnChat);
             container.appendChild(dl);
