@@ -42,7 +42,7 @@ Documented Field Kit tool areas:
 | Combine spreadsheets | CSV/TSV/XLS/XLSX files or folders | Merged CSV, summary, reproducibility artifact where available |
 | Transcribe audio | Audio file | Transcript with download or send-to-chat behavior where available |
 | Summarize or find themes | Pasted text or text/PDF file | Summary or theme list |
-| Emotions and sentiment | Text/PDF files, spreadsheet rows, or pasted text | Emotion or sentiment scores where implemented |
+| Emotions and sentiment | Text/PDF files, spreadsheet rows, or pasted text | A score for each of 28 feelings and a three-way tone. See [Emotions and Sentiment](#emotions-and-sentiment) |
 | Estimate pain level | Text/PDF files, spreadsheet rows, or pasted text | Pain intensity and interference estimates, scores the writer stated, and notes. See [Estimate Pain Level](#estimate-pain-level) |
 | Score against any labels | Text/PDF files, spreadsheet rows, or pasted text; user labels | Independent label scores |
 | Find names and places | Text/PDF files, spreadsheet rows, or pasted text | Entity list and counts where implemented |
@@ -146,6 +146,46 @@ The [User Guide](user-guide.md#send-text-to-a-field-kit-tool) lists the requests
 3. Press Tab again to move into the open tab's controls.
 
 Find similar or duplicates uses the same tab keys for its two tabs.
+
+## Emotions and Sentiment
+
+This tool scores each text against 28 feelings, such as gratitude, sadness, and neutral, and sums them into a positive, negative, and neutral tone. Every value is a model estimate from the words, not a rating the writer gave.
+
+### What the Feelings Tool Reports
+
+Each feeling gets its own score from 0% to 100%: the model's probability that the text expresses that feeling. The scores are independent, so they do not add up to 100%. A text can score high on two feelings at once, or low on all 28.
+
+| Output | What it shows |
+| --- | --- |
+| Top feeling, Second, Third | The three highest-scoring feelings and their scores. A feeling under 5% is left blank. When no feeling reaches 5%, the row reads "none above 5%" |
+| Overall tone | The positive, negative, and neutral shares, averaged over all items. These three add up to 100% |
+
+The tone groups follow the grouping published with the GoEmotions dataset. Realization, surprise, curiosity, and confusion count as neutral here, with the model's own neutral label.
+
+### The 10-Feeling View
+
+By default the table ranks all 28 feelings. Check **Limit the table to the 10 feelings most relevant to mental-health research** to rank only sadness, fear, anger, nervousness, disappointment, grief, remorse, disapproval, annoyance, and joy. This is a viewing choice. A warm message that scores 96% on gratitude reads "none above 5%" in the limited view, because gratitude is not one of the 10; the download still holds it.
+
+### Feelings Download Columns
+
+Each download has one row per item and always holds every feeling, whatever the table shows. The spreadsheet download keeps your columns and adds these after them. If your spreadsheet already has a column with one of these names, the added column gets a number on the end, such as `feeling_joy_2`.
+
+| Column | Holds |
+| --- | --- |
+| `top_1_feeling`, `top_1_score`, through `top_3_score` | The three highest of all 28 feelings, with scores from 0 to 1 |
+| `sentiment_positive`, `sentiment_negative`, `sentiment_neutral` | The three tone shares, which add up to 1 |
+| `feeling_admiration` through `feeling_neutral` | One column per feeling, in the model's order, with scores from 0 to 1 |
+
+Scores are rounded to four decimal places.
+
+### Feelings Tool Limits
+
+- The model, `SamLowe/roberta-base-go_emotions-onnx`, was trained on short public forum comments from the GoEmotions dataset. In testing, a long formal message scored high on one feeling and near zero on the rest.
+- The tool has not been checked against ratings from real people.
+- Text past about 4,000 characters is cut before scoring.
+- The tool works in English. It was not checked in other languages.
+
+Source: Demszky D and others. GoEmotions: a dataset of fine-grained emotions. Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics. 2020. [doi:10.18653/v1/2020.acl-main.372](https://doi.org/10.18653/v1/2020.acl-main.372). The tone grouping is the dataset's `sentiment_dict.json`.
 
 ## Estimate Pain Level
 

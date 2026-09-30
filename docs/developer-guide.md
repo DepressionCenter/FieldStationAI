@@ -101,6 +101,14 @@ Preserve these rules:
 - A skill's state probe must call `hasUnsavedInput()`, which looks at every tab. `hasInput()` looks at the open tab only and is for the run button.
 - Read the open tab once when a run starts, and use that value to show the results. The person may open another tab while the run works.
 
+## Change the Emotions Tool
+
+Emotions and sentiment runs the text-classification pipeline with `top_k: null`, so the model returns all 28 scores for every text. The pure helpers that rank, cut, and export those scores sit in the marked block `Emotions results: pure helpers`, just above `mountEmotionsSkill`.
+
+- The label list, the 10-feeling subset, the tone groups, the table cut (`EMOTIONS_TABLE_MIN_SCORE`), and the download column names are constants at the top of the block.
+- `emotionsTableCells` decides what the table shows for one item; `emotionsExportColumns` and `emotionsExportRow` build the downloads. The downloads always rank all 28 labels and write every score. The checkbox only changes the pool the table ranks, so never pass it to an export function.
+- Item names are untrusted input. `renderEmotionsResults` builds its tables with `createElement` and `textContent`; a test checks it for `innerHTML`.
+
 ## Change the Pain Estimate
 
 Estimate pain level reads the model's raw answers instead of the zero-shot pipeline. For each statement it sends the text and the statement to `classifier.tokenizer` as a pair, runs `classifier.model`, and reads three scores: the text agrees with the statement, disagrees, or says neither. The pure helpers that turn those scores into results sit in the marked block `Pain estimate: data and pure helpers`, just above `mountPainLevelSkill`.
@@ -314,9 +322,9 @@ The tests live under `tests/` and use Node's own test runner, so nothing is inst
 node --test tests/
 ```
 
-That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, **Paste text** tab wiring, skill offer wiring, and pain estimate wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, the skill offer's helpers and lists, the pain estimate's helpers and its fixture's stated scores, the CSV cell writer, and the storage dialog's helpers and wiring. The model-backed tests skip themselves unless their dependency is installed.
+That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, **Paste text** tab wiring, skill offer wiring, and pain estimate wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, the skill offer's helpers and lists, the pain estimate's helpers and its fixture's stated scores, the emotions tool's helpers, the CSV cell writer, and the storage dialog's helpers and wiring. The model-backed tests skip themselves unless their dependency is installed.
 
-Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are nine such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, the Field Kit paste text helpers, the pain estimate's data and helpers, the CSV cell writer, and the storage dialog's helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
+Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are ten such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, the Field Kit paste text helpers, the emotions tool's data and helpers, the pain estimate's data and helpers, the CSV cell writer, and the storage dialog's helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
 
 To score the crisis and skill offer prompt fixtures with the real embedding and tiebreak models, and the reranker with synthetic passages, on your CPU. The crisis test runs with both sets of embedding weights:
 
