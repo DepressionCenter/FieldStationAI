@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 index.html: Main HTML file for the Field Station AI application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-18
-Last Modified: 2026-09-29
+Last Modified: 2026-09-30
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This is the main HTML file for the Field Station AI application.
 Notes: See README file for documentation and full license information.
 
@@ -2334,11 +2334,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 'which names of people appear in this message'
             ],
             'estimate-pain-level': [
-                'rate the pain described in this text from 1 to 10', 'estimate the pain level in this description',
-                'how severe is the pain in this note', 'what pain score fits this description',
-                'how much pain is this person describing', 'score this pain description on a 10 point scale',
+                'rate the pain described in this text', 'estimate the pain level in this description',
+                'how severe is the pain in this note', 'what pain category fits this description',
+                'how much pain is this person describing', 'score this pain description',
                 'give a pain rating for the following text', 'how bad is the pain described here',
-                'estimate pain intensity from this passage', 'what number from 1 to 10 matches this pain description',
+                'estimate pain intensity from this passage', 'does the pain in this text limit what the person can do',
                 'what level of pain is described in the text below', 'rate how much this person hurts based on what they wrote'
             ],
             [SKILL_OFFER_CONTRAST_ID]: [
@@ -10096,15 +10096,47 @@ with this program. If not, see https://www.gnu.org/licenses/.
             return out;
         }
 
-        // CSV writer with Excel-friendly quoting/CRLF/BOM. quoteField wraps
-        // any value containing separator/quote/newline and doubles interior
-        // quotes.
+        // ### CSV cell quoting: pure helpers (start) ###
+        // Everything between these two markers is evaluated on its own by
+        // the tests under tests/ in a bare JavaScript context, so keep it
+        // to constants and pure functions: no DOM, no app state, no other
+        // constants from this file.
+
+        // A plain number, with an optional sign, thousands commas, decimal
+        // part, exponent, or percent sign. Numbers are never formulas.
+        const CSV_NUMBER_RE = /^[+-]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?%?$/;
+
+        /**
+         * Returns true when a spreadsheet program would run the cell as a
+         * formula instead of showing it. That is any cell starting with =
+         * or @, a tab, or a carriage return, and a cell starting with + or
+         * - that is not a number, not the sign alone, and not a sign
+         * followed by a space. So "-5", "-", and "- see note" stay as they
+         * are, while "=SUM(A1)" and "+cmd" do not.
+         */
+        function csvCellLooksLikeFormula(s) {
+            if (/^[=@\t\r]/.test(s)) return true;
+            if (!/^[+-]/.test(s)) return false;
+            return s.length > 1 && !/^[+-]\s/.test(s) && !CSV_NUMBER_RE.test(s);
+        }
+
+        /**
+         * Returns one CSV cell. A value holding a comma, a quote, or a line
+         * break is wrapped in quotes, with quotes doubled. A value a
+         * spreadsheet would run as a formula gets a single quote in front
+         * and is wrapped in quotes, which is the usual defense against
+         * formula injection; the value then shows as text with a leading
+         * quote. Numbers and plain dashes are never changed. null and
+         * undefined become an empty cell.
+         */
         function quoteField(v) {
             if (v === null || v === undefined) return '';
-            const s = String(v);
+            let s = String(v);
+            if (csvCellLooksLikeFormula(s)) s = "'" + s;
             if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
             return s;
         }
+        // ### CSV cell quoting: pure helpers (end) ###
         // Array form: rows is Array<Object>; headers auto-derived if omitted.
         function writeCsv(rows, opts) {
             opts = opts || {};
@@ -12258,8 +12290,9 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             function refreshTaxSelect() {
                 const map = readTaxonomies();
                 const names = Object.keys(map).sort();
-                taxLoadSelect.innerHTML = '<option value="">Load a saved list...</option>' +
-                    names.map(n => '<option value="' + n.replace(/"/g, '&quot;') + '">' + n + '</option>').join('');
+                // Names typed by a person become option elements, never markup.
+                taxLoadSelect.replaceChildren(new Option('Load a saved list...', ''));
+                for (const n of names) taxLoadSelect.appendChild(new Option(n, n));
             }
             refreshTaxSelect();
             taxSave.addEventListener('click', () => {
@@ -12531,7 +12564,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     <div class="skill-progress-msg" id="tax-progress-msg"></div>
                     <div class="skill-progress-track"><div class="skill-progress-fill" id="tax-progress-fill"></div></div>
                 </div>
-                <div class="skill-status" id="tax-status"></div>
+                <div class="skill-status" aria-live="polite" id="tax-status"></div>
                 <div id="tax-results"></div>
             `;
             container.appendChild(sectionC);
@@ -12841,7 +12874,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     <div class="skill-progress-msg" id="trans-progress-msg"></div>
                     <div class="skill-progress-track"><div class="skill-progress-fill" id="trans-progress-fill"></div></div>
                 </div>
-                <div class="skill-status" id="trans-status"></div>
+                <div class="skill-status" aria-live="polite" id="trans-status"></div>
                 <div id="trans-transcript"></div>
                 <div class="skill-row" id="trans-bridge" hidden style="margin-top:10px;">
                     <button class="skill-btn" id="trans-dl">Download .txt</button>
@@ -13122,6 +13155,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             function makeStatus(sec) {
                 const s = document.createElement('div');
                 s.className = 'skill-status';
+                s.setAttribute('aria-live', 'polite');
                 sec.appendChild(s);
                 return s;
             }
@@ -15324,7 +15358,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     <div class="skill-progress-msg" id="emo-progress-msg"></div>
                     <div class="skill-progress-track"><div class="skill-progress-fill" id="emo-progress-fill"></div></div>
                 </div>
-                <div class="skill-status" id="emo-status"></div>
+                <div class="skill-status" aria-live="polite" id="emo-status"></div>
                 <div id="emo-results"></div>
             `;
             container.appendChild(sectionC);
@@ -15569,8 +15603,12 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         const PAIN_NOT_STATED = 'not stated';
         // A level's code is its position in the list, starting at 0.
         const PAIN_INTENSITY_LABELS = ['none', 'mild', 'moderate', 'severe'];
-        // Interference has one statement. The text disagrees with it (0),
-        // agrees with it (1), or says neither, which is "not stated".
+        // Interference has two statements: one that says pain limits
+        // activities, and one that says activities go on as usual. Text
+        // that agrees with the second gives 0, text that agrees with the
+        // first and not the second gives 1, and anything else is "not
+        // stated". Two statements are needed because a text can say the
+        // pain is awful and that the person still did everything.
         const PAIN_INTERFERENCE_LABELS = ['does not limit activities', 'limits activities'];
         // Each statement goes to the model exactly as written. The
         // wording is this project's own and copies no questionnaire text.
@@ -15582,7 +15620,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                 'The person has severe pain.'
             ],
             interference: [
-                'Pain stops the person from doing things.'
+                'Pain makes it hard for the person to do some activities.',
+                'The person does everything as usual despite the pain.'
             ]
         };
         const PAIN_WORDING_SETS = ['intensity', 'interference'];
@@ -15750,22 +15789,30 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             return { stated: true, level, label: PAIN_INTENSITY_LABELS[level], matchScore: shares[level], close: (sorted[0] - sorted[1]) < PAIN_CLOSE_MARGIN };
         }
 
+        /** Returns true when a three-way result holds three usable numbers. */
+        function painThreeWayUsable(three) {
+            return !!three && [three.agree, three.disagree, three.neither].every(v => typeof v === 'number' && Number.isFinite(v));
+        }
+
         /**
          * Picks the interference result from the three probabilities of
-         * its one statement, as painThreeWay returns them. Returns
-         * { stated, level, label, matchScore }: level 1 when the text
-         * agrees with the statement at PAIN_INTERFERENCE_MIN or more,
-         * level 0 when it disagrees that strongly, and "not stated"
-         * otherwise. painStated false forces "not stated", because
-         * interference means nothing when pain itself is not stated.
+         * each of its two statements, as painThreeWay returns them:
+         * limits (pain makes activities hard) and unaffected (activities
+         * go on as usual). Returns { stated, level, label, matchScore }.
+         * Level 0 when the text agrees with unaffected at
+         * PAIN_INTERFERENCE_MIN or more, or disagrees with limits that
+         * strongly. Level 1 when it agrees with limits that strongly and
+         * does not agree with unaffected. "Not stated" otherwise, and
+         * whenever painStated is false, because interference means
+         * nothing when pain itself is not stated.
          */
-        function pickPainInterference(three, painStated) {
+        function pickPainInterference(limits, unaffected, painStated) {
             const none = { stated: false, level: null, label: PAIN_NOT_STATED, matchScore: null };
-            if (!painStated || !three) return none;
-            const values = [three.agree, three.disagree, three.neither];
-            if (!values.every(v => typeof v === 'number' && Number.isFinite(v))) return none;
-            if (three.agree >= PAIN_INTERFERENCE_MIN && three.agree >= three.disagree) return { stated: true, level: 1, label: PAIN_INTERFERENCE_LABELS[1], matchScore: three.agree };
-            if (three.disagree >= PAIN_INTERFERENCE_MIN) return { stated: true, level: 0, label: PAIN_INTERFERENCE_LABELS[0], matchScore: three.disagree };
+            if (!painStated || !painThreeWayUsable(limits) || !painThreeWayUsable(unaffected)) return none;
+            const min = PAIN_INTERFERENCE_MIN;
+            if (unaffected.agree >= min) return { stated: true, level: 0, label: PAIN_INTERFERENCE_LABELS[0], matchScore: unaffected.agree };
+            if (limits.agree >= min) return { stated: true, level: 1, label: PAIN_INTERFERENCE_LABELS[1], matchScore: limits.agree };
+            if (limits.disagree >= min) return { stated: true, level: 0, label: PAIN_INTERFERENCE_LABELS[0], matchScore: limits.disagree };
             return none;
         }
 
@@ -15878,7 +15925,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         function summarizePainItem(result) {
             const r = result || {};
             const intensity = pickPainIntensity(r.intensityShares, r.intensitySupport);
-            const interference = pickPainInterference(r.interference, intensity.stated);
+            const interference = pickPainInterference(r.interferenceLimits, r.interferenceUnaffected, intensity.stated);
             const notes = [];
             if (r.shortened) notes.push(PAIN_NOTE_SHORTENED);
             if (typeof r.textTokens === 'number' && r.textTokens > PAIN_LONG_TEXT_TOKENS) notes.push(PAIN_NOTE_LONG);
@@ -15909,7 +15956,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             PAIN_INTENSITY_LABELS.forEach((label, i) => keys.push('pain_intensity_share_' + i));
             PAIN_INTENSITY_LABELS.forEach((label, i) => keys.push('pain_intensity_agree_' + i));
             keys.push('pain_interference_level', 'pain_interference_label', 'pain_interference_match_score',
-                'pain_interference_agree', 'pain_interference_disagree', 'pain_interference_neither',
+                'pain_interference_limits_agree', 'pain_interference_limits_disagree', 'pain_interference_limits_neither',
+                'pain_interference_unaffected_agree', 'pain_interference_unaffected_disagree', 'pain_interference_unaffected_neither',
                 'pain_stated_score_text', 'pain_stated_score_count', 'pain_stated_score_value', 'pain_stated_score_max',
                 'pain_notes', 'pain_text_shortened', 'pain_text_tokens',
                 'pain_scale_version', 'pain_model', 'pain_model_variant', 'pain_runtime',
@@ -15941,7 +15989,8 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             }
             const summary = summarizePainItem(result);
             const wording = clonePainWording(result.wording) || PAIN_DEFAULT_WORDING;
-            const three = result.interference || {};
+            const limits = result.interferenceLimits || {};
+            const unaffected = result.interferenceUnaffected || {};
             row.pain_intensity_level = summary.intensity.stated ? summary.intensity.level : '';
             row.pain_intensity_label = summary.intensity.label;
             row.pain_intensity_match_score = painRound(summary.intensity.matchScore);
@@ -15953,9 +16002,12 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             row.pain_interference_level = summary.interference.stated ? summary.interference.level : '';
             row.pain_interference_label = summary.interference.label;
             row.pain_interference_match_score = painRound(summary.interference.matchScore);
-            row.pain_interference_agree = painRound(three.agree);
-            row.pain_interference_disagree = painRound(three.disagree);
-            row.pain_interference_neither = painRound(three.neither);
+            row.pain_interference_limits_agree = painRound(limits.agree);
+            row.pain_interference_limits_disagree = painRound(limits.disagree);
+            row.pain_interference_limits_neither = painRound(limits.neither);
+            row.pain_interference_unaffected_agree = painRound(unaffected.agree);
+            row.pain_interference_unaffected_disagree = painRound(unaffected.disagree);
+            row.pain_interference_unaffected_neither = painRound(unaffected.neither);
             row.pain_stated_score_text = summary.stated.text;
             row.pain_stated_score_count = summary.stated.count;
             row.pain_stated_score_value = summary.stated.value;
@@ -16027,7 +16079,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
         }
 
         /**
-         * Builds the "Wording the tool matches" block: one text box per
+         * Builds the "Classification statements" block: one text box per
          * statement, a line that says whether the wording is the default
          * or edited, and a Restore defaults button. Valid edits are saved
          * as they are typed. Returns { section, getWording(), isValid(),
@@ -16038,20 +16090,20 @@ Mental health: depression, anxiety, mood disorders"></textarea>
          */
         function mountPainWordingEditor() {
             const GROUPS = [
-                { set: 'intensity', title: 'How strong the pain is', labels: PAIN_INTENSITY_LABELS.map((name, i) => i + ' ' + name) },
-                { set: 'interference', title: 'Whether pain limits what the person can do', labels: ['The text agrees, disagrees, or says neither'] }
+                { set: 'intensity', title: 'Intensity', labels: PAIN_INTENSITY_LABELS.map((name, i) => i + ' ' + name) },
+                { set: 'interference', title: 'Interference', labels: ['Limits activities (agreement gives 1)', 'Activities unaffected (agreement gives 0)'] }
             ];
             const section = document.createElement('details');
             section.className = 'skill-section pain-wording';
             const summary = document.createElement('summary');
-            summary.append('Wording the tool matches: ');
+            summary.append('Classification statements: ');
             const state = document.createElement('span');
             state.id = 'pain-wording-state';
             summary.appendChild(state);
             section.appendChild(summary);
             const hint = document.createElement('p');
             hint.className = 'skill-hint';
-            hint.textContent = 'The tool compares your text with each statement. Edits are saved in this browser.';
+            hint.textContent = 'Each text is scored against these statements by natural language inference. Edits are stored in this browser and recorded in every export.';
             section.appendChild(hint);
 
             const start = readPainWording() || clonePainWording(PAIN_DEFAULT_WORDING);
@@ -16156,7 +16208,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             sectionC.className = 'skill-section';
             sectionC.innerHTML = `
                 <h3>Estimate pain level</h3>
-                <p class="skill-hint">Gives model estimates, not scores from the person. Long text is cut to what the model can read, and the results say so.</p>
+                <p class="skill-hint">Outputs are model estimates from the text, not self-reported scores. Text beyond the model's input window is truncated and flagged in the results.</p>
                 <div class="skill-row">
                     <button class="skill-btn primary" id="pain-run">Estimate now</button>
                     <button class="skill-btn" id="pain-cancel" hidden>Stop</button>
@@ -16165,7 +16217,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                     <div class="skill-progress-msg" id="pain-progress-msg"></div>
                     <div class="skill-progress-track"><div class="skill-progress-fill" id="pain-progress-fill"></div></div>
                 </div>
-                <div class="skill-status" id="pain-status"></div>
+                <div class="skill-status" aria-live="polite" id="pain-status"></div>
                 <div id="pain-results"></div>
             `;
             container.appendChild(sectionC);
@@ -16263,14 +16315,16 @@ Mental health: depression, anxiety, mood disorders"></textarea>
                         const fit = painFitTextToBudget(text, t => classifier.tokenizer(t).input_ids.dims[1], PAIN_TEXT_TOKEN_BUDGET);
                         const ids = answerIds();
                         const intensity = painSetScores(await painLogits(fit.text, wording.intensity), ids);
-                        const interference = painThreeWay((await painLogits(fit.text, wording.interference))[0], ids);
-                        if (!intensity || !interference) throw new Error('The model gave no usable scores for this text.');
+                        const interferenceRows = await painLogits(fit.text, wording.interference);
+                        const interferenceLimits = painThreeWay(interferenceRows[0], ids);
+                        const interferenceUnaffected = painThreeWay(interferenceRows[1], ids);
+                        if (!intensity || !interferenceLimits || !interferenceUnaffected) throw new Error('The model gave no usable scores for this text.');
                         // Read after the calls: a switch to the CPU version changes it.
                         const rung = loadModelRung(SKILL_ZEROSHOT_ID);
                         return {
                             intensityShares: intensity.shares,
                             intensitySupport: intensity.support,
-                            interference,
+                            interferenceLimits, interferenceUnaffected,
                             textTokens: fit.tokens,
                             shortened: fit.shortened,
                             // Stated scores are looked for in the whole text, not only the part the model read.
@@ -16354,7 +16408,7 @@ Mental health: depression, anxiety, mood disorders"></textarea>
             if (!ok.length) return;
 
             const matchText = pick => pick.stated ? fmtPct(pick.matchScore) + '%' : '';
-            const wrap = buildSection('Results', 'Match is the share of the score the chosen wording got, not the chance that the result is right. Notes flag results to check by hand.');
+            const wrap = buildSection('Results', 'Match is the selected statement\'s share of the entailment score within its set, not an accuracy estimate. Notes flag items for manual review.');
             const scroller = document.createElement('div');
             scroller.className = 'skill-table-scroll';
             scroller.tabIndex = 0;
@@ -16477,8 +16531,9 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
             function refreshSelect() {
                 const map = readBuckets();
                 const names = Object.keys(map).sort();
-                loadSelect.innerHTML = '<option value="">Load a saved list...</option>' +
-                    names.map(n => '<option value="' + n.replace(/"/g, '&quot;') + '">' + n + '</option>').join('');
+                // Names typed by a person become option elements, never markup.
+                loadSelect.replaceChildren(new Option('Load a saved list...', ''));
+                for (const n of names) loadSelect.appendChild(new Option(n, n));
             }
             refreshSelect();
             saveBtn.addEventListener('click', () => {
@@ -16518,7 +16573,7 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
                     <div class="skill-progress-msg" id="buck-progress-msg"></div>
                     <div class="skill-progress-track"><div class="skill-progress-fill" id="buck-progress-fill"></div></div>
                 </div>
-                <div class="skill-status" id="buck-status"></div>
+                <div class="skill-status" aria-live="polite" id="buck-status"></div>
                 <div id="buck-results"></div>
             `;
             container.appendChild(sectionC);
@@ -16763,7 +16818,7 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
                     <div class="skill-progress-msg" id="ner-progress-msg"></div>
                     <div class="skill-progress-track"><div class="skill-progress-fill" id="ner-progress-fill"></div></div>
                 </div>
-                <div class="skill-status" id="ner-status"></div>
+                <div class="skill-status" aria-live="polite" id="ner-status"></div>
                 <div id="ner-results"></div>
             `;
             container.appendChild(sectionC);
@@ -17056,7 +17111,7 @@ Feeling anxious about work."></textarea>
                     <div class="skill-progress-msg" id="dd-progress-msg"></div>
                     <div class="skill-progress-track"><div class="skill-progress-fill" id="dd-progress-fill"></div></div>
                 </div>
-                <div class="skill-status" id="dd-status"></div>
+                <div class="skill-status" aria-live="polite" id="dd-status"></div>
                 <div id="dd-results"></div>
             `;
             container.appendChild(sectionC);
@@ -17351,7 +17406,7 @@ Feeling anxious about work."></textarea>
                     <button class="skill-btn primary" id="sum-run-themes">Find themes</button>
                     <button class="skill-btn" id="sum-cancel" hidden>Stop</button>
                 </div>
-                <div class="skill-status" id="sum-status"></div>
+                <div class="skill-status" aria-live="polite" id="sum-status"></div>
                 <div id="sum-results"></div>
             `;
             container.appendChild(sectionC);

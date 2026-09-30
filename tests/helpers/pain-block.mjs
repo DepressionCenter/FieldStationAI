@@ -2,7 +2,7 @@
 // tests/helpers/pain-block.mjs
 // Author(s): Gabriel Mongefranco.
 // Created: 2026-09-29
-// Last Modified: 2026-09-29
+// Last Modified: 2026-09-30
 // Summary: Loads the marked block of index.html that holds the data and pure
 // helpers of the Field Kit skill Estimate pain level, and the synthetic text
 // fixture the model test scores. Shared by the pain estimate tests so both

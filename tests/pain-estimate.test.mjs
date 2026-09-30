@@ -2,7 +2,7 @@
 // tests/pain-estimate.test.mjs
 // Author(s): Gabriel Mongefranco.
 // Created: 2026-09-29
-// Last Modified: 2026-09-29
+// Last Modified: 2026-09-30
 // Summary: Checks the pure helpers behind the Field Kit skill Estimate pain
 // level: the default statements, the checks on statements a person types,
 // how a level is picked and when the result is "not stated", how scores the
@@ -50,7 +50,8 @@ function sampleResult(changes) {
     return {
         intensityShares: [0.05, 0.15, 0.6, 0.2],
         intensitySupport: [0.01, 0.4, 0.9, 0.3],
-        interference: { agree: 0.8, disagree: 0.05, neither: 0.15 },
+        interferenceLimits: { agree: 0.8, disagree: 0.05, neither: 0.15 },
+        interferenceUnaffected: { agree: 0.03, disagree: 0.9, neither: 0.07 },
         textTokens: 40,
         stated: [{ text: '7 out of 10', value: 7, scaleMax: 10 }],
         shortened: false,
@@ -77,7 +78,7 @@ test('the scales start at 0, with four intensity levels and one interference sta
     assert.deepEqual(plain(PAIN_INTENSITY_LABELS), ['none', 'mild', 'moderate', 'severe']);
     assert.deepEqual(plain(PAIN_INTERFERENCE_LABELS), ['does not limit activities', 'limits activities']);
     assert.equal(PAIN_DEFAULT_WORDING.intensity.length, PAIN_INTENSITY_LABELS.length);
-    assert.equal(PAIN_DEFAULT_WORDING.interference.length, 1);
+    assert.equal(PAIN_DEFAULT_WORDING.interference.length, 2);
 });
 
 test('the thresholds are scores between 0 and 1 and the token limits are whole numbers', () => {
@@ -239,19 +240,31 @@ test('missing or unusable intensity scores give not stated', () => {
     }
 });
 
+const NEITHER = { agree: 0.03, disagree: 0.01, neither: 0.96 };
+
 test('interference is limits, does not limit, or not stated', () => {
-    assert.deepEqual(plain(pickPainInterference({ agree: 0.9, disagree: 0.05, neither: 0.05 }, true)), { stated: true, level: 1, label: 'limits activities', matchScore: 0.9 });
-    assert.deepEqual(plain(pickPainInterference({ agree: 0.02, disagree: 0.96, neither: 0.02 }, true)), { stated: true, level: 0, label: 'does not limit activities', matchScore: 0.96 });
-    assert.deepEqual(plain(pickPainInterference({ agree: 0.03, disagree: 0.01, neither: 0.96 }, true)), { stated: false, level: null, label: 'not stated', matchScore: null });
+    assert.deepEqual(plain(pickPainInterference({ agree: 0.9, disagree: 0.05, neither: 0.05 }, NEITHER, true)), { stated: true, level: 1, label: 'limits activities', matchScore: 0.9 });
+    assert.deepEqual(plain(pickPainInterference({ agree: 0.02, disagree: 0.96, neither: 0.02 }, NEITHER, true)), { stated: true, level: 0, label: 'does not limit activities', matchScore: 0.96 });
+    assert.deepEqual(plain(pickPainInterference(NEITHER, { agree: 0.9, disagree: 0.05, neither: 0.05 }, true)), { stated: true, level: 0, label: 'does not limit activities', matchScore: 0.9 });
+    assert.deepEqual(plain(pickPainInterference(NEITHER, NEITHER, true)), { stated: false, level: null, label: 'not stated', matchScore: null });
+});
+
+// A text can say the pain is awful and that the person still did
+// everything. Agreement that activities go on as usual wins.
+test('agreement that activities are unaffected outranks agreement that pain limits them', () => {
+    const pick = pickPainInterference({ agree: 0.8, disagree: 0.1, neither: 0.1 }, { agree: 0.95, disagree: 0.03, neither: 0.02 }, true);
+    assert.equal(pick.level, 0);
+    assert.equal(pick.matchScore, 0.95);
 });
 
 test('interference at the threshold counts, and below it does not', () => {
-    assert.equal(pickPainInterference({ agree: PAIN_INTERFERENCE_MIN, disagree: 0.1, neither: 0.4 }, true).stated, true);
-    assert.equal(pickPainInterference({ agree: PAIN_INTERFERENCE_MIN - 0.01, disagree: 0.1, neither: 0.41 }, true).stated, false);
+    assert.equal(pickPainInterference({ agree: PAIN_INTERFERENCE_MIN, disagree: 0.1, neither: 0.4 }, NEITHER, true).stated, true);
+    assert.equal(pickPainInterference({ agree: PAIN_INTERFERENCE_MIN - 0.01, disagree: 0.1, neither: 0.41 }, NEITHER, true).stated, false);
+    assert.equal(pickPainInterference(NEITHER, { agree: PAIN_INTERFERENCE_MIN, disagree: 0.1, neither: 0.4 }, true).level, 0);
 });
 
 test('interference is not stated whenever pain is not stated', () => {
-    assert.equal(pickPainInterference({ agree: 0.95, disagree: 0.02, neither: 0.03 }, false).stated, false);
+    assert.equal(pickPainInterference({ agree: 0.95, disagree: 0.02, neither: 0.03 }, NEITHER, false).stated, false);
     const summary = plain(summarizePainItem(sampleResult({ intensitySupport: [0.1, 0.1, 0.1, 0.1] })));
     assert.equal(summary.intensity.stated, false);
     assert.equal(summary.interference.label, 'not stated');
@@ -259,7 +272,8 @@ test('interference is not stated whenever pain is not stated', () => {
 
 test('unusable interference scores give not stated', () => {
     for (const three of [null, undefined, {}, { agree: NaN, disagree: 0.1, neither: 0.1 }, { agree: '0.9', disagree: 0.1, neither: 0.1 }]) {
-        assert.equal(pickPainInterference(three, true).stated, false);
+        assert.equal(pickPainInterference(three, NEITHER, true).stated, false);
+        assert.equal(pickPainInterference(NEITHER, three, true).stated, false);
     }
 });
 
@@ -431,7 +445,8 @@ test('the download columns carry both outputs, every score, and how the run was 
         'pain_intensity_level', 'pain_intensity_label', 'pain_intensity_match_score', 'pain_intensity_support',
         'pain_intensity_share_0', 'pain_intensity_share_3', 'pain_intensity_agree_0', 'pain_intensity_agree_3',
         'pain_interference_level', 'pain_interference_label', 'pain_interference_match_score',
-        'pain_interference_agree', 'pain_interference_disagree', 'pain_interference_neither',
+        'pain_interference_limits_agree', 'pain_interference_limits_disagree', 'pain_interference_limits_neither',
+        'pain_interference_unaffected_agree', 'pain_interference_unaffected_disagree', 'pain_interference_unaffected_neither',
         'pain_stated_score_text', 'pain_stated_score_count', 'pain_stated_score_value', 'pain_stated_score_max',
         'pain_notes', 'pain_text_shortened', 'pain_text_tokens',
         'pain_scale_version', 'pain_model', 'pain_model_variant', 'pain_runtime',
@@ -462,8 +477,9 @@ test('a row holds the picked levels, every score, and the run details', () => {
     assert.equal(row.pain_interference_level, 1);
     assert.equal(row.pain_interference_label, 'limits activities');
     assert.equal(row.pain_interference_match_score, 0.8);
-    assert.equal(row.pain_interference_disagree, 0.05);
-    assert.equal(row.pain_interference_neither, 0.15);
+    assert.equal(row.pain_interference_limits_disagree, 0.05);
+    assert.equal(row.pain_interference_limits_neither, 0.15);
+    assert.equal(row.pain_interference_unaffected_agree, 0.03);
     assert.equal(row.pain_stated_score_text, '7 out of 10');
     assert.equal(row.pain_stated_score_count, 1);
     assert.equal(row.pain_stated_score_value, 7);
@@ -478,13 +494,13 @@ test('a row holds the picked levels, every score, and the run details', () => {
     assert.equal(row.pain_wording_edited, 'false');
     assert.equal(row.pain_run_at_utc, '2026-09-29T15:00:00.000Z');
     assert.ok(row.pain_intensity_wording.startsWith('0=The person has no pain. | 1='));
-    assert.equal(row.pain_interference_wording, '0=' + PAIN_DEFAULT_WORDING.interference[0]);
+    assert.equal(row.pain_interference_wording, '0=' + PAIN_DEFAULT_WORDING.interference[0] + ' | 1=' + PAIN_DEFAULT_WORDING.interference[1]);
     assert.ok(row.pain_thresholds.includes(String(PAIN_SUPPORT_MIN)));
 });
 
 test('scores are rounded to 4 decimal places', () => {
-    const row = painExportRow(sampleResult({ interference: { agree: 0.123456789, disagree: 0.5, neither: 0.376543211 }, intensityShares: [0.00004, 0.33335, 0.6, 0.06661] }));
-    assert.equal(row.pain_interference_agree, 0.1235);
+    const row = painExportRow(sampleResult({ interferenceLimits: { agree: 0.123456789, disagree: 0.5, neither: 0.376543211 }, intensityShares: [0.00004, 0.33335, 0.6, 0.06661] }));
+    assert.equal(row.pain_interference_limits_agree, 0.1235);
     assert.equal(row.pain_intensity_share_0, 0);
     assert.equal(row.pain_intensity_share_1, 0.3334);
 });
@@ -498,11 +514,11 @@ test('not stated leaves the level and match empty and keeps every score', () => 
     assert.equal(row.pain_interference_level, '');
     assert.equal(row.pain_interference_label, 'not stated');
     assert.equal(row.pain_intensity_share_2, 0.6);
-    assert.equal(row.pain_interference_agree, 0.8);
+    assert.equal(row.pain_interference_limits_agree, 0.8);
 });
 
 test('a picked level of 0 is written as 0, not as empty', () => {
-    const row = painExportRow(sampleResult({ intensityShares: [0.7, 0.1, 0.1, 0.1], intensitySupport: [0.9, 0.1, 0.1, 0.1], interference: { agree: 0.02, disagree: 0.96, neither: 0.02 } }));
+    const row = painExportRow(sampleResult({ intensityShares: [0.7, 0.1, 0.1, 0.1], intensitySupport: [0.9, 0.1, 0.1, 0.1], interferenceLimits: { agree: 0.02, disagree: 0.96, neither: 0.02 } }));
     assert.equal(row.pain_intensity_level, 0);
     assert.equal(row.pain_intensity_label, 'none');
     assert.equal(row.pain_interference_level, 0);
@@ -515,7 +531,7 @@ test('edited wording, shortened text, and notes are written to the row', () => {
     assert.equal(row.pain_wording_edited, 'true');
     assert.equal(row.pain_text_shortened, 'true');
     assert.equal(row.pain_notes, 'Text shortened; Long text');
-    assert.equal(row.pain_interference_wording, '0=Pain keeps the person from normal activities.');
+    assert.ok(row.pain_interference_wording.startsWith('0=Pain keeps the person from normal activities. | 1='));
 });
 
 test('an item with no result gives a row of empty fields, with the error in the notes', () => {

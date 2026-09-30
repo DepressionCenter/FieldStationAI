@@ -2,7 +2,7 @@
 // tests/pain-estimate-models.test.mjs
 // Author(s): Gabriel Mongefranco.
 // Created: 2026-09-29
-// Last Modified: 2026-09-29
+// Last Modified: 2026-09-30
 // Summary: Scores the synthetic texts in tests/fixtures/pain-estimate-texts.json
 // with the real model behind Estimate pain level, using the app's own
 // helpers from index.html, and checks the expected intensity and
@@ -97,16 +97,18 @@ test('pain estimate check against the real model', { skip, timeout: 1800000 }, a
         const text = fixtureText(fixture, item);
         const fit = block.painFitTextToBudget(text, countTokens, block.PAIN_TEXT_TOKEN_BUDGET);
         const intensity = block.painSetScores(await logits(fit.text, wording.intensity), ids);
-        const interference = block.painThreeWay((await logits(fit.text, wording.interference))[0], ids);
-        assert.ok(intensity && interference, item.id + ' gave usable scores');
+        const rows = await logits(fit.text, wording.interference);
+        const interferenceLimits = block.painThreeWay(rows[0], ids);
+        const interferenceUnaffected = block.painThreeWay(rows[1], ids);
+        assert.ok(intensity && interferenceLimits && interferenceUnaffected, item.id + ' gave usable scores');
         const summary = plain(block.summarizePainItem({
-            intensityShares: intensity.shares, intensitySupport: intensity.support, interference,
+            intensityShares: intensity.shares, intensitySupport: intensity.support, interferenceLimits, interferenceUnaffected,
             textTokens: fit.tokens, shortened: fit.shortened, stated: block.findStatedPainScores(text)
         }));
         const shares = intensity.shares.map(s => s.toFixed(2)).join(' ');
-        const three = [interference.agree, interference.disagree, interference.neither].map(s => s.toFixed(2)).join(' ');
+        const three = t => [t.agree, t.disagree, t.neither].map(s => s.toFixed(2)).join(' ');
         lines.push([item.id.padEnd(11), summary.intensity.label.padEnd(10), 'support ' + Math.max(...intensity.support).toFixed(2),
-            'shares ' + shares, '|', summary.interference.label.padEnd(25), 'agree/disagree/neither ' + three,
+            'shares ' + shares, '|', summary.interference.label.padEnd(25), 'limits ' + three(interferenceLimits), 'unaffected ' + three(interferenceUnaffected),
             '|', summary.notes.join(', ')].join(' '));
         const expect = item.expect || {};
         const wrong = [];
