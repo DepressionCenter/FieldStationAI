@@ -956,7 +956,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             100% { background-position: 20% 10%, -15% 5%, 10% -8%, 0 0; }
         }
         @media (prefers-reduced-motion: reduce) { .welcome-bg { animation: none; } }
-        .welcome-body { position: relative; padding: 26px 28px 22px; }
+        .welcome-body { position: relative; padding: 26px 28px 22px; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
         .welcome-close {
             position: absolute; top: 10px; right: 10px; z-index: 2;
             width: 30px; height: 30px; padding: 0; border-radius: 50%;
@@ -978,6 +978,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
         .welcome-content { min-height: 120px; }
         .welcome-para { font-size: 0.9rem; line-height: 1.5; margin: 8px 0; color: var(--ink); }
         .welcome-para strong { color: var(--accent-dark); }
+        .welcome-note {
+            margin: 14px 0 0; padding: 10px 12px;
+            border: 1px solid var(--line); border-left: 3px solid var(--maize);
+            border-radius: 8px; background: rgba(255, 255, 255, 0.75);
+            font-size: 0.8rem; line-height: 1.5; color: var(--ink);
+        }
+        .welcome-note a { color: var(--accent); text-decoration: underline; }
         .welcome-para code {
             display: block; margin-top: 8px;
             font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem;
@@ -3381,9 +3388,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // button in the footer. About is the default. License/GitHub/Docs
         // either render richer content or open externally.
         const WELCOME_PANELS = {
-            about:
+                        about:
                 '<p class="welcome-para">Every chat you have here stays <strong>in this browser</strong>. Nothing is uploaded, no account is required, and no one else - not even us - can read what you write.</p>' +
-                '<p class="welcome-para">The <strong>only</strong> time Field Station AI uses the internet is to download an AI model the first time you pick it, or if using a compendium, to download its file. After that, it runs entirely on your device, offline.</p>',
+                '<p class="welcome-para">The <strong>only</strong> time Field Station AI uses the internet is to download an AI model the first time you pick it, or if using a compendium, to download its file. After that, it runs entirely on your device, offline.</p>' +
+                '<p class="welcome-note" role="note">Field Station AI is still growing, so expect changes. It isn\'t yet validated for production or research-critical work. Since it runs AI models on your own device, you\'ll need a recent browser with WebGPU support and a GPU with at least 2 GB of video memory. Your <a href="https://github.com/DepressionCenter/FieldStationAI/issues" target="_blank" rel="noopener noreferrer">feedback and bug reports</a> help shape what comes next.</p>',
             license:
                 '<p class="welcome-para" style="text-align: center;">' +
                 '<strong>Copyright © 2026 The Regents of the University of Michigan</strong>' +

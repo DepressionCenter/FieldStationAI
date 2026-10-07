@@ -29,6 +29,8 @@ Field Station AI™ is an open-source, local-first AI workspace that runs in a w
 
 [![Field Station AI Preview](/images/FieldStationAI-preview.png)](https://code.depressioncenter.org/FieldStationAI/)
 
+> Field Station AI is still growing, so expect changes. It isn't yet validated for production or research-critical work. Since it runs AI models on your own device, you'll need a recent browser with WebGPU support and a GPU with at least 2 GB of video memory. Your [feedback and bug reports](https://github.com/DepressionCenter/FieldStationAI/issues) help shape what comes next.
+
 From a single HTML page, users can chat with a local assistant, ask questions about attachments, transcribe audio, classify text, summarize documents, combine spreadsheets, and search an optional compendium (a bundle of knowledge from many sources, indexed for AI search). Models and compendiums download on first use and can run from the browser cache afterward. A modern browser with WebGPU support and a high-end GPU (video card) are recommended for faster performance and larger models; smaller models may work on less powerful hardware.
 
 Field Station AI™ is designed for workflows that may involve sensitive data or protected health information (PHI), but institutional cybersecurity and IRB review may still be required before it is used with regulated data.
