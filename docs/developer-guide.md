@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 developer-guide.md: Guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-30
+Last Modified: 2026-10-07
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -268,6 +268,19 @@ try {
 }
 ```
 
+## Update a Pinned Library
+
+Every library the app loads from a CDN is pinned to an exact version. [Models and Runtime](models-and-runtime.md#runtime-sources) lists them. A test in `tests/index-html.test.mjs` fails if any CDN address lacks an exact version, so `@latest`, `@4`, or a bare package name will not pass.
+
+To move a library to a new version:
+
+1. Read the release notes for every version between the current one and the new one.
+2. Check the GitHub advisory database for the package, and note what you found in the pull request.
+3. Change the version in `index.html`. WebLLM's address is the `WEBLLM_URL` constant, and Pyodide's is `PYODIDE_VERSION`.
+4. For WebLLM, confirm that every model in `MODEL_CTX` is still in the new version's prebuilt model list. The list is in the package's `lib/index.js`, as `model_id` entries.
+5. Update the table in [Models and Runtime](models-and-runtime.md#runtime-sources).
+6. Run the tests, then load each changed library's paths in a browser. For WebLLM, load a cached model and a new one, and send a prompt.
+
 ## Python / Pyodide Changes
 
 For browser-based Python workflows:
@@ -322,7 +335,7 @@ The tests live under `tests/` and use Node's own test runner, so nothing is inst
 node --test tests/
 ```
 
-That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, reranker wiring, **Paste text** tab wiring, skill offer wiring, and pain estimate wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, the skill offer's helpers and lists, the pain estimate's helpers and its fixture's stated scores, the emotions tool's helpers, the CSV cell writer, and the storage dialog's helpers and wiring. The model-backed tests skip themselves unless their dependency is installed.
+That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, exact versions on every CDN address, reranker wiring, **Paste text** tab wiring, skill offer wiring, and pain estimate wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, the skill offer's helpers and lists, the pain estimate's helpers and its fixture's stated scores, the emotions tool's helpers, the CSV cell writer, and the storage dialog's helpers and wiring. The model-backed tests skip themselves unless their dependency is installed.
 
 Pure helpers the tests need are fenced in `index.html` by a pair of comments, `### <name> (start) ###` and `### <name> (end) ###`. There are ten such blocks: the router's intent data, the skill offer's data and helpers, the crisis check's data, the citation tag helpers, the reply and citation text helpers, the Field Kit paste text helpers, the emotions tool's data and helpers, the pain estimate's data and helpers, the CSV cell writer, and the storage dialog's helpers. `tests/helpers/marked-block.mjs` evaluates a block on its own, so keep each block free of DOM access and of constants from outside it.
 

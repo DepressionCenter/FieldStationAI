@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 design-change-record.md: Summary of recent major design changes in Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-30
+Last Modified: 2026-10-07
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -301,6 +301,16 @@ Decision:
 - Scores in the table carry a percent sign, and the hint says each score is the model's probability for that feeling on its own, so the scores do not add up to 100%. A feeling under 5% is left blank, and a row with none above 5% says so instead of naming a feeling at a fraction of a percent.
 - The results table is built element by element, because item names come from a person's spreadsheet or file names. The table sits in a region that scrolls sideways on a narrow screen.
 - The tone bars showed white text with a dark halo over a pale track, which fails the contrast check on the unfilled part. The fill is now a tint and the text is dark, on every tool that uses the bars.
+
+## WebLLM Pinned to an Exact Version
+
+The app loaded WebLLM from `esm.run` with no version, while every other library carried one. So each new WebLLM release reached every user the day it shipped, with no change in this repository, and a bad release would have broken chat for everyone at once.
+
+Decision:
+
+- WebLLM loads from one constant, `WEBLLM_URL`, pinned to 0.2.85. That was the version the unversioned address served when it was pinned, so the app's behavior did not change. Its release notes list fixes only, and the GitHub advisory database had no advisories for the package. All 11 chat models are in its prebuilt model list.
+- The address points at jsDelivr directly. `esm.run` only redirects there, so this removes one host and one redirect from every first load.
+- A test fails on any CDN address in `index.html` that lacks an exact version. Raising a version is a deliberate change, made with the steps in the developer guide.
 
 ## Documentation Rule
 

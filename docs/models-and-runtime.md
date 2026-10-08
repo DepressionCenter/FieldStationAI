@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 models-and-runtime.md: Documentation for models and runtime behavior in Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-09-28
+Last Modified: 2026-10-07
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -19,17 +19,20 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 ## Runtime Sources
 
-Field Station AI™ uses browser model runtimes and helper libraries. Runtime downloads may occur on first use. The exact pinned URLs and versions should be checked in `index.html` before release.
+Field Station AI™ uses browser model runtimes and helper libraries. Each one downloads from a public content delivery network (CDN) the first time the app needs it. Every library is pinned to an exact version, so a new release upstream cannot change the app until someone updates `index.html` on purpose.
 
-Known runtime/library areas documented in the current repository context:
+| Library | Version | Used for |
+| --- | --- | --- |
+| Transformers.js | 4.2.0 | Helper models: embeddings, reranking, the router, classification, transcription, and vision |
+| WebLLM | 0.2.85 | Main chat models on WebGPU |
+| Pyodide | 0.26.4 | Python data-cleaning code in the browser |
+| PapaParse | 5.4.1 | CSV files |
+| SheetJS | 0.18.5 | Excel files |
+| PDF.js | 4.7.76 | PDF files |
 
-- Transformers.js.
-- WebLLM where configured for main chat models.
-- Pyodide for browser-based Python workflows.
-- PapaParse for CSV parsing.
-- SheetJS for Excel files.
-- PDF.js for PDF behavior.
-- Optional Ollama for local backend generation.
+Ollama is optional. When you turn it on, the app talks to an Ollama server on your own computer for larger models. It is not loaded from a CDN.
+
+The automated tests fail if any CDN address in `index.html` lacks an exact version. To change a version, follow [Update a Pinned Library](developer-guide.md#update-a-pinned-library) in the developer guide.
 
 ## Main Chat Models
 

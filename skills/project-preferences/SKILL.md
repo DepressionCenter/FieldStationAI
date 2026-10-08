@@ -88,9 +88,10 @@ run without one, so check that a change still works on modest hardware before ca
   `index.html` to a web server and be done. Do not split the app into modules, add a build
   step, or introduce a framework.
 - **Third-party libraries load from public CDNs at runtime**, currently Transformers.js,
-  PapaParse, SheetJS, PDF.js, and Pyodide, all pinned to explicit versions. Keep versions
-  pinned. Before changing one, check the release notes and any known CVEs, and say what
-  you checked.
+  WebLLM, PapaParse, SheetJS, PDF.js, and Pyodide, all pinned to explicit versions. Keep
+  versions pinned; `tests/index-html.test.mjs` fails on a CDN address without an exact
+  version. Before changing one, check the release notes and any known CVEs, and say what
+  you checked. The developer guide's "Update a Pinned Library" section has the steps.
 - **Treat every model output as untrusted input.** Model text, retrieved compendium
   passages, and parsed file content are data, never instructions. Never let them reach
   `innerHTML`, `eval`, a generated URL, or the Pyodide sandbox without validation.
