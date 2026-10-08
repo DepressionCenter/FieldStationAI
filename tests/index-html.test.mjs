@@ -2,10 +2,11 @@
 // tests/index-html.test.mjs
 // Author(s): Gabriel Mongefranco.
 // Created: 2026-09-23
-// Last Modified: 2026-09-30
+// Last Modified: 2026-10-07
 // Summary: Static checks on index.html, the whole application: the file
 // header carries the project and license notice, the app is still one
-// module script, the crisis notice constants point at the 988 Lifeline,
+// module script, every library loaded from a CDN names an exact version,
+// the crisis notice constants point at the 988 Lifeline,
 // the excerpt reranker is wired the way that yields real scores, the
 // Field Kit text skills offer a "Paste text" tab whose text is never
 // parsed as markup or stored, the chat's skill offer hands text to a
@@ -75,6 +76,45 @@ test('index.html opens with the project and license header', () => {
 test('index.html is one module script', () => {
     const modules = html.match(/<script type="module">/g) || [];
     assert.equal(modules.length, 1, 'the app must stay a single module script');
+});
+
+// ### Pinned Libraries ###
+
+// Hosts that serve the app's third-party code at runtime. Every address on
+// one of them must name an exact version, so that a new release upstream
+// cannot change or break the app without a change to index.html.
+const CDN_HOSTS = ['cdn.jsdelivr.net', 'cdnjs.cloudflare.com', 'esm.run', 'esm.sh', 'unpkg.com', 'cdn.skypack.dev'];
+
+// An exact version is three numbers, optionally with a pre-release tag,
+// written after "@" or as a whole path segment with an optional "v".
+// "@latest", "@4", "@^4.2.0", and a bare package name all fail.
+const EXACT_VERSION = /(?:@|\/v?)\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?=\/|$)/;
+
+// Returns every CDN address in index.html, comments included. An address
+// written as a string followed by "+ SOME_VERSION" is read with that
+// constant's value appended, which is how the Pyodide address is built.
+function cdnAddresses() {
+    const hosts = CDN_HOSTS.map(host => host.replace(/\./g, '\\.')).join('|');
+    const pattern = new RegExp('https?://(?:' + hosts + ')[^\'"`\\s)<>]*(?:[\'"`]\\s*\\+\\s*([A-Z][A-Z0-9_]*_VERSION)\\b)?', 'g');
+    return [...html.matchAll(pattern)].map(match => {
+        const address = match[0].replace(/['"`]\s*\+\s*[A-Z0-9_]+$/, '');
+        return match[1] ? address + stringConstant(match[1]) : address;
+    });
+}
+
+test('every library loaded from a CDN names an exact version', () => {
+    const addresses = cdnAddresses();
+    for (const library of ['@huggingface/transformers', '@mlc-ai/web-llm', 'PapaParse', 'xlsx', 'pdfjs-dist', 'pyodide']) {
+        assert.ok(addresses.some(address => address.includes(library)), `the scan finds the ${library} address`);
+    }
+    const unpinned = addresses.filter(address => !EXACT_VERSION.test(address));
+    assert.deepEqual(unpinned, [], 'every CDN address carries an exact version');
+});
+
+test('WebLLM loads from its one pinned address', () => {
+    assert.match(stringConstant('WEBLLM_URL'), /@mlc-ai\/web-llm@\d+\.\d+\.\d+\//, 'WEBLLM_URL names an exact version');
+    assert.ok(html.includes('await import(WEBLLM_URL)'), 'the engine is imported from WEBLLM_URL');
+    assert.equal((html.match(/@mlc-ai\/web-llm@/g) || []).length, 1, 'no second WebLLM address can drift from the first');
 });
 
 // ### Crisis Notice ###

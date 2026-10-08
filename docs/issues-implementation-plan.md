@@ -3,8 +3,8 @@ This file is part of Field Station AI.
 docs/issues-implementation-plan.md: Ordered plan and status tracker for the open GitHub issues, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-09-22
-Last Modified: 2026-09-29
-Summary: Lists the open GitHub issues in the order they will be worked, the branch and scope for each, and the rules every phase follows.
+Last Modified: 2026-10-08
+Summary: The completed plan for the GitHub issues open in September 2026: the order they were worked, the branch and scope for each, and the rules every phase followed.
 Notes: See README file for documentation and full license information.
 
 Copyright © 2026 The Regents of the University of Michigan
@@ -20,7 +20,7 @@ See <https://www.gnu.org/licenses/fdl-1.3.html>. See README for full license inf
 
 [Back to project README](../README.md)
 
-This page is the working plan for the open [GitHub issues](https://github.com/DepressionCenter/FieldStationAI/issues). It says which issue comes next, what branch it lives on, what is in and out of scope, and how we know it is done. Everything on this page is planned work, not a description of what the app does today. The other pages in this folder describe current behavior, and they get updated as each phase lands.
+This plan is complete. It was the working plan for the open [GitHub issues](https://github.com/DepressionCenter/FieldStationAI/issues) in September 2026. It says which issue came next, what branch it lives on, what is in and out of scope, and how we know it is done. Everything on this page is planned work, not a description of what the app does today. The other pages in this folder describe current behavior, and they get updated as each phase lands.
 
 ### How to use this page
 
@@ -36,7 +36,7 @@ Status values are **Not started**, **Planning**, **In progress**, **In review**,
 4. Treat every prompt, file, model output, and compendium passage as untrusted input. Nothing user-controlled reaches `innerHTML` without encoding.
 5. Every new control needs a keyboard path, a visible focus state, and a label. Status changes must not rely on color alone.
 6. Update the documentation pages named in the phase in the same branch. Stale documentation is a defect.
-7. Run `node --test tests/` before opening a pull request, and the model-backed test when the phase touches the crisis check (see the [developer guide](developer-guide.md)). The suite covers the documentation and the crisis check, not the app's behavior in a browser, so also test in a real browser before calling the phase done, and record the browser, the models, and the exact steps in the pull request. Say plainly what was not tested.
+7. Run `node --test "tests/*.test.mjs"` before opening a pull request, and the model-backed test when the phase touches the crisis check (see the [developer guide](developer-guide.md)). The suite covers the documentation and the crisis check, not the app's behavior in a browser, so also test in a real browser before calling the phase done, and record the browser, the models, and the exact steps in the pull request. Say plainly what was not tested.
 8. Commit only when the work is tested, then open a pull request against `main`. Commit messages and pull request text are plain English, describe what changed and why, and carry no co-author trailer, robot signature, or tool or model name.
 9. Close the GitHub issue when the pull request merges, and update this page.
 
@@ -47,10 +47,10 @@ Status values are **Not started**, **Planning**, **In progress**, **In review**,
 | 1 | [#1](https://github.com/DepressionCenter/FieldStationAI/issues/1) | Crisis notice for prompts that may signal a mental health emergency | `feature/crisis-notice` | Done |
 | 2 | [#6](https://github.com/DepressionCenter/FieldStationAI/issues/6) | "Paste text" input for the four text classifier skills | `feature/skill-paste-text` | Done |
 | 3 | [#7](https://github.com/DepressionCenter/FieldStationAI/issues/7) | Direct chat-to-skill flow for text-only skills | `feature/chat-to-skill` | Done |
-| 4 | [#4](https://github.com/DepressionCenter/FieldStationAI/issues/4) | Storage management dialog in the menu | `feature/storage-manager` | In review |
+| 4 | [#4](https://github.com/DepressionCenter/FieldStationAI/issues/4) | Storage management dialog in the menu | `feature/storage-manager` | Done |
 | 5 | [#2](https://github.com/DepressionCenter/FieldStationAI/issues/2) | Full Markdown support in chats | `feature/chat-markdown` | Not started (do much later) |
 
-Issues [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3), [#5](https://github.com/DepressionCenter/FieldStationAI/issues/5), [#12](https://github.com/DepressionCenter/FieldStationAI/issues/12), and [#21](https://github.com/DepressionCenter/FieldStationAI/issues/21) stay open but are not scheduled. See [Issues not scheduled](#issues-not-scheduled).
+Issues [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3), [#5](https://github.com/DepressionCenter/FieldStationAI/issues/5), and [#21](https://github.com/DepressionCenter/FieldStationAI/issues/21) stay open but are not scheduled. Issue [#12](https://github.com/DepressionCenter/FieldStationAI/issues/12) was done outside the phases. See [Issues not scheduled](#issues-not-scheduled).
 
 ### Phase 1: Crisis notice (issue #1)
 
@@ -272,7 +272,7 @@ Found while testing and not changed in this phase: with the app's 4-bit embeddin
 
 ### Phase 4: Storage management dialog (issue #4)
 
-**Status:** In review
+**Status:** Done. Merged on 2026-09-29, and the issue is closed.
 
 **Branch:** `feature/storage-manager`, from `main`.
 
@@ -399,12 +399,12 @@ Model output is untrusted, so rendered Markdown must be encoded before it reache
 
 - [#3](https://github.com/DepressionCenter/FieldStationAI/issues/3), zip and progressive XML ingestion, is groundwork for a wearable-data skill that does not exist yet. It stays open until that skill is planned.
 - [#5](https://github.com/DepressionCenter/FieldStationAI/issues/5), service worker and cache bucket, changes the deployment story and adds a network allowlist. It needs an explicit design decision first, recorded in `docs/design-change-record.md`.
-- [#12](https://github.com/DepressionCenter/FieldStationAI/issues/12), pinning the WebLLM import, is a small dependency change that needs its own release-note and advisory check. Do it in its own branch when convenient.
+- [#12](https://github.com/DepressionCenter/FieldStationAI/issues/12), pinning the WebLLM import, was done on its own branch, `fix/pin-webllm-version`, with a release-note and advisory check. See [WebLLM Pinned to an Exact Version](design-change-record.md#webllm-pinned-to-an-exact-version).
 - [#21](https://github.com/DepressionCenter/FieldStationAI/issues/21), extracting pain location, qualities, and timeframe from text, follows the rework of Estimate pain level on `feature/pain-intensity-interference`. It needs a decision on whether it is a new skill or a mode of the existing one, and on which model extracts the wording. See [Estimate Pain Level](field-kit.md#estimate-pain-level) for what exists today.
 
 ### Conclusion
 
-Phases 1, 2, and 3 are done and phase 4 is in review. Move down the table as each pull request merges: create the next branch from `main`, write the detailed plan under the phase heading, and set the status to Planning.
+This plan is complete. Phases 1 through 4 are done and their issues are closed, except for the parts of issue #7 described under phase 3. Phase 5 stays deferred, and issue #2 stays open until it is scheduled.
 
 ### Additional resources
 

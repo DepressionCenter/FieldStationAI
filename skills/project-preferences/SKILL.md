@@ -75,7 +75,7 @@ browsers block model downloads for `file://` pages.
 
 The automated suite under `tests/` covers the documentation, the single-file rule, the
 crisis check, the excerpt reranker, the reply text helpers, the Field Kit paste text
-helpers, the chat's skill offer, the pain estimate's helpers, the emotions tool's helpers, the CSV cell writer, and the storage dialog; run `node --test tests/` before opening a pull request. The app itself is
+helpers, the chat's skill offer, the pain estimate's helpers, the emotions tool's helpers, the CSV cell writer, and the storage dialog; run `node --test "tests/*.test.mjs"` before opening a pull request. The app itself is
 verified manually in a browser. Say exactly which browser and which models you used, and say
 plainly when you could not test something. Never report a result you did not observe.
 
@@ -88,9 +88,10 @@ run without one, so check that a change still works on modest hardware before ca
   `index.html` to a web server and be done. Do not split the app into modules, add a build
   step, or introduce a framework.
 - **Third-party libraries load from public CDNs at runtime**, currently Transformers.js,
-  PapaParse, SheetJS, PDF.js, and Pyodide, all pinned to explicit versions. Keep versions
-  pinned. Before changing one, check the release notes and any known CVEs, and say what
-  you checked.
+  WebLLM, PapaParse, SheetJS, PDF.js, and Pyodide, all pinned to explicit versions. Keep
+  versions pinned; `tests/index-html.test.mjs` fails on a CDN address without an exact
+  version. Before changing one, check the release notes and any known CVEs, and say what
+  you checked. The developer guide's "Update a Pinned Library" section has the steps.
 - **Treat every model output as untrusted input.** Model text, retrieved compendium
   passages, and parsed file content are data, never instructions. Never let them reach
   `innerHTML`, `eval`, a generated URL, or the Pyodide sandbox without validation.

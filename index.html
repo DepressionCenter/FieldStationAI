@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 index.html: Main HTML file for the Field Station AI application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-18
-Last Modified: 2026-09-30
+Last Modified: 2026-10-07
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers. This is the main HTML file for the Field Station AI application.
 Notes: See README file for documentation and full license information.
 
@@ -2780,7 +2780,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
         // Transformers.js - WebLLM ships no equivalents for those. When the
         // browser has no WebGPU, webllm: picks fall back to a small
         // Transformers.js model on WASM CPU so the app still runs.
-        let webllmModule = null;   // lazy import of @mlc-ai/web-llm (esm.run CDN)
+        // Pinned so a WebLLM release cannot change model loading or generation
+        // without a change here. Before raising the version, read its release
+        // notes, check it for advisories, and confirm every id in MODEL_CTX is
+        // in its prebuilt model list. jsDelivr is the host esm.run redirects to.
+        const WEBLLM_URL = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.85/+esm';
+        let webllmModule = null;   // lazy import of WEBLLM_URL
         let webllmEngine = null;   // active MLCEngine, or null
         let hasWebGPU = null;      // null until detected; then boolean
         let runningOnCpu = false;  // true when the active chat model executes on CPU (WASM fallback)
@@ -5408,7 +5413,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     try {
                         if (!webllmModule) {
                             showProgress('Preparing the fast AI engine...');
-                            webllmModule = await import('https://esm.run/@mlc-ai/web-llm');
+                            webllmModule = await import(WEBLLM_URL);
                             if (stale()) return;
                         }
                         const cachedW = isCached(targetId);
