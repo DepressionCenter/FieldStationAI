@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 developer-guide.md: Guide for developers working on Field Station AI, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-26
-Last Modified: 2026-10-07
+Last Modified: 2026-10-08
 Summary: Field Station AI is a private, in-browser AI workspace for health and behavioral researchers.
 Notes: See README file for documentation and full license information.
 
@@ -350,7 +350,7 @@ The first run downloads about 300 MB of model files into `tests/.cache/`, which 
 
 The pain estimate has its own model test, `tests/pain-estimate-models.test.mjs`. It is off unless `FSAI_PAIN_MODEL_TEST=1` is set, because its model is another 440 MB. See [Change the Pain Estimate](#change-the-pain-estimate).
 
-The GitHub Actions workflow in `.github/workflows/tests.yml` runs both on every pull request and on every push to `main`. Browser testing of the app is still manual: record the browser, the models, and the steps in the pull request.
+The GitHub Actions workflow in `.github/workflows/tests.yml` runs both on every pull request and on every push to `main`. It runs only while GitHub Actions is turned on for the repository, which an organization owner controls. If a pull request shows no checks at all, Actions is off: run both commands above yourself and paste the results into the pull request. Browser testing of the app is still manual: record the browser, the models, and the steps in the pull request.
 
 ## Security Checklist
 
