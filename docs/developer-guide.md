@@ -332,8 +332,10 @@ Rules for changes:
 The tests live under `tests/` and use Node's own test runner, so nothing is installed for the fast suite. You need Node 22 or newer.
 
 ```text
-node --test tests/
+node --test "tests/*.test.mjs"
 ```
+
+Keep the quotes, so that Node expands the pattern the same way in every shell. Node 22 does not accept a folder name such as `tests/` here; newer versions do.
 
 That checks every documentation page (links, license comment, heading structure), the file header, single-script rule, exact versions on every CDN address, reranker wiring, **Paste text** tab wiring, skill offer wiring, and pain estimate wiring in `index.html`, the crisis check's phrase tier against the prompt fixture, the reply and citation text helpers, the Field Kit paste text helpers, the skill offer's helpers and lists, the pain estimate's helpers and its fixture's stated scores, the emotions tool's helpers, the CSV cell writer, and the storage dialog's helpers and wiring. The model-backed tests skip themselves unless their dependency is installed.
 

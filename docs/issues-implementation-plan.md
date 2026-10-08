@@ -3,7 +3,7 @@ This file is part of Field Station AI.
 docs/issues-implementation-plan.md: Ordered plan and status tracker for the open GitHub issues, in Markdown format.
 Author(s): Gabriel Mongefranco.
 Created: 2026-09-22
-Last Modified: 2026-10-07
+Last Modified: 2026-10-08
 Summary: The completed plan for the GitHub issues open in September 2026: the order they were worked, the branch and scope for each, and the rules every phase followed.
 Notes: See README file for documentation and full license information.
 
@@ -36,7 +36,7 @@ Status values are **Not started**, **Planning**, **In progress**, **In review**,
 4. Treat every prompt, file, model output, and compendium passage as untrusted input. Nothing user-controlled reaches `innerHTML` without encoding.
 5. Every new control needs a keyboard path, a visible focus state, and a label. Status changes must not rely on color alone.
 6. Update the documentation pages named in the phase in the same branch. Stale documentation is a defect.
-7. Run `node --test tests/` before opening a pull request, and the model-backed test when the phase touches the crisis check (see the [developer guide](developer-guide.md)). The suite covers the documentation and the crisis check, not the app's behavior in a browser, so also test in a real browser before calling the phase done, and record the browser, the models, and the exact steps in the pull request. Say plainly what was not tested.
+7. Run `node --test "tests/*.test.mjs"` before opening a pull request, and the model-backed test when the phase touches the crisis check (see the [developer guide](developer-guide.md)). The suite covers the documentation and the crisis check, not the app's behavior in a browser, so also test in a real browser before calling the phase done, and record the browser, the models, and the exact steps in the pull request. Say plainly what was not tested.
 8. Commit only when the work is tested, then open a pull request against `main`. Commit messages and pull request text are plain English, describe what changed and why, and carry no co-author trailer, robot signature, or tool or model name.
 9. Close the GitHub issue when the pull request merges, and update this page.
 

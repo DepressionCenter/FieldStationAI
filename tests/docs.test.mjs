@@ -2,13 +2,13 @@
 // tests/docs.test.mjs
 // Author(s): Gabriel Mongefranco.
 // Created: 2026-09-23
-// Last Modified: 2026-09-23
+// Last Modified: 2026-10-08
 // Summary: Checks that the written documentation agrees with the repository.
 // Every relative link under docs/, skills/, the README, and SKILLS.md
 // resolves to a file; every page opens with the license comment; and every
 // page under docs/ has one H1, no skipped heading level, and a link back to
 // the project README. Runs with Node's built-in test runner and no
-// dependencies: node --test tests/
+// dependencies: node --test "tests/*.test.mjs"
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan

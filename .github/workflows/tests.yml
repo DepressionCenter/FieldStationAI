@@ -56,7 +56,7 @@ jobs:
 
       # The model-backed test skips itself here; the models job runs it.
       - name: Run the fast suite
-        run: node --test tests/
+        run: node --test "tests/*.test.mjs"
         env:
           FSAI_SKIP_MODEL_TESTS: "1"
 
