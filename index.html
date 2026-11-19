@@ -3448,7 +3448,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
         }
         buildWelcomeLinks();
 
-        function showWelcome() {
+        /** Open the welcome window and return focus to the caller when it closes. */
+        function showWelcome(returnFocus = input) {
             setWelcomePanel('about');
             welcomeCta.textContent = localStorage.getItem(WELCOME_SEEN_KEY) ? "Let's chat!" : 'Get started';
             welcomeModal.classList.add('open');
@@ -3460,9 +3461,25 @@ with this program. If not, see https://www.gnu.org/licenses/.
                     welcomeClose.removeEventListener('click', done);
                     welcomeModal.removeEventListener('click', onBackdrop);
                     document.removeEventListener('keydown', onKey);
+                    (returnFocus.disabled ? menuBtn : returnFocus).focus();
                     resolve();
                 };
-                const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); done(); } };
+                const onKey = (e) => {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        done();
+                        return;
+                    }
+                    if (e.key !== 'Tab') return;
+                    const items = welcomeModal.querySelectorAll('button:not([disabled]), a[href]');
+                    const first = items[0];
+                    const last = items[items.length - 1];
+                    const active = document.activeElement;
+                    if (!welcomeModal.contains(active) || active === (e.shiftKey ? first : last)) {
+                        e.preventDefault();
+                        (e.shiftKey ? last : first).focus();
+                    }
+                };
                 const onBackdrop = (e) => { if (e.target === welcomeModal) done(); };
                 welcomeCta.addEventListener('click', done);
                 welcomeClose.addEventListener('click', done);
@@ -17748,7 +17765,7 @@ Feeling anxious about work."></textarea>
             { label: 'Advanced settings', action: () => openSettings() },
             { label: 'Manage storage', action: () => openStorage() },
             { label: 'Clear all chats', action: () => wipeAllChats() },
-            { label: 'About Field Station AI', action: () => showWelcome() }
+            { label: 'About Field Station AI', action: () => showWelcome(menuBtn) }
         ];
         document.getElementById('skills-btn').addEventListener('click', openSkills);
 
@@ -18631,6 +18648,8 @@ Feeling anxious about work."></textarea>
 
         // Send via Enter, newline via Shift+Enter
         input.addEventListener('keydown', (e) => {
+            // Some browsers end composition just before the confirming keydown.
+            if (e.isComposing || e.keyCode === 229) return;
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleSend();
