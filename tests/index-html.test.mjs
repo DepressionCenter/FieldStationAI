@@ -36,6 +36,26 @@ import { INDEX_HTML } from './helpers/crisis-block.mjs';
 
 const html = fs.readFileSync(INDEX_HTML, 'utf8');
 
+test('chat Enter sends only after text composition has finished', () => {
+    const source = html.match(/input\.addEventListener\('keydown', \(e\) => \{[\s\S]+?^ {8}\}\);/m);
+    assert.ok(source, 'chat keydown handler is registered');
+    let onKeydown;
+    let sends = 0;
+    const input = { addEventListener: (_, handler) => { onKeydown = handler; } };
+    Function('input', 'handleSend', source[0])(input, () => { sends++; });
+
+    let prevented = 0;
+    const enter = { key: 'Enter', preventDefault: () => { prevented++; } };
+    onKeydown({ ...enter, isComposing: true });
+    onKeydown({ ...enter, isComposing: false, keyCode: 229 });
+    onKeydown({ ...enter, shiftKey: true });
+    assert.equal(sends, 0);
+    assert.equal(prevented, 0);
+    onKeydown(enter);
+    assert.equal(sends, 1);
+    assert.equal(prevented, 1);
+});
+
 // Reads a single-quoted string constant out of the source by name.
 function stringConstant(name) {
     const match = html.match(new RegExp("const " + name + " = '((?:[^'\\\\]|\\\\.)*)';"));
