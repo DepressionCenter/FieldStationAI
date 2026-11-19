@@ -296,11 +296,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
         #progress-track { height: 10px; background: var(--bg); border-radius: 999px; overflow: hidden; border: 1px solid var(--line); }
         #progress-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.2s; }
 
-        #status-line {
+        #status-line, #copy-status {
             font-size: 0.75rem; color: var(--muted); min-height: 1rem;
             padding: 0 4px 6px; font-family: 'IBM Plex Mono', monospace;
         }
-        #status-line.error { color: var(--danger); font-weight: 600; }
+        #copy-status:empty { min-height: 0; padding: 0; }
+        #status-line.error, #copy-status.error { color: var(--danger); font-weight: 600; }
         #chat-box {
             flex-grow: 1; border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem;
             overflow-y: auto; margin-bottom: 0.9rem;
@@ -1201,6 +1202,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     </div>
 
     <div id="status-line" aria-live="polite"></div>
+    <div id="copy-status" role="status"></div>
     <div class="chat-sr" id="chat-live" aria-live="assertive" aria-atomic="true"></div>
     <div class="chat-sr" id="chat-live-polite" aria-live="polite" aria-atomic="true"></div>
 
@@ -1390,6 +1392,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         const btn = document.getElementById('send-btn');
         const stopBtn = document.getElementById('stop-btn');
         const status = document.getElementById('status-line');
+        const copyStatus = document.getElementById('copy-status');
         const chatLive = document.getElementById('chat-live'); // screen-reader-only live region for chat notices
         const chatLivePolite = document.getElementById('chat-live-polite'); // the same, for news that can wait its turn
         const modelSelect = document.getElementById('model-select');
@@ -4475,6 +4478,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
             }
         }
 
+        /** Copy text and report the result without replacing the model's status. */
+        async function copyTextWithFeedback(text) {
+            copyStatus.textContent = '';
+            try {
+                await navigator.clipboard.writeText(text);
+                skillLog(copyStatus, 'Copied to clipboard.');
+            } catch {
+                skillLog(copyStatus, 'Could not copy. Select the text and copy it manually.', true);
+            }
+        }
+
         // Ghost action row that sits on each user/bot bubble. Fully visible only
         // on hover of the bubble (or of the row itself via CSS). User bubbles
         // get Copy + Save + Info; bot bubbles get Copy + Info only.
@@ -4494,12 +4508,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
                 return b;
             };
 
-            wrap.appendChild(mk('copy', 'Copy', async (b) => {
-                await navigator.clipboard.writeText(getText());
-                const orig = b.title;
-                b.title = 'Copied!';
-                setTimeout(() => { b.title = orig; }, 1200);
-            }));
+            wrap.appendChild(mk('copy', 'Copy', () => copyTextWithFeedback(getText())));
             if (role === 'user') {
                 wrap.appendChild(mk('save', 'Save prompt as template', () => {
                     store.templates.push({ id: crypto.randomUUID(), name: defaultTemplateName(), text: getText(), renamed: false });
@@ -6422,9 +6431,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
             const actions = document.createElement('span');
             actions.className = 'att-actions';
 
-            actions.appendChild(mk('copy', 'Copy extracted text', async () => {
-                await navigator.clipboard.writeText(att.derivedText || '');
-            }, !hasText));
+            actions.appendChild(mk('copy', 'Copy extracted text', () =>
+                copyTextWithFeedback(att.derivedText || ''), !hasText));
 
             // Skill-produced attachments (e.g. the Transcribe skill's output)
             // have no original file - the "original" IS the extracted text,
@@ -17211,8 +17219,9 @@ Sleep problems: trouble falling or staying asleep, nightmares"></textarea>
                     </div>
                 </div>
                 <div id="dd-paste-pane" hidden>
-                    <p class="skill-hint">Paste one item per line.</p>
-                    <textarea class="skill-textarea" id="dd-paste-textarea" placeholder="I can't sleep at night.
+                    <label class="skill-hint" for="dd-paste-textarea">Text to compare</label>
+                    <p class="skill-hint" id="dd-paste-help">Paste one item per line.</p>
+                    <textarea class="skill-textarea" id="dd-paste-textarea" aria-describedby="dd-paste-help" placeholder="I can't sleep at night.
 Trouble sleeping most nights.
 Feeling anxious about work."></textarea>
                 </div>
@@ -17523,9 +17532,9 @@ Feeling anxious about work."></textarea>
             const sectionA = document.createElement('div');
             sectionA.className = 'skill-section';
             sectionA.innerHTML = `
-                <h3>Text to work with</h3>
-                <p class="skill-hint">Paste text below, or upload a plain-text or PDF document.</p>
-                <textarea class="skill-textarea" id="sum-textarea" placeholder="Paste an interview transcript or other long text here..."></textarea>
+                <label class="skill-hint" for="sum-textarea">Text to analyze</label>
+                <p class="skill-hint" id="sum-text-help">Paste text or upload a plain-text or PDF document.</p>
+                <textarea class="skill-textarea" id="sum-textarea" aria-describedby="sum-text-help"></textarea>
                 <div class="skill-row" style="margin-top:8px;">
                     <button class="skill-btn" id="sum-files-btn">Or upload a document...</button>
                     <input type="file" id="sum-files-input" accept=".txt,.pdf" hidden>
@@ -17607,7 +17616,7 @@ Feeling anxious about work."></textarea>
                 const copyBtn = document.createElement('button');
                 copyBtn.className = 'skill-btn';
                 copyBtn.textContent = 'Copy';
-                copyBtn.addEventListener('click', () => { navigator.clipboard.writeText(text).catch(() => {}); });
+                copyBtn.addEventListener('click', () => copyTextWithFeedback(text));
                 row.appendChild(copyBtn);
                 const dlBtn = document.createElement('button');
                 dlBtn.className = 'skill-btn';
